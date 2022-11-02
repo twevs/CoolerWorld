@@ -4,6 +4,7 @@
 #include <winuser.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <math.h> // sinf().
 
 #include <GL/Gl.h>
 #include "glcorearb.h"
@@ -12,6 +13,16 @@
 #define global_variable static
 #define internal static
 #define local_persist static
+
+#ifndef NDEBUG
+#define myAssert(x)                                                                                                    \
+    if (!(x))                                                                                                          \
+    {                                                                                                                  \
+        __debugbreak();                                                                                                \
+    }
+#else
+#define myAssert(x)
+#endif
 
 typedef unsigned char uchar;
 typedef uint8_t u8;
@@ -29,16 +40,28 @@ typedef double f64;
 
 const char *vertexShaderSource = "#version 330 core\n"
                                  "layout (location = 0) in vec3 aPos;\n"
+                                 "layout (location = 1) in vec3 aColor;\n"
+                                 "\n"
+                                 "out vec3 ourPosition;\n"
+                                 "\n"
                                  "void main()\n"
                                  "{\n"
-                                 "    gl_Position = vec4(aPos.x, aPos.y, aPos.z, 1.f);\n"
+                                 "    gl_Position = vec4(aPos, 1.f);\n"
+                                 "    ourPosition = gl_Position.xyz;\n"
                                  "}\0";
 const char *fragmentShaderSource = "#version 330 core\n"
+                                   "in vec3 ourPosition;\n"
                                    "out vec4 fragColor;\n"
                                    "void main()\n"
                                    "{\n"
-                                   "    fragColor = vec4(1.f, .5f, .2f, 1.f);\n"
+                                   "    fragColor = vec4(ourPosition, 1.f);\n"
                                    "}\0";
+const char *fragmentShader2Source = "#version 330 core\n"
+                                    "out vec4 fragColor;\n"
+                                    "void main()\n"
+                                    "{\n"
+                                    "    fragColor = vec4(1.f, 1.f, 0.f, 1.f);\n"
+                                    "}\0";
 
 PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
@@ -62,6 +85,9 @@ PFNGLENABLEVERTEXATTRIBARRAYPROC glEnableVertexAttribArray;
 PFNGLGENVERTEXARRAYSPROC glGenVertexArrays;
 PFNGLBINDVERTEXARRAYPROC glBindVertexArray;
 PFNGLDEBUGMESSAGECALLBACKPROC glDebugMessageCallback;
+PFNGLGETUNIFORMLOCATIONPROC glGetUniformLocation;
+PFNGLUNIFORM1FPROC glUniform1f;
+PFNGLUNIFORM4FPROC glUniform4f;
 
 LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
@@ -72,7 +98,7 @@ void ResizeGLViewport(HWND window)
     glViewport(0, 0, clientRect.right, clientRect.bottom);
 }
 
-void Win32ProcessMessages(bool *running)
+void Win32ProcessMessages(bool *running, bool *wireframeMode)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
@@ -81,15 +107,20 @@ void Win32ProcessMessages(bool *running)
         {
         case WM_QUIT:
             *running = false;
-            break;
+            return;
         case WM_KEYDOWN: {
             u32 vkCode = (u32)message.wParam;
             switch (vkCode)
             {
             case VK_ESCAPE:
                 *running = false;
+                return;
+            case 'W':
+                *wireframeMode = !*wireframeMode;
+                glPolygonMode(GL_FRONT_AND_BACK, *wireframeMode ? GL_LINE : GL_FILL);
+                return;
             }
-            break;
+            return;
         }
         default:
             TranslateMessage(&message);
@@ -212,6 +243,9 @@ int InitializeOpenGLExtensions(HINSTANCE hInstance)
     glGenVertexArrays = (PFNGLGENVERTEXARRAYSPROC)wglGetProcAddress("glGenVertexArrays");
     glBindVertexArray = (PFNGLBINDVERTEXARRAYPROC)wglGetProcAddress("glBindVertexArray");
     glDebugMessageCallback = (PFNGLDEBUGMESSAGECALLBACKPROC)wglGetProcAddress("glDebugMessageCallback");
+    glGetUniformLocation = (PFNGLGETUNIFORMLOCATIONPROC)wglGetProcAddress("glGetUniformLocation");
+    glUniform1f = (PFNGLUNIFORM1FPROC)wglGetProcAddress("glUniform1f");
+    glUniform4f = (PFNGLUNIFORM4FPROC)wglGetProcAddress("glUniform4f");
 
     wglMakeCurrent(dummyDC, 0);
     wglDeleteContext(dummyRenderingContext);
@@ -221,10 +255,60 @@ int InitializeOpenGLExtensions(HINSTANCE hInstance)
     return 0;
 }
 
+void DebugPrintA(const char *formatString, ...)
+{
+    CHAR debugString[1024];
+    va_list args;
+    va_start(args, formatString);
+    vsprintf_s(debugString, formatString, args);
+    va_end(args);
+    OutputDebugStringA(debugString);
+}
+
+bool CompileShader(u32 *shaderID, GLenum shaderType, const char **shaderSource)
+{
+    *shaderID = glCreateShader(shaderType);
+    glShaderSource(*shaderID, 1, shaderSource, NULL);
+    glCompileShader(*shaderID);
+
+    int success;
+    char infoLog[512];
+    glGetShaderiv(*shaderID, GL_COMPILE_STATUS, &success);
+    if (!success)
+    {
+        glGetShaderInfoLog(*shaderID, 512, NULL, infoLog);
+        DebugPrintA("Shader compilation failed: %s\n", infoLog);
+        return false;
+    }
+
+    return true;
+}
+
+bool CreateShaderProgram(u32 *programID, u32 vertexShaderID, u32 fragmentShaderID)
+{
+    *programID = glCreateProgram();
+    glAttachShader(*programID, vertexShaderID);
+    glAttachShader(*programID, fragmentShaderID);
+    glLinkProgram(*programID);
+
+    int success;
+    char infoLog[512];
+    glGetProgramiv(*programID, GL_LINK_STATUS, &success);
+    if (!success)
+    {
+        glGetProgramInfoLog(*programID, 512, NULL, infoLog);
+        DebugPrintA("Shader program creation failed: %s\n", infoLog);
+        return false;
+    }
+
+    return true;
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     if (InitializeOpenGLExtensions(hInstance) == -1)
     {
+        OutputDebugStringW(L"Failed to initialize OpenGL extensions.");
         return -1;
     }
 
@@ -260,6 +344,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         HDC hdc = GetDC(window);
         if (!hdc)
         {
+            OutputDebugStringW(L"Failed to initialize hardware device context.");
             return -1;
         }
 
@@ -283,6 +368,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         u32 formats;
         if (!wglChoosePixelFormatARB(hdc, pixelFormatAttribs, NULL, 1, &format, &formats) || formats == 0)
         {
+            OutputDebugStringW(L"Failed to choose pixel format.");
             return -1;
         }
 
@@ -290,6 +376,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         pixelFormatDescriptor.nSize = sizeof(PIXELFORMATDESCRIPTOR);
         if (!DescribePixelFormat(hdc, format, sizeof(PIXELFORMATDESCRIPTOR), &pixelFormatDescriptor))
         {
+            OutputDebugStringW(L"Failed to describe pixel format.");
             return -1;
         }
 
@@ -310,11 +397,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         HGLRC renderingContext = wglCreateContextAttribsARB(hdc, NULL, contextAttribs);
         if (!renderingContext)
         {
+            OutputDebugStringW(L"Failed to create OpenGL rendering context.");
             return -1;
         }
 
         if (!wglMakeCurrent(hdc, renderingContext))
         {
+            OutputDebugStringW(L"Failed to make the created OpenGL rendering context the hardware device context's "
+                               L"current rendering context.");
             return -1;
         }
 
@@ -337,70 +427,124 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         u64 lastFrameCount = Win32GetWallClock();
 
-        float vertices[] = {
-            -.5f, -.5f, .0f, // Point 1.
-            .5f,  -.5f, .0f, // Point 2.
-            .0f,  .5f,  .0f  // Point 3.
-        };
-
-        u32 vao;
-        glGenVertexArrays(1, &vao);
-
-        glBindVertexArray(vao);
-
-        u32 vbo;
-        glGenBuffers(1, &vbo);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-        u32 vertexShader = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vertexShader, 1, &vertexShaderSource, NULL);
-        glCompileShader(vertexShader);
-
-        int success;
-        char infoLog[512];
-        glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
-        if (!success)
+        // Shader initialization.
+        u32 vertexShader;
+        if (!CompileShader(&vertexShader, GL_VERTEX_SHADER, &vertexShaderSource))
         {
-            glGetShaderInfoLog(vertexShader, 512, NULL, infoLog);
-            printf("Shader compilation failed: %s\n", infoLog);
             return -1;
         }
 
-        u32 fragmentShader = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fragmentShader, 1, &fragmentShaderSource, NULL);
-        glCompileShader(fragmentShader);
-
-        glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
-        if (!success)
+        u32 fragmentShader;
+        if (!CompileShader(&fragmentShader, GL_FRAGMENT_SHADER, &fragmentShaderSource))
         {
-            glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
-            printf("Shader compilation failed: %s\n", infoLog);
             return -1;
         }
 
-        u32 shaderProgram = glCreateProgram();
-        glAttachShader(shaderProgram, vertexShader);
-        glAttachShader(shaderProgram, fragmentShader);
-        glLinkProgram(shaderProgram);
-
-        glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-        if (!success)
+        u32 shaderProgram;
+        if (!CreateShaderProgram(&shaderProgram, vertexShader, fragmentShader))
         {
-            glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
+            return -1;
+        }
+
+        glDeleteShader(fragmentShader);
+
+        u32 fragmentShader2;
+        if (!CompileShader(&fragmentShader2, GL_FRAGMENT_SHADER, &fragmentShader2Source))
+        {
+            return -1;
+        }
+
+        u32 shaderProgram2;
+        if (!CreateShaderProgram(&shaderProgram2, vertexShader, fragmentShader2))
+        {
             return -1;
         }
 
         glDeleteShader(vertexShader);
-        glDeleteShader(fragmentShader);
+        glDeleteShader(fragmentShader2);
+
+        // Uncomment for triangle:
+        float vertices[] = {
+            -.5f, -.5f, 0.f, // Point 1.
+            // 1.f,  0.f, 0.f, // Color 1.
+            .5f, -.5f, 0.f, // Point 2.
+            // 0.f,  1.f, 0.f, // Color 2.
+            0.f, .5f, 0.f, // Point 3.
+            // 0.f,  0.f, 1.f, // Color 3.
+        };
+
+        // Create and bind VAO 1.
+        u32 vao1;
+        glGenVertexArrays(1, &vao1);
+        glBindVertexArray(vao1);
+
+        // Create and bind VBO 1.
+        u32 vbo1;
+        glGenBuffers(1, &vbo1);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo1);
+
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
+        // glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void *)(3 * sizeof(float)));
+        glEnableVertexAttribArray(0);
+        // glEnableVertexAttribArray(1);
+
+        // Create and bind VAO 2.
+        u32 vao2;
+        glGenVertexArrays(1, &vao2);
+        glBindVertexArray(vao2);
+
+        // Create and bind VBO 2.
+        u32 vbo2;
+        glGenBuffers(1, &vbo2);
+        glBindBuffer(GL_ARRAY_BUFFER, vbo2);
+
+        float vertices2[] = {
+            .5f, 0.f,  0.f, // Point 4.
+            .5f, -.5f, 0.f, // Point 5.
+            0.f, 0.f,  0.f  // Point 6.
+        };
+
+        // glBufferData(GL_ARRAY_BUFFER, sizeof(vertices) / 2, vertices + sizeof(vertices) / 2, GL_STATIC_DRAW);
+        glBufferData(GL_ARRAY_BUFFER, sizeof(vertices2), vertices2, GL_STATIC_DRAW);
+
+        /*
+        f32 rectVertices[] = {
+            .5f,  .5f,  0.f, // 0: top right.
+            .5f,  -.5f, 0.f, // 1: bottom right.
+            -.5f, -.5f, 0.f, // 2: bottom left.
+            -.5f, .5f,  0.f  // 3: top left.
+        };
+
+        u32 rectIndices[] = {
+            0, 1, 3, // Triangle 1.
+            1, 2, 3  // Triangle 2.
+        };
+
+        // Assume VAO and VBO already bound by this point.
+        glBufferData(GL_ARRAY_BUFFER, sizeof(rectVertices), rectVertices, GL_STATIC_DRAW);
+
+        u32 ebo;
+        glGenBuffers(1, &ebo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(rectIndices), rectIndices, GL_STATIC_DRAW);
+        */
 
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void *)0);
         glEnableVertexAttribArray(0);
 
+        int numAttribs;
+        glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &numAttribs);
+        WCHAR maxNumAttribsString[64];
+        swprintf_s(maxNumAttribsString, L"Max number of vertex attributes supported: %i", numAttribs);
+        MessageBoxW(NULL, maxNumAttribsString, L"OpenGL info", MB_OK);
+
         bool running = true;
+        bool wireframeMode = false;
         while (running)
         {
-            Win32ProcessMessages(&running);
+            Win32ProcessMessages(&running, &wireframeMode);
 
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
@@ -429,8 +573,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
                 glClearColor(.2f, .3f, .3f, 1.f);
                 glClear(GL_COLOR_BUFFER_BIT);
+
+                // glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
                 glUseProgram(shaderProgram);
-                glBindVertexArray(vao);
+                glBindVertexArray(vao1);
+                glDrawArrays(GL_TRIANGLES, 0, 3);
+
+                glUseProgram(shaderProgram2);
+                glBindVertexArray(vao2);
                 glDrawArrays(GL_TRIANGLES, 0, 3);
 
                 if (!SwapBuffers(hdc))
