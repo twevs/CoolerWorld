@@ -9,6 +9,10 @@
 #include <GL/glew.h>
 #include "wglext.h"
 
+#include "glm/glm.hpp"
+#include "glm/gtc/matrix_transform.hpp"
+#include "glm/gtc/type_ptr.hpp"
+
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
@@ -40,6 +44,22 @@ typedef int64_t s64;
 typedef float f32;
 typedef double f64;
 
+struct DrawingInfo
+{
+    bool initialized;
+    u32 shaderProgram;
+    float mixAlpha;
+    u32 texture1;
+    u32 texture2;
+    u32 vao;
+};
+
+struct ApplicationState
+{
+    DrawingInfo drawingInfo;
+    bool running;
+};
+
 PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
 
@@ -52,7 +72,11 @@ void ResizeGLViewport(HWND window)
     glViewport(0, 0, clientRect.right, clientRect.bottom);
 }
 
-void Win32ProcessMessages(bool *running, bool *wireframeMode, float *mixAlpha)
+void Win32ProcessMessages(
+    HWND window,
+    bool *running,
+    bool *wireframeMode,
+    float *mixAlpha)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
@@ -70,10 +94,10 @@ void Win32ProcessMessages(bool *running, bool *wireframeMode, float *mixAlpha)
                 *running = false;
                 return;
             case VK_UP:
-                *mixAlpha = min(*mixAlpha + .025f, 1.f);
+                *mixAlpha = fmin(*mixAlpha + .025f, 1.f);
                 return;
             case VK_DOWN:
-                *mixAlpha = max(*mixAlpha - .025f, 0.f);
+                *mixAlpha = fmax(*mixAlpha - .025f, 0.f);
                 return;
             case 'W':
                 *wireframeMode = !*wireframeMode;
@@ -98,20 +122,20 @@ u64 Win32GetWallClock()
 
 int InitializeOpenGLExtensions(HINSTANCE hInstance)
 {
-    WCHAR windowClassName[] = L"DummyOGLExtensionsWindow";
+    WCHAR dummyWindowClassName[] = L"DummyOGLExtensionsWindow";
 
     WNDCLASSW windowClass = {};
     windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
     windowClass.lpfnWndProc = DefWindowProcW;
     windowClass.hInstance = hInstance;
-    windowClass.lpszClassName = windowClassName;
+    windowClass.lpszClassName = dummyWindowClassName;
 
     if (!RegisterClassW(&windowClass))
     {
         return -1;
     }
 
-    HWND dummyWindow = CreateWindowW(windowClassName,                   // lpClassName,
+    HWND dummyWindow = CreateWindowW(dummyWindowClassName,                   // lpClassName,
                                      L"Dummy OpenGL Extensions Window", // lpWindowName,
                                      0,                                 // dwStyle,
                                      CW_USEDEFAULT,                     // x,
@@ -299,6 +323,61 @@ u32 CreateTextureFromImage(const char *filename, bool alpha, GLenum wrapMode)
     return texture;
 }
 
+f32 Win32GetWallClockPeriod()
+{
+    LARGE_INTEGER perfCounterFrequency;
+    QueryPerformanceFrequency(&perfCounterFrequency);
+    return 1000.f / perfCounterFrequency.QuadPart;
+}
+
+void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
+{
+    if (!drawingInfo->initialized)
+    {
+        return;
+    }
+    
+    glClearColor(.2f, .3f, .3f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    glUniform1f(glGetUniformLocation(drawingInfo->shaderProgram, "mixAlpha"), drawingInfo->mixAlpha);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, drawingInfo->texture1);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, drawingInfo->texture2);
+    
+    glBindVertexArray(drawingInfo->vao);
+    
+    s32 transformLoc = glGetUniformLocation(drawingInfo->shaderProgram, "transform");
+    f32 timeValue = (f32)(Win32GetWallClock() * Win32GetWallClockPeriod());
+    
+    glm::mat4 trans = glm::mat4(1.f);
+    trans = glm::translate(trans, glm::vec3(.5f, -.5f, 0.f));
+    trans = glm::rotate(
+         trans,
+         glm::radians(timeValue / 3.6f),
+         glm::vec3(0.f,
+         0.f,
+         1.f
+    ));
+    glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(trans));
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    
+    glm::mat4 trans2 = glm::mat4(1.f);
+    trans2 = glm::translate(trans2, glm::vec3(-.5f, .5f, 0.f));
+    trans2 = glm::scale(trans2, glm::vec3(sinf(timeValue / 360.f)));
+    glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(trans2));
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+    if (!SwapBuffers(hdc))
+    {
+        if (MessageBoxW(window, L"Failed to swap buffers", L"OpenGL error", MB_OK) == S_OK)
+        {
+            *running = false;
+        }
+    }
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     if (InitializeOpenGLExtensions(hInstance) == -1)
@@ -313,10 +392,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
     windowClass.lpfnWndProc = WndProc;
     windowClass.hInstance = hInstance;
-    windowClass.hbrBackground = (HBRUSH)(COLOR_BACKGROUND + 1);
+    windowClass.hbrBackground = (HBRUSH)(NULL + 1);
     windowClass.lpszClassName = windowClassName;
 
     RegisterClassW(&windowClass);
+    
+    ApplicationState appState = {};
 
     HWND window = CreateWindowW(windowClassName,     // lpClassName,
                                 L"Learn OpenGL",     // lpWindowName,
@@ -328,7 +409,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                                 NULL,                // hWndParent,
                                 NULL,                // hMenu,
                                 hInstance,           // hInstance,
-                                NULL                 // lpParam
+                                &appState            // lpParam
     );
 
     if (window)
@@ -417,10 +498,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         // MessageBoxA(NULL, (char *)glGetString(GL_VERSION), "OpenGL version", MB_OK);
 
-        LARGE_INTEGER perfCounterFrequency;
-        QueryPerformanceFrequency(&perfCounterFrequency);
-        f32 perfCountDiffMultiplier = 1000.f / perfCounterFrequency.QuadPart;
-
         f32 targetFrameTime = 1000.f / 60;
         f32 deltaTime = targetFrameTime;
         f32 frameTimeAccumulator = 0.f;
@@ -428,7 +505,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         u64 lastFrameCount = Win32GetWallClock();
 
         // Shader initialization.
-
+        
         u32 shaderProgram;
         if (!CreateShaderProgram(&shaderProgram, "vertex_shader.vs", "fragment_shader.fs"))
         {
@@ -449,11 +526,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         glBindBuffer(GL_ARRAY_BUFFER, vbo);
 
         f32 rectVertices[] = {
-            // Positions.    // Colours.    // Texture coords.
-            .5f,  .5f,  0.f, 1.f, 0.f, 0.f, .7f, .7f, // 0: top right.
-            .5f,  -.5f, 0.f, 0.f, 1.f, 0.f, .7f, .3f, // 1: bottom right.
-            -.5f, -.5f, 0.f, 0.f, 0.f, 1.f, .3f, .3f, // 2: bottom left.
-            -.5f, .5f,  0.f, 1.f, 1.f, 0.f, .3f, .7f, // 3: top left.
+            // Positions.    // Texture coords.
+            .5f,  .5f,  0.f, 1.f, 1.f, // 0: top right.
+            .5f,  -.5f, 0.f, 1.f, 0.f, // 1: bottom right.
+            -.5f, -.5f, 0.f, .0f, .0f, // 2: bottom left.
+            -.5f, .5f,  0.f, 0.f, 1.f, // 3: top left.
         };
 
         // Assume VAO and VBO already bound by this point.
@@ -470,29 +547,35 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(rectIndices), rectIndices, GL_STATIC_DRAW);
 
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)0);
-        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(3 * sizeof(float)));
-        glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(6 * sizeof(float)));
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)0);
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)(3 * sizeof(float)));
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
-        glEnableVertexAttribArray(2);
 
         glUseProgram(shaderProgram);
         glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
         glUniform1i(glGetUniformLocation(shaderProgram, "texture2"), 1);
-
-        bool running = true;
+        
         bool wireframeMode = false;
         float mixAlpha = .5f;
-        while (running)
+        
+        appState.drawingInfo.shaderProgram = shaderProgram;
+        appState.drawingInfo.mixAlpha = mixAlpha;
+        appState.drawingInfo.texture1 = texture1;
+        appState.drawingInfo.texture2 = texture2;
+        appState.drawingInfo.vao = vao;
+        appState.drawingInfo.initialized = true;
+        
+        appState.running = true;
+        while (appState.running)
         {
-            Win32ProcessMessages(&running, &wireframeMode, &mixAlpha);
+            Win32ProcessMessages(window, &appState.running, &wireframeMode, &mixAlpha);
 
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
             lastFrameCount = currentFrameCount;
 
-            deltaTime = (f32)diff * perfCountDiffMultiplier;
+            deltaTime = (f32)diff * Win32GetWallClockPeriod();
 
             // Handle resuming from a breakpoint.
             if (deltaTime >= 1000.f)
@@ -513,25 +596,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
                 frameTimeAccumulator = 0.f;
 
-                glClearColor(.2f, .3f, .3f, 1.f);
-                glClear(GL_COLOR_BUFFER_BIT);
-
-                glUniform1f(glGetUniformLocation(shaderProgram, "mixAlpha"), mixAlpha);
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, texture1);
-                glActiveTexture(GL_TEXTURE1);
-                glBindTexture(GL_TEXTURE_2D, texture2);
-
-                glBindVertexArray(vao);
-                glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-                if (!SwapBuffers(hdc))
-                {
-                    if (MessageBoxW(window, L"Failed to swap buffers", L"OpenGL error", MB_OK) == S_OK)
-                    {
-                        running = false;
-                    }
-                }
+                DrawWindow(window, hdc, &appState.running, &appState.drawingInfo);
             }
             else
             {
@@ -545,8 +610,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
 LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
+    local_persist ApplicationState *appState = NULL;
+    
     switch (uMsg)
     {
+    case WM_CREATE: {
+        CREATESTRUCT *createStruct = (CREATESTRUCT *)lParam;
+        appState = (ApplicationState *)createStruct->lpCreateParams;
+        return 0;
+    }
     case WM_CLOSE:
     case WM_DESTROY:
         PostQuitMessage(0);
@@ -557,9 +629,15 @@ LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         EndPaint(hWnd, &paintStruct);
         return 0;
     }
-    case WM_SIZE:
+    case WM_SIZE: {
         ResizeGLViewport(hWnd);
+        HDC hdc = GetDC(hWnd);
+        DrawWindow(hWnd, hdc, &appState->running, &appState->drawingInfo);
         return 0;
+    }
+    case WM_ERASEBKGND:
+        // See: https://stackoverflow.com/questions/43670470/drawn-opengl-disappearing-on-window-resize
+        return 1;
     }
 
     return DefWindowProcW(hWnd, uMsg, wParam, lParam);
