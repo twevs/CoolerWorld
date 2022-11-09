@@ -44,6 +44,11 @@ typedef int64_t s64;
 typedef float f32;
 typedef double f64;
 
+#define NUM_CUBES 10
+global_variable f32 globalFov = 45.f;
+global_variable f32 globalAspectRatio;
+global_variable glm::vec3 globalViewTranslation = {0.f, 0.f, -3.f};
+
 struct DrawingInfo
 {
     bool initialized;
@@ -52,6 +57,9 @@ struct DrawingInfo
     u32 texture1;
     u32 texture2;
     u32 vao;
+    glm::vec3 translations[NUM_CUBES];
+    f32 rotationDivisors[NUM_CUBES];
+    glm::vec3 rotationAxes[NUM_CUBES];
 };
 
 struct ApplicationState
@@ -86,10 +94,18 @@ void Win32ProcessMessages(
         case WM_QUIT:
             *running = false;
             return;
-        case WM_KEYDOWN: {
+        case WM_KEYDOWN:
+        case WM_SYSKEYDOWN: {
             u32 vkCode = (u32)message.wParam;
+            bool altPressed = (message.lParam >> 29) & 1;
             switch (vkCode)
             {
+            case VK_F4:
+                if (altPressed)
+                {
+                            *running = false;
+                }
+                return;
             case VK_ESCAPE:
                 *running = false;
                 return;
@@ -99,7 +115,45 @@ void Win32ProcessMessages(
             case VK_DOWN:
                 *mixAlpha = fmax(*mixAlpha - .025f, 0.f);
                 return;
+            case VK_LEFT:
+                globalFov = fmax(globalFov - 1.f, 0.f);
+                return;
+            case VK_RIGHT:
+                globalFov = fmin(globalFov + 1.f, 90.f);
+                return;
             case 'W':
+                if (altPressed)
+                {
+                    globalViewTranslation.y = fmax(globalViewTranslation.y - .1f, -10.f);
+                }
+                else
+                {
+                    globalViewTranslation.z = fmin(globalViewTranslation.z + .1f, .1f);
+                }
+                return;
+            case 'A':
+                globalViewTranslation.x = fmin(globalViewTranslation.x + .1f, 10.f);
+                return;
+            case 'S':
+                if (altPressed)
+                {
+                    globalViewTranslation.y = fmin(globalViewTranslation.y + .1f, 10.f);
+                }
+                else
+                {
+                    globalViewTranslation.z = fmax(globalViewTranslation.z - .1f, -100.f);
+                }
+                return;
+            case 'D':
+                globalViewTranslation.x = fmax(globalViewTranslation.x - .1f, -10.f);
+                return;
+            case 'Q':
+                globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
+                return;
+            case 'E':
+                globalAspectRatio = fmin(globalAspectRatio + .1f, 10.f);
+                return;
+            case 'X':
                 *wireframeMode = !*wireframeMode;
                 glPolygonMode(GL_FRONT_AND_BACK, *wireframeMode ? GL_LINE : GL_FILL);
                 return;
@@ -338,7 +392,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     }
     
     glClearColor(.2f, .3f, .3f, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
     glUniform1f(glGetUniformLocation(drawingInfo->shaderProgram, "mixAlpha"), drawingInfo->mixAlpha);
     glActiveTexture(GL_TEXTURE0);
@@ -348,26 +402,50 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     
     glBindVertexArray(drawingInfo->vao);
     
-    s32 transformLoc = glGetUniformLocation(drawingInfo->shaderProgram, "transform");
     f32 timeValue = (f32)(Win32GetWallClock() * Win32GetWallClockPeriod());
+        
+    // View matrix: transforms vertices from world to view space.
+    // Here, since we want to view the scene from a slight distance, we transform the vertices
+    // by "pushing them back" (ie, translating them into -Z).
+    glm::mat4 viewMatrix = glm::mat4(1.f);
+    viewMatrix = glm::translate(viewMatrix, globalViewTranslation);
     
-    glm::mat4 trans = glm::mat4(1.f);
-    trans = glm::translate(trans, glm::vec3(.5f, -.5f, 0.f));
-    trans = glm::rotate(
-         trans,
-         glm::radians(timeValue / 3.6f),
-         glm::vec3(0.f,
-         0.f,
-         1.f
-    ));
-    glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(trans));
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    // Projection matrix: transforms vertices from view space to clip space.
+    glm::mat4 projectionMatrix = glm::perspective(glm::radians(globalFov), globalAspectRatio, .1f, 100.f);
     
+    for (u32 cubeIndex = 0; cubeIndex < NUM_CUBES; cubeIndex++)
+    {
+        // Local transform.
+        glm::mat4 localTransform = glm::mat4(1.f);
+        localTransform = glm::rotate(
+            localTransform,
+            glm::radians(timeValue / drawingInfo->rotationDivisors[cubeIndex]),
+            drawingInfo->rotationAxes[cubeIndex]
+        );
+        
+        // Model matrix: transforms vertices from local to world space.
+        glm::mat4 modelMatrix = glm::mat4(1.f);
+        modelMatrix = glm::translate(modelMatrix, drawingInfo->translations[cubeIndex]);
+    
+        s32 localTransformLoc = glGetUniformLocation(drawingInfo->shaderProgram, "localTransform");
+        s32 modelMatrixLoc = glGetUniformLocation(drawingInfo->shaderProgram, "modelMatrix");
+        s32 viewMatrixLoc = glGetUniformLocation(drawingInfo->shaderProgram, "viewMatrix");
+        s32 projectionMatrixLoc = glGetUniformLocation(drawingInfo->shaderProgram, "projectionMatrix");
+
+        glUniformMatrix4fv(localTransformLoc, 1, GL_FALSE, glm::value_ptr(localTransform));
+        glUniformMatrix4fv(modelMatrixLoc, 1, GL_FALSE, glm::value_ptr(modelMatrix));
+        glUniformMatrix4fv(viewMatrixLoc, 1, GL_FALSE, glm::value_ptr(viewMatrix));
+        glUniformMatrix4fv(projectionMatrixLoc, 1, GL_FALSE, glm::value_ptr(projectionMatrix));
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    }
+    
+    /*
     glm::mat4 trans2 = glm::mat4(1.f);
     trans2 = glm::translate(trans2, glm::vec3(-.5f, .5f, 0.f));
     trans2 = glm::scale(trans2, glm::vec3(sinf(timeValue / 360.f)));
     glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(trans2));
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    */
 
     if (!SwapBuffers(hdc))
     {
@@ -489,6 +567,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             __debugbreak();
         }
 
+        glEnable(GL_DEPTH_TEST);
 #ifndef NDEBUG
         // glDebugMessageCallback(&DebugCallback, NULL);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -527,10 +606,42 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         f32 rectVertices[] = {
             // Positions.    // Texture coords.
-            .5f,  .5f,  0.f, 1.f, 1.f, // 0: top right.
-            .5f,  -.5f, 0.f, 1.f, 0.f, // 1: bottom right.
-            -.5f, -.5f, 0.f, .0f, .0f, // 2: bottom left.
-            -.5f, .5f,  0.f, 0.f, 1.f, // 3: top left.
+            
+            // Face 1: front.
+            .5f,  .5f,  .5f, 1.f, 1.f, // 0: top right.
+            .5f,  -.5f, .5f, 1.f, 0.f, // 1: bottom right.
+            -.5f, -.5f, .5f, .0f, .0f, // 2: bottom left.
+            -.5f, .5f,  .5f, 0.f, 1.f, // 3: top left.
+            
+            // Face 2: our right.
+            .5f,  .5f,  -.5f, 1.f, 1.f, // 0: top right.
+            .5f,  -.5f, -.5f, 1.f, 0.f, // 1: bottom right.
+            .5f, -.5f, .5f, .0f, .0f,  // 2: bottom left.
+            .5f, .5f,  .5f, 0.f, 1.f,  // 3: top left.
+            
+            // Face 3: back.
+            -.5f,  .5f,  -.5f, 1.f, 1.f, // 0: top right.
+            -.5f,  -.5f, -.5f, 1.f, 0.f, // 1: bottom right.
+            .5f, -.5f, -.5f, .0f, .0f, // 2: bottom left.
+            .5f, .5f,  -.5f, 0.f, 1.f, // 3: top left.
+            
+            // Face 4: our left.
+            -.5f,  .5f,  .5f, 1.f, 1.f,  // 0: top right.
+            -.5f,  -.5f, .5f, 1.f, 0.f,  // 1: bottom right.
+            -.5f, -.5f, -.5f, .0f, .0f, // 2: bottom left.
+            -.5f, .5f,  -.5f, 0.f, 1.f, // 3: top left.
+            
+            // Face 5: top.
+            .5f,  .5f,  -.5f, 1.f, 1.f, // 0: top right.
+            .5f,  .5f, .5f, 1.f, 0.f,  // 1: bottom right.
+            -.5f, .5f, .5f, .0f, .0f,  // 2: bottom left.
+            -.5f, .5f,  -.5f, 0.f, 1.f, // 3: top left.
+            
+            // Face 6: bottom.
+            .5f,  -.5f,  .5f, 1.f, 1.f,  // 0: top right.
+            .5f,  -.5f, -.5f, 1.f, 0.f, // 1: bottom right.
+            -.5f, -.5f, -.5f, .0f, .0f, // 2: bottom left.
+            -.5f, -.5f,  .5f, 0.f, 1.f,  // 3: top left.
         };
 
         // Assume VAO and VBO already bound by this point.
@@ -542,7 +653,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         u32 rectIndices[] = {
             0, 1, 3, // Triangle 1.
-            1, 2, 3  // Triangle 2.
+            1, 2, 3, // Triangle 2.
+            
+            4, 5, 7, // Triangle 3.
+            5, 6, 7, // Triangle 4.
+            
+            8, 9, 11, // Triangle 5.
+            9, 10, 11, // Triangle 6.
+            
+            12, 13, 15, // Triangle 7.
+            13, 14, 15, // Triangle 8.
+            
+            16, 17, 19, // Triangle 9.
+            17, 18, 19, // Triangle 10.
+            
+            20, 21, 23, // Triangle 11.
+            21, 22, 23  // Triangle 12.
         };
 
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(rectIndices), rectIndices, GL_STATIC_DRAW);
@@ -557,19 +683,47 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         glUniform1i(glGetUniformLocation(shaderProgram, "texture2"), 1);
         
         bool wireframeMode = false;
-        float mixAlpha = .5f;
+        
+        RECT clientRect;
+        GetClientRect(window, &clientRect);
+        f32 width = (f32)clientRect.right;
+        f32 height = (f32)clientRect.bottom;
+        globalAspectRatio = width / height;
         
         appState.drawingInfo.shaderProgram = shaderProgram;
-        appState.drawingInfo.mixAlpha = mixAlpha;
+        appState.drawingInfo.mixAlpha = .5f;
         appState.drawingInfo.texture1 = texture1;
         appState.drawingInfo.texture2 = texture2;
         appState.drawingInfo.vao = vao;
+        
+        srand((u32)Win32GetWallClock());
+        for (u32 cubeIndex = 0; cubeIndex < NUM_CUBES; cubeIndex++)
+        {
+            f32 divisor = fmax(5.f, fmod((f32)rand(), 10.f));
+            divisor = (rand() > RAND_MAX / 2) ? divisor : -divisor;
+            appState.drawingInfo.rotationDivisors[cubeIndex] = (f32)divisor;
+            
+            f32 x = (f32)rand();
+            x /= fmax(x, (f32)rand());
+            x = (rand() > RAND_MAX / 2) ? x : -x;
+            f32 y = (f32)rand();
+            y /= fmax(y, (f32)rand());
+            y = (rand() > RAND_MAX / 2) ? y : -y;
+            f32 z = (f32)rand();
+            z /= fmax(z, (f32)rand());
+            z = (rand() > RAND_MAX / 2) ? z : -z;
+            appState.drawingInfo.translations[cubeIndex] = glm::vec3(
+                 x * pow(cubeIndex, 1.05f),
+                 y * pow(cubeIndex, 1.03f),
+                 -fabs(z * pow(cubeIndex + 2, 1.3f)));
+            appState.drawingInfo.rotationAxes[cubeIndex] = glm::vec3(x, y, z);
+        }
         appState.drawingInfo.initialized = true;
         
         appState.running = true;
         while (appState.running)
         {
-            Win32ProcessMessages(window, &appState.running, &wireframeMode, &mixAlpha);
+            Win32ProcessMessages(window, &appState.running, &wireframeMode, &appState.drawingInfo.mixAlpha);
 
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
