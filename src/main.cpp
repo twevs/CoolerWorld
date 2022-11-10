@@ -2,6 +2,7 @@
 #include <Windows.h>
 #include <wingdi.h>
 #include <winuser.h>
+#include <windowsx.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h> // sinf().
@@ -44,10 +45,14 @@ typedef int64_t s64;
 typedef float f32;
 typedef double f64;
 
+#define PI 3.1415926535f
 #define NUM_CUBES 10
+
 global_variable f32 globalFov = 45.f;
 global_variable f32 globalAspectRatio;
-global_variable glm::vec3 globalViewTranslation = {0.f, 0.f, -3.f};
+global_variable glm::vec3 globalCameraPos;
+global_variable float globalCameraYaw = 0.f;
+global_variable float globalCameraPitch = 0.f;
 
 struct DrawingInfo
 {
@@ -73,11 +78,54 @@ PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
 
 LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
+void DebugPrintA(const char *formatString, ...)
+{
+    CHAR debugString[1024];
+    va_list args;
+    va_start(args, formatString);
+    vsprintf_s(debugString, formatString, args);
+    va_end(args);
+    OutputDebugStringA(debugString);
+}
+
 void ResizeGLViewport(HWND window)
 {
     RECT clientRect;
     GetClientRect(window, &clientRect);
     glViewport(0, 0, clientRect.right, clientRect.bottom);
+}
+
+glm::mat4 GetCameraWorldRotation()
+{
+    // We are rotating in world space so this returns a world-space rotation.
+    glm::vec3 cameraYawAxis = glm::vec3(0.f, 1.f, 0.f);
+    glm::vec3 cameraPitchAxis = glm::vec3(1.f, 0.f, 0.f);
+    
+    glm::mat4 cameraYaw = glm::rotate(glm::mat4(1.f), globalCameraYaw, cameraYawAxis);
+    glm::mat4 cameraPitch = glm::rotate(glm::mat4(1.f), globalCameraPitch, cameraPitchAxis);
+    glm::mat4 cameraRotation = cameraYaw * cameraPitch;
+    
+    return cameraRotation;
+}
+
+glm::vec3 GetCameraRightVector()
+{
+    // World-space rotation * world-space axis -> world-space value.
+    glm::vec4 cameraRightVec = GetCameraWorldRotation() * glm::vec4(1.f, 0.f, 0.f, 0.f);
+    
+    return glm::vec3(cameraRightVec);
+}
+
+glm::vec3 GetCameraForwardVector()
+{
+    glm::vec4 cameraForwardVec = GetCameraWorldRotation() * glm::vec4(0.f, 0.f, -1.f, 0.f);
+    
+    return glm::vec3(cameraForwardVec);
+}
+
+f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
+{
+    return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
 void Win32ProcessMessages(
@@ -89,21 +137,74 @@ void Win32ProcessMessages(
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
     {
+        local_persist bool capturing = false;
+        
+        POINT windowOrigin = {};
+        ClientToScreen(window, &windowOrigin);
+        s16 originX = (s16)windowOrigin.x;
+        s16 originY = (s16)windowOrigin.y;
+        
+        RECT clientRect;
+        GetClientRect(window, &clientRect);
+        s16 centreX = originX + (s16)clientRect.right / 2;
+        s16 centreY = originY + (s16)clientRect.bottom / 2;
+        
         switch (message.message)
         {
         case WM_QUIT:
             *running = false;
             return;
+        case WM_RBUTTONDOWN:
+            SetCapture(window);
+            capturing = true;
+            ShowCursor(FALSE);
+            SetCursorPos(centreX, centreY);
+            return;
+        case WM_RBUTTONUP:
+            ShowCursor(TRUE);
+            ReleaseCapture();
+            capturing = false;
+        case WM_MOUSEMOVE: {
+            bool rightButtonDown = (message.wParam & 0x2);
+            if (capturing)
+            {
+                // NOTE: we have to use these macros instead of LOWORD() and HIWORD() for things to
+                // function correctly on systems with multiple monitors, see:
+                // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-rbuttondown
+                s16 xCoord = originX + GET_X_LPARAM(message.lParam);
+                s16 yCoord = originY + GET_Y_LPARAM(message.lParam);
+                globalCameraYaw -= (xCoord - centreX) / 100.f;
+                globalCameraPitch = clampf(globalCameraPitch - (yCoord - centreY) / 100.f,
+                         -PI/2,
+                         PI/2,
+                         .01f);
+                    
+                SetCursorPos(centreX, centreY);
+            }
+            return;
+        }
+        case WM_MOUSEWHEEL: {
+            s16 wheelRotation = HIWORD(message.wParam);
+            globalFov = clampf(globalFov - (f32)wheelRotation * 3.f / WHEEL_DELTA, 0.f, 90.f);
+            return;
+        }
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
-            u32 vkCode = (u32)message.wParam;
+            // Treat WASD specially.
+            float deltaZ = (GetKeyState('W') < 0) ? .1f : (GetKeyState('S') < 0) ? -.1f : 0.f;
+            float deltaX = (GetKeyState('D') < 0) ? .1f : (GetKeyState('A') < 0) ? -.1f : 0.f;
+            globalCameraPos += GetCameraForwardVector() * deltaZ;
+            globalCameraPos += GetCameraRightVector() * deltaX;
+                
+            // Other keys.
             bool altPressed = (message.lParam >> 29) & 1;
+            u32 vkCode = (u32)message.wParam;
             switch (vkCode)
             {
             case VK_F4:
                 if (altPressed)
                 {
-                            *running = false;
+                    *running = false;
                 }
                 return;
             case VK_ESCAPE:
@@ -120,32 +221,6 @@ void Win32ProcessMessages(
                 return;
             case VK_RIGHT:
                 globalFov = fmin(globalFov + 1.f, 90.f);
-                return;
-            case 'W':
-                if (altPressed)
-                {
-                    globalViewTranslation.y = fmax(globalViewTranslation.y - .1f, -10.f);
-                }
-                else
-                {
-                    globalViewTranslation.z = fmin(globalViewTranslation.z + .1f, .1f);
-                }
-                return;
-            case 'A':
-                globalViewTranslation.x = fmin(globalViewTranslation.x + .1f, 10.f);
-                return;
-            case 'S':
-                if (altPressed)
-                {
-                    globalViewTranslation.y = fmin(globalViewTranslation.y + .1f, 10.f);
-                }
-                else
-                {
-                    globalViewTranslation.z = fmax(globalViewTranslation.z - .1f, -100.f);
-                }
-                return;
-            case 'D':
-                globalViewTranslation.x = fmax(globalViewTranslation.x - .1f, -10.f);
                 return;
             case 'Q':
                 globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
@@ -268,16 +343,6 @@ int InitializeOpenGLExtensions(HINSTANCE hInstance)
     DestroyWindow(dummyWindow);
 
     return 0;
-}
-
-void DebugPrintA(const char *formatString, ...)
-{
-    CHAR debugString[1024];
-    va_list args;
-    va_start(args, formatString);
-    vsprintf_s(debugString, formatString, args);
-    va_end(args);
-    OutputDebugStringA(debugString);
 }
 
 bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shaderFilename)
@@ -403,12 +468,28 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     glBindVertexArray(drawingInfo->vao);
     
     f32 timeValue = (f32)(Win32GetWallClock() * Win32GetWallClockPeriod());
+    
+    // The camera target should always be camera pos + local forward vector.
+    // We want to be able to rotate the camera, however.
+    // How do we obtain the forward vector? Translate world forward vec by camera world rotation matrix.
+    glm::vec3 cameraForwardVec = GetCameraForwardVector();
+    
+    // float fvX = cosf(PI/2 + globalCameraYaw);
+    // float fvY = sinf(globalCameraPitch);
+    // float fvZ = -sinf(PI/2 + globalCameraYaw);
+    // glm::vec3 cameraForwardVec = glm::normalize(glm::vec3(fvX, fvY, fvZ));
+    
+    glm::vec3 cameraTarget = globalCameraPos + cameraForwardVec;
         
-    // View matrix: transforms vertices from world to view space.
-    // Here, since we want to view the scene from a slight distance, we transform the vertices
-    // by "pushing them back" (ie, translating them into -Z).
-    glm::mat4 viewMatrix = glm::mat4(1.f);
-    viewMatrix = glm::translate(viewMatrix, globalViewTranslation);
+    // The camera direction vector points from the camera target to the camera itself, maintaining
+    // the OpenGL convention of the Z-axis being positive towards the viewer.
+    glm::vec3 cameraDirection = glm::normalize(globalCameraPos - cameraTarget);
+    
+    glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
+    glm::vec3 cameraRightVec = glm::cross(upVector, cameraDirection);
+    glm::vec3 cameraUpVec = glm::cross(cameraDirection, cameraRightVec);
+    
+    glm::mat4 viewMatrix = glm::lookAt(globalCameraPos, cameraTarget, cameraUpVec);
     
     // Projection matrix: transforms vertices from view space to clip space.
     glm::mat4 projectionMatrix = glm::perspective(glm::radians(globalFov), globalAspectRatio, .1f, 100.f);
@@ -417,11 +498,13 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     {
         // Local transform.
         glm::mat4 localTransform = glm::mat4(1.f);
+        /*
         localTransform = glm::rotate(
             localTransform,
             glm::radians(timeValue / drawingInfo->rotationDivisors[cubeIndex]),
             drawingInfo->rotationAxes[cubeIndex]
         );
+        */
         
         // Model matrix: transforms vertices from local to world space.
         glm::mat4 modelMatrix = glm::mat4(1.f);
@@ -744,13 +827,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // v-blank? How many users actually disable v-sync anyway?
             if (frameTimeAccumulator >= targetFrameTime)
             {
-                WCHAR frameTimeString[32];
-                swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
-                OutputDebugStringW(frameTimeString);
+                // WCHAR frameTimeString[32];
+                // swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
+                // OutputDebugStringW(frameTimeString);
 
                 frameTimeAccumulator = 0.f;
 
                 DrawWindow(window, hdc, &appState.running, &appState.drawingInfo);
+                
+                // DebugPrintA("Camera pitch: %f\n", globalCameraPitch);
+                // DebugPrintA("Camera yaw: %f\n", globalCameraYaw);
             }
             else
             {
