@@ -449,6 +449,47 @@ f32 Win32GetWallClockPeriod()
     return 1000.f / perfCounterFrequency.QuadPart;
 }
 
+glm::mat4 LookAt(
+     glm::vec3 cameraPosition,
+     glm::vec3 cameraTarget,
+     glm::vec3 cameraUpVector,
+     float farPlaneDistance)
+{
+    glm::mat4 inverseTranslation = glm::mat4(1.f);
+    inverseTranslation[3][0] = -cameraPosition.x;
+    inverseTranslation[3][1] = -cameraPosition.y;
+    inverseTranslation[3][2] = -cameraPosition.z;
+    
+    glm::vec3 direction = glm::normalize(cameraPosition - cameraTarget);
+    glm::vec3 rightVector = glm::normalize(glm::cross(cameraUpVector, direction));
+    glm::vec3 upVector = (glm::cross(direction, rightVector));
+    
+    // TODO: investigate why filling the last column with the negative of cameraPosition does not
+    // produce the same effect as the multiplication by the inverse translation.
+    glm::mat4 inverseRotation = glm::mat4(1.f);
+    inverseRotation[0][0] = rightVector.x;
+    inverseRotation[1][0] = rightVector.y;
+    inverseRotation[2][0] = rightVector.z;
+    inverseRotation[0][1] = upVector.x;
+    inverseRotation[1][1] = upVector.y;
+    inverseRotation[2][1] = upVector.z;
+    inverseRotation[0][2] = direction.x;
+    inverseRotation[1][2] = direction.y;
+    inverseRotation[2][2] = direction.z;
+    
+    // TODO: figure out what the deal is with the inverse scaling matrix in "Computer graphics:
+    // Principles and practice", p. 306. I'm leaving this unused for now as it breaks rendering.
+    glm::mat4 inverseScale =
+    {
+        1.f / (farPlaneDistance * (tanf(globalFov / globalAspectRatio * PI / 180.f) / 2.f)), 0.f, 0.f, 0.f,
+        0.f, 1.f / (farPlaneDistance * (tanf(globalFov * PI / 180.f) / 2.f)), 0.f, 0.f,
+        0.f, 0.f, 1.f / farPlaneDistance, 0.f,
+        0.f, 0.f, 0.f, 1.f
+    };
+    
+    return inverseRotation * inverseTranslation;
+}
+
 void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
 {
     if (!drawingInfo->initialized)
@@ -472,7 +513,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     // The camera target should always be camera pos + local forward vector.
     // We want to be able to rotate the camera, however.
     // How do we obtain the forward vector? Translate world forward vec by camera world rotation matrix.
-    glm::vec3 cameraForwardVec = GetCameraForwardVector();
+    glm::vec3 cameraForwardVec = glm::normalize(GetCameraForwardVector());
     
     // float fvX = cosf(PI/2 + globalCameraYaw);
     // float fvY = sinf(globalCameraPitch);
@@ -486,13 +527,18 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     glm::vec3 cameraDirection = glm::normalize(globalCameraPos - cameraTarget);
     
     glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
-    glm::vec3 cameraRightVec = glm::cross(upVector, cameraDirection);
-    glm::vec3 cameraUpVec = glm::cross(cameraDirection, cameraRightVec);
+    glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
+    glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
     
-    glm::mat4 viewMatrix = glm::lookAt(globalCameraPos, cameraTarget, cameraUpVec);
+    float farPlaneDistance = 100.f;
+    glm::mat4 viewMatrix = LookAt(globalCameraPos, cameraTarget, cameraUpVec, farPlaneDistance);
     
     // Projection matrix: transforms vertices from view space to clip space.
-    glm::mat4 projectionMatrix = glm::perspective(glm::radians(globalFov), globalAspectRatio, .1f, 100.f);
+    glm::mat4 projectionMatrix = glm::perspective(
+        glm::radians(globalFov), 
+        globalAspectRatio, 
+        .1f, 
+        farPlaneDistance);
     
     for (u32 cubeIndex = 0; cubeIndex < NUM_CUBES; cubeIndex++)
     {
