@@ -46,7 +46,6 @@ typedef float f32;
 typedef double f64;
 
 #define PI 3.1415926535f
-#define NUM_CUBES 10
 
 global_variable f32 globalFov = 45.f;
 global_variable f32 globalAspectRatio;
@@ -57,14 +56,34 @@ global_variable float globalCameraPitch = 0.f;
 struct DrawingInfo
 {
     bool initialized;
-    u32 shaderProgram;
+    
     float mixAlpha;
     u32 texture1;
     u32 texture2;
-    u32 vao;
-    glm::vec3 translations[NUM_CUBES];
-    f32 rotationDivisors[NUM_CUBES];
-    glm::vec3 rotationAxes[NUM_CUBES];
+    
+    u32 containerShaderProgram;
+    u32 lightShaderProgram;
+    
+    glm::vec3 containerPos;
+    u32 containerVao;
+    
+    glm::vec3 lightPos;
+    u32 lightVao;
+    
+    float ambientStrength = .1f;
+    float diffuseStrength = 1.f;
+    float specularStrength = .5f;
+    float shininess = 32;
+};
+        
+struct VaoInformation
+{
+    f32 *vertices;
+    u32 verticesSize;
+    s32 *elemCounts;
+    u32 elementCountsSize;
+    u32 *indices;
+    u32 indicesSize;
 };
 
 struct ApplicationState
@@ -132,7 +151,7 @@ void Win32ProcessMessages(
     HWND window,
     bool *running,
     bool *wireframeMode,
-    float *mixAlpha)
+    DrawingInfo *drawingInfo)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
@@ -211,16 +230,44 @@ void Win32ProcessMessages(
                 *running = false;
                 return;
             case VK_UP:
-                *mixAlpha = fmin(*mixAlpha + .025f, 1.f);
+                if (altPressed)
+                {
+                    drawingInfo->diffuseStrength = fmin(drawingInfo->diffuseStrength + .1f, 1.f);
+                }
+                else
+                {
+                    drawingInfo->ambientStrength = fmin(drawingInfo->ambientStrength + .1f, 1.f);
+                }
                 return;
             case VK_DOWN:
-                *mixAlpha = fmax(*mixAlpha - .025f, 0.f);
+                if (altPressed)
+                {
+                    drawingInfo->diffuseStrength = fmax(drawingInfo->diffuseStrength - .1f, 0.f);
+                }
+                else
+                {
+                    drawingInfo->ambientStrength = fmax(drawingInfo->ambientStrength - .1f, 0.f);
+                }
                 return;
             case VK_LEFT:
-                globalFov = fmax(globalFov - 1.f, 0.f);
+                if (altPressed)
+                {
+                    drawingInfo->shininess = fmax(drawingInfo->shininess / 2.f, 2.f);
+                }
+                else
+                {
+                    drawingInfo->specularStrength = fmax(drawingInfo->specularStrength - .1f, 0.f);
+                }
                 return;
             case VK_RIGHT:
-                globalFov = fmin(globalFov + 1.f, 90.f);
+                if (altPressed)
+                {
+                    drawingInfo->shininess = fmin(drawingInfo->shininess * 2.f, 512.f);
+                }
+                else
+                {
+                    drawingInfo->specularStrength = fmin(drawingInfo->specularStrength + .1f, 1.f);
+                }
                 return;
             case 'Q':
                 globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
@@ -497,18 +544,14 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         return;
     }
     
-    glClearColor(.2f, .3f, .3f, 1.f);
+    glClearColor(.1f, .1f, .1f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glUniform1f(glGetUniformLocation(drawingInfo->shaderProgram, "mixAlpha"), drawingInfo->mixAlpha);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, drawingInfo->texture1);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, drawingInfo->texture2);
-    
-    glBindVertexArray(drawingInfo->vao);
-    
-    f32 timeValue = (f32)(Win32GetWallClock() * Win32GetWallClockPeriod());
+    // glUniform1f(glGetUniformLocation(drawingInfo->shaderProgram, "mixAlpha"), drawingInfo->mixAlpha);
+    // glActiveTexture(GL_TEXTURE0);
+    // glBindTexture(GL_TEXTURE_2D, drawingInfo->texture1);
+    // glActiveTexture(GL_TEXTURE1);
+    // glBindTexture(GL_TEXTURE_2D, drawingInfo->texture2);
     
     // The camera target should always be camera pos + local forward vector.
     // We want to be able to rotate the camera, however.
@@ -540,41 +583,67 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         .1f, 
         farPlaneDistance);
     
-    for (u32 cubeIndex = 0; cubeIndex < NUM_CUBES; cubeIndex++)
+    f32 lightColor[] = { 1.f, 1.f, 1.f };
+    f32 objectColor[] = { 1.f, .5f, .31f };
+    
+    f32 radius = 5.f;
+    drawingInfo->lightPos.x = radius * cosf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
+    drawingInfo->lightPos.z = radius * sinf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
+    
+    // Container.
     {
-        // Local transform.
-        glm::mat4 localTransform = glm::mat4(1.f);
-        /*
-        localTransform = glm::rotate(
-            localTransform,
-            glm::radians(timeValue / drawingInfo->rotationDivisors[cubeIndex]),
-            drawingInfo->rotationAxes[cubeIndex]
-        );
-        */
+        u32 shaderProgram = drawingInfo->containerShaderProgram;
+        glUseProgram(shaderProgram);
+        glUniform1f(glGetUniformLocation(shaderProgram, "ambientStrength"), drawingInfo->ambientStrength);
+        glUniform1f(glGetUniformLocation(shaderProgram, "diffuseStrength"), drawingInfo->diffuseStrength);
+        glUniform1f(glGetUniformLocation(shaderProgram, "specularStrength"), drawingInfo->specularStrength);
+        glUniform1f(glGetUniformLocation(shaderProgram, "shininess"), drawingInfo->shininess);
         
+        glUniform3fv(glGetUniformLocation(shaderProgram, "lightPos"), 1, glm::value_ptr(drawingInfo->lightPos));
+        glUniform3fv(glGetUniformLocation(shaderProgram, "cameraPos"), 1, glm::value_ptr(globalCameraPos));
+        glUniform3fv(glGetUniformLocation(shaderProgram, "lightColor"), 1, lightColor);
+        glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, objectColor);
+        
+        glBindVertexArray(drawingInfo->containerVao);
+    
         // Model matrix: transforms vertices from local to world space.
         glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, drawingInfo->translations[cubeIndex]);
-    
-        s32 localTransformLoc = glGetUniformLocation(drawingInfo->shaderProgram, "localTransform");
-        s32 modelMatrixLoc = glGetUniformLocation(drawingInfo->shaderProgram, "modelMatrix");
-        s32 viewMatrixLoc = glGetUniformLocation(drawingInfo->shaderProgram, "viewMatrix");
-        s32 projectionMatrixLoc = glGetUniformLocation(drawingInfo->shaderProgram, "projectionMatrix");
+        modelMatrix = glm::translate(modelMatrix, drawingInfo->containerPos);
+        
+        glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
-        glUniformMatrix4fv(localTransformLoc, 1, GL_FALSE, glm::value_ptr(localTransform));
+        s32 modelMatrixLoc = glGetUniformLocation(drawingInfo->containerShaderProgram, "modelMatrix");
+        s32 normalMatrixLoc = glGetUniformLocation(drawingInfo->containerShaderProgram, "normalMatrix");
+        s32 viewMatrixLoc = glGetUniformLocation(drawingInfo->containerShaderProgram, "viewMatrix");
+        s32 projectionMatrixLoc = glGetUniformLocation(drawingInfo->containerShaderProgram, "projectionMatrix");
+    
         glUniformMatrix4fv(modelMatrixLoc, 1, GL_FALSE, glm::value_ptr(modelMatrix));
+        glUniformMatrix3fv(normalMatrixLoc, 1, GL_FALSE, glm::value_ptr(normalMatrix));
         glUniformMatrix4fv(viewMatrixLoc, 1, GL_FALSE, glm::value_ptr(viewMatrix));
         glUniformMatrix4fv(projectionMatrixLoc, 1, GL_FALSE, glm::value_ptr(projectionMatrix));
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
     }
     
-    /*
-    glm::mat4 trans2 = glm::mat4(1.f);
-    trans2 = glm::translate(trans2, glm::vec3(-.5f, .5f, 0.f));
-    trans2 = glm::scale(trans2, glm::vec3(sinf(timeValue / 360.f)));
-    glUniformMatrix4fv(transformLoc, 1, GL_FALSE, glm::value_ptr(trans2));
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-    */
+    // Light.
+    {
+        glUseProgram(drawingInfo->lightShaderProgram);
+        glUniform3fv(glGetUniformLocation(drawingInfo->lightShaderProgram, "lightColor"), 1, lightColor);
+        
+        glBindVertexArray(drawingInfo->lightVao);
+        
+        // Model matrix: transforms vertices from local to world space.
+        glm::mat4 modelMatrix = glm::mat4(1.f);
+        modelMatrix = glm::translate(modelMatrix, drawingInfo->lightPos);
+        
+        s32 modelMatrixLoc = glGetUniformLocation(drawingInfo->lightShaderProgram, "modelMatrix");
+        s32 viewMatrixLoc = glGetUniformLocation(drawingInfo->lightShaderProgram, "viewMatrix");
+        s32 projectionMatrixLoc = glGetUniformLocation(drawingInfo->lightShaderProgram, "projectionMatrix");
+
+        glUniformMatrix4fv(modelMatrixLoc, 1, GL_FALSE, glm::value_ptr(modelMatrix));
+        glUniformMatrix4fv(viewMatrixLoc, 1, GL_FALSE, glm::value_ptr(viewMatrix));
+        glUniformMatrix4fv(projectionMatrixLoc, 1, GL_FALSE, glm::value_ptr(projectionMatrix));
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    }
 
     if (!SwapBuffers(hdc))
     {
@@ -583,6 +652,53 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
             *running = false;
         }
     }
+}
+
+u32 CreateVAO(VaoInformation *vaoInfo)
+{
+    u32 vao;
+    glGenVertexArrays(1, &vao);
+    glBindVertexArray(vao);
+
+    // Create and bind VBO.
+    u32 vbo;
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+    // Assume VAO and VBO already bound by this point.
+    glBufferData(GL_ARRAY_BUFFER, vaoInfo->verticesSize, vaoInfo->vertices, GL_STATIC_DRAW);
+
+    u32 ebo;
+    glGenBuffers(1, &ebo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, vaoInfo->indicesSize, vaoInfo->indices, GL_STATIC_DRAW);
+    
+    u32 total = 0;
+    for (u32 elemCount = 0; elemCount < vaoInfo->elementCountsSize; elemCount++)
+    {
+        total += vaoInfo->elemCounts[elemCount];
+    }
+
+    u32 accumulator = 0;
+    for (u32 index = 0; index < vaoInfo->elementCountsSize; index++)
+    {
+        u32 elemCount = vaoInfo->elemCounts[index];
+        
+        glVertexAttribPointer(
+            index,
+            elemCount,
+            GL_FLOAT,
+            GL_FALSE,
+            total * sizeof(float),
+            (void *)(accumulator * sizeof(float)));
+        
+        accumulator += elemCount;
+        
+        glEnableVertexAttribArray(index);
+    }
+    
+    return vao;
 }
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
@@ -714,71 +830,61 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         // Shader initialization.
         
-        u32 shaderProgram;
-        if (!CreateShaderProgram(&shaderProgram, "vertex_shader.vs", "fragment_shader.fs"))
+        u32 containerShaderProgram;
+        if (!CreateShaderProgram(&containerShaderProgram, "vertex_shader.vs", "fragment_shader.fs"))
+        {
+            return -1;
+        }
+        u32 lightShaderProgram;
+        if (!CreateShaderProgram(&lightShaderProgram, "vertex_shader.vs", "light_fragment_shader.fs"))
         {
             return -1;
         }
 
         u32 texture1 = CreateTextureFromImage("container.jpg", false, GL_REPEAT);
         u32 texture2 = CreateTextureFromImage("awesomeface.png", true, GL_REPEAT);
-
-        // Create and bind VAO.
-        u32 vao;
-        glGenVertexArrays(1, &vao);
-        glBindVertexArray(vao);
-
-        // Create and bind VBO.
-        u32 vbo;
-        glGenBuffers(1, &vbo);
-        glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
+        
         f32 rectVertices[] = {
-            // Positions.    // Texture coords.
+            // Positions.    // Normals.
             
             // Face 1: front.
-            .5f,  .5f,  .5f, 1.f, 1.f, // 0: top right.
-            .5f,  -.5f, .5f, 1.f, 0.f, // 1: bottom right.
-            -.5f, -.5f, .5f, .0f, .0f, // 2: bottom left.
-            -.5f, .5f,  .5f, 0.f, 1.f, // 3: top left.
+            .5f,  .5f,  .5f, 0.f, 0.f, 1.f, // 0: top right.
+            .5f,  -.5f, .5f, 0.f, 0.f, 1.f, // 1: bottom right.
+            -.5f, -.5f, .5f, 0.f, 0.f, 1.f, // 2: bottom left.
+            -.5f, .5f,  .5f, 0.f, 0.f, 1.f, // 3: top left.
             
             // Face 2: our right.
-            .5f,  .5f,  -.5f, 1.f, 1.f, // 0: top right.
-            .5f,  -.5f, -.5f, 1.f, 0.f, // 1: bottom right.
-            .5f, -.5f, .5f, .0f, .0f,  // 2: bottom left.
-            .5f, .5f,  .5f, 0.f, 1.f,  // 3: top left.
+            .5f,  .5f,  -.5f, 1.f, 0.f, 0.f, // 0: top right.
+            .5f,  -.5f, -.5f, 1.f, 0.f, 0.f, // 1: bottom right.
+            .5f, -.5f, .5f,   1.f, 0.f, 0.f,  // 2: bottom left.
+            .5f, .5f,  .5f,   1.f, 0.f, 0.f,  // 3: top left.
             
             // Face 3: back.
-            -.5f,  .5f,  -.5f, 1.f, 1.f, // 0: top right.
-            -.5f,  -.5f, -.5f, 1.f, 0.f, // 1: bottom right.
-            .5f, -.5f, -.5f, .0f, .0f, // 2: bottom left.
-            .5f, .5f,  -.5f, 0.f, 1.f, // 3: top left.
+            -.5f,  .5f,  -.5f, 0.f, 0.f, -1.f, // 0: top right.
+            -.5f,  -.5f, -.5f, 0.f, 0.f, -1.f, // 1: bottom right.
+            .5f, -.5f, -.5f,   0.f, 0.f, -1.f, // 2: bottom left.
+            .5f, .5f,  -.5f,   0.f, 0.f, -1.f, // 3: top left.
             
             // Face 4: our left.
-            -.5f,  .5f,  .5f, 1.f, 1.f,  // 0: top right.
-            -.5f,  -.5f, .5f, 1.f, 0.f,  // 1: bottom right.
-            -.5f, -.5f, -.5f, .0f, .0f, // 2: bottom left.
-            -.5f, .5f,  -.5f, 0.f, 1.f, // 3: top left.
+            -.5f,  .5f,  .5f, -1.f, 0.f, 0.f,  // 0: top right.
+            -.5f,  -.5f, .5f, -1.f, 0.f, 0.f,  // 1: bottom right.
+            -.5f, -.5f, -.5f, -1.f, 0.f, 0.f, // 2: bottom left.
+            -.5f, .5f,  -.5f, -1.f, 0.f, 0.f, // 3: top left.
             
             // Face 5: top.
-            .5f,  .5f,  -.5f, 1.f, 1.f, // 0: top right.
-            .5f,  .5f, .5f, 1.f, 0.f,  // 1: bottom right.
-            -.5f, .5f, .5f, .0f, .0f,  // 2: bottom left.
-            -.5f, .5f,  -.5f, 0.f, 1.f, // 3: top left.
+            .5f,  .5f,  -.5f, 0.f, 1.f, 0.f, // 0: top right.
+            .5f,  .5f, .5f,   0.f, 1.f, 0.f,  // 1: bottom right.
+            -.5f, .5f, .5f,   0.f, 1.f, 0.f,  // 2: bottom left.
+            -.5f, .5f,  -.5f, 0.f, 1.f, 0.f, // 3: top left.
             
             // Face 6: bottom.
-            .5f,  -.5f,  .5f, 1.f, 1.f,  // 0: top right.
-            .5f,  -.5f, -.5f, 1.f, 0.f, // 1: bottom right.
-            -.5f, -.5f, -.5f, .0f, .0f, // 2: bottom left.
-            -.5f, -.5f,  .5f, 0.f, 1.f,  // 3: top left.
+            .5f,  -.5f,  .5f, 0.f, -1.f, 0.f,  // 0: top right.
+            .5f,  -.5f, -.5f, 0.f, -1.f, 0.f, // 1: bottom right.
+            -.5f, -.5f, -.5f, 0.f, -1.f, 0.f, // 2: bottom left.
+            -.5f, -.5f,  .5f, 0.f, -1.f, 0.f,  // 3: top left.
         };
-
-        // Assume VAO and VBO already bound by this point.
-        glBufferData(GL_ARRAY_BUFFER, sizeof(rectVertices), rectVertices, GL_STATIC_DRAW);
-
-        u32 ebo;
-        glGenBuffers(1, &ebo);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+        
+        s32 elemCounts[] = { 3, 3 };
 
         u32 rectIndices[] = {
             0, 1, 3, // Triangle 1.
@@ -799,17 +905,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             20, 21, 23, // Triangle 11.
             21, 22, 23  // Triangle 12.
         };
-
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(rectIndices), rectIndices, GL_STATIC_DRAW);
-
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)0);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void *)(3 * sizeof(float)));
-        glEnableVertexAttribArray(0);
-        glEnableVertexAttribArray(1);
-
-        glUseProgram(shaderProgram);
-        glUniform1i(glGetUniformLocation(shaderProgram, "texture1"), 0);
-        glUniform1i(glGetUniformLocation(shaderProgram, "texture2"), 1);
+        
+        VaoInformation vaoInfo = {};
+        vaoInfo.vertices = rectVertices;
+        vaoInfo.verticesSize = sizeof(rectVertices);
+        vaoInfo.elemCounts = elemCounts;
+        vaoInfo.elementCountsSize = 2;
+        vaoInfo.indices = rectIndices;
+        vaoInfo.indicesSize = sizeof(rectIndices);
+        
+        u32 containerVao = CreateVAO(&vaoInfo);
+        u32 lightVao = CreateVAO(&vaoInfo);
         
         bool wireframeMode = false;
         
@@ -819,40 +925,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         f32 height = (f32)clientRect.bottom;
         globalAspectRatio = width / height;
         
-        appState.drawingInfo.shaderProgram = shaderProgram;
         appState.drawingInfo.mixAlpha = .5f;
         appState.drawingInfo.texture1 = texture1;
         appState.drawingInfo.texture2 = texture2;
-        appState.drawingInfo.vao = vao;
         
-        srand((u32)Win32GetWallClock());
-        for (u32 cubeIndex = 0; cubeIndex < NUM_CUBES; cubeIndex++)
-        {
-            f32 divisor = fmax(5.f, fmod((f32)rand(), 10.f));
-            divisor = (rand() > RAND_MAX / 2) ? divisor : -divisor;
-            appState.drawingInfo.rotationDivisors[cubeIndex] = (f32)divisor;
-            
-            f32 x = (f32)rand();
-            x /= fmax(x, (f32)rand());
-            x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)rand();
-            y /= fmax(y, (f32)rand());
-            y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)rand();
-            z /= fmax(z, (f32)rand());
-            z = (rand() > RAND_MAX / 2) ? z : -z;
-            appState.drawingInfo.translations[cubeIndex] = glm::vec3(
-                 x * pow(cubeIndex, 1.05f),
-                 y * pow(cubeIndex, 1.03f),
-                 -fabs(z * pow(cubeIndex + 2, 1.3f)));
-            appState.drawingInfo.rotationAxes[cubeIndex] = glm::vec3(x, y, z);
-        }
+        appState.drawingInfo.containerShaderProgram = containerShaderProgram;
+        appState.drawingInfo.lightShaderProgram = lightShaderProgram;
+        appState.drawingInfo.containerPos = { 0.f, 0.f, 0.f };
+        appState.drawingInfo.containerVao = containerVao;
+        // NOTE: X and Y values are set in the drawing function so that the light rotates over time.
+        appState.drawingInfo.lightPos = { 0.f, 2.f, 0.f };
+        appState.drawingInfo.lightVao = lightVao;
         appState.drawingInfo.initialized = true;
         
         appState.running = true;
         while (appState.running)
         {
-            Win32ProcessMessages(window, &appState.running, &wireframeMode, &appState.drawingInfo.mixAlpha);
+            Win32ProcessMessages(window, &appState.running, &wireframeMode, &appState.drawingInfo);
 
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
