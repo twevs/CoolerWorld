@@ -2,10 +2,12 @@
 
 // in vec2 ourTexCoord;
 
-in vec3 fragWorldPos;
+in vec3 fragViewPos;
 in vec3 normal;
 
 out vec4 fragColor;
+
+uniform mat4 viewMatrix;
 
 uniform float ambientStrength;
 uniform float diffuseStrength;
@@ -24,12 +26,12 @@ void main()
 {
     vec3 ambient = ambientStrength * lightColor;
     
-    vec3 lightDir = normalize(lightPos - fragWorldPos);
+    vec3 lightDir = normalize(vec3(viewMatrix * vec4(lightPos, 1.f)) - fragViewPos);
     float diff = max(dot(normalize(normal), lightDir), 0.f);
     vec3 diffuse = diffuseStrength * diff * lightColor;
     
     vec3 reflectionDir = reflect(-lightDir, normal);
-    vec3 cameraDir = normalize(cameraPos - fragWorldPos);
+    vec3 cameraDir = normalize(vec3(viewMatrix * vec4(cameraPos, 1.f)) - fragViewPos);
     float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), shininess);
     vec3 specular = specularStrength * spec * lightColor;
     
