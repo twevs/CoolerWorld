@@ -31,6 +31,9 @@
 #define myAssert(x)
 #endif
 
+#define myArraySize(arr) \
+    (sizeof((arr)) / sizeof((arr[0])));
+
 typedef unsigned char uchar;
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -53,13 +56,20 @@ global_variable glm::vec3 globalCameraPos;
 global_variable float globalCameraYaw = 0.f;
 global_variable float globalCameraPitch = 0.f;
 
+struct LightData
+{
+    glm::vec3 lightDiffuse = glm::vec3(.5f);
+    glm::vec3 lightAmbient = glm::vec3(.2f);
+    glm::vec3 lightSpecular = glm::vec3(1.f);
+};
+
 struct DrawingInfo
 {
     bool initialized;
     
-    float mixAlpha;
-    u32 texture1;
-    u32 texture2;
+    u32 diffuseMap;
+    u32 specularMap;
+    u32 emissiveMap;
     
     u32 containerShaderProgram;
     u32 lightShaderProgram;
@@ -68,6 +78,8 @@ struct DrawingInfo
     u32 containerVao;
     
     glm::vec3 lightPos;
+    LightData lightData;
+    f32 lightRadius = 3.f;
     u32 lightVao;
 };
         
@@ -231,16 +243,10 @@ void Win32ProcessMessages(
                 drawingInfo->lightPos.y -= .1f;
                 return;
             case VK_LEFT:
-                {
-                    glm::vec3 lightToContainer = glm::normalize(drawingInfo->containerPos - drawingInfo->lightPos);
-                    drawingInfo->lightPos -= lightToContainer * .1f;
-                }
+                drawingInfo->lightRadius -= .1f;
                 return;
             case VK_RIGHT:
-                {
-                    glm::vec3 lightToContainer = glm::normalize(drawingInfo->containerPos - drawingInfo->lightPos);
-                    drawingInfo->lightPos += lightToContainer * .1f;
-                }
+                drawingInfo->lightRadius += .1f;
                 return;
             case 'Q':
                 globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
@@ -251,6 +257,24 @@ void Win32ProcessMessages(
             case 'X':
                 *wireframeMode = !*wireframeMode;
                 glPolygonMode(GL_FRONT_AND_BACK, *wireframeMode ? GL_LINE : GL_FILL);
+                return;
+            case 'U':
+                drawingInfo->lightData.lightAmbient += glm::vec3(.1f);
+                return;
+            case 'I':
+                drawingInfo->lightData.lightDiffuse += glm::vec3(.1f);
+                return;
+            case 'O':
+                drawingInfo->lightData.lightSpecular += glm::vec3(.1f);
+                return;
+            case 'J':
+                drawingInfo->lightData.lightAmbient -= glm::vec3(.1f);
+                return;
+            case 'K':
+                drawingInfo->lightData.lightDiffuse -= glm::vec3(.1f);
+                return;
+            case 'L':
+                drawingInfo->lightData.lightSpecular -= glm::vec3(.1f);
                 return;
             }
             return;
@@ -515,6 +539,11 @@ glm::mat4 LookAt(
     return inverseRotation * inverseTranslation;
 }
 
+void SetShaderUniformSampler(u32 shaderProgram, const char *uniformName, u32 slot)
+{
+    glUniform1i(glGetUniformLocation(shaderProgram, uniformName), slot);
+}
+
 void SetShaderUniformFloat(u32 shaderProgram, const char *uniformName, float value)
 {
     glUniform1f(glGetUniformLocation(shaderProgram, uniformName), value);
@@ -545,12 +574,6 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     glClearColor(.1f, .1f, .1f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    // glUniform1f(glGetUniformLocation(drawingInfo->shaderProgram, "mixAlpha"), drawingInfo->mixAlpha);
-    // glActiveTexture(GL_TEXTURE0);
-    // glBindTexture(GL_TEXTURE_2D, drawingInfo->texture1);
-    // glActiveTexture(GL_TEXTURE1);
-    // glBindTexture(GL_TEXTURE_2D, drawingInfo->texture2);
-    
     // The camera target should always be camera pos + local forward vector.
     // We want to be able to rotate the camera, however.
     // How do we obtain the forward vector? Translate world forward vec by camera world rotation matrix.
@@ -581,9 +604,8 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         .1f, 
         farPlaneDistance);
     
-    f32 radius = 5.f;
-    // drawingInfo->lightPos.x = radius * cosf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
-    // drawingInfo->lightPos.z = radius * sinf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
+    drawingInfo->lightPos.x = drawingInfo->lightRadius * cosf(Win32GetTime());
+    drawingInfo->lightPos.z = drawingInfo->lightRadius * sinf(Win32GetTime());
     
     glm::vec3 lightColor = glm::vec3(1.f);
     
@@ -592,22 +614,20 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         u32 shaderProgram = drawingInfo->containerShaderProgram;
         glUseProgram(shaderProgram);
         
-        f32 objectAmbient[] = { 0.f, .1f, .06f };
-        f32 objectDiffuse[] = { 0.f, .50980392f, .50980392f };
-        f32 objectSpecular[] = { .50196078f, .50196078f, .50196078f };
-        f32 objectShininess = .25f;
-        glUniform3fv(glGetUniformLocation(shaderProgram, "material.ambient"), 1, objectAmbient);
-        glUniform3fv(glGetUniformLocation(shaderProgram, "material.diffuse"), 1, objectDiffuse);
-        glUniform3fv(glGetUniformLocation(shaderProgram, "material.specular"), 1, objectSpecular);
-        SetShaderUniformFloat(shaderProgram, "material.shininess", objectShininess * 128.f);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, drawingInfo->diffuseMap);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, drawingInfo->specularMap);
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_2D, drawingInfo->emissiveMap);
+        
+        SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
         
         SetShaderUniformVec3(shaderProgram, "light.position", drawingInfo->lightPos);
-        glm::vec3 lightDiffuse = glm::vec3(1.f);
-        glm::vec3 lightAmbient = glm::vec3(1.f);
-        glm::vec3 lightSpecular = glm::vec3(1.f);
-        SetShaderUniformVec3(shaderProgram, "light.ambient", lightAmbient);
-        SetShaderUniformVec3(shaderProgram, "light.diffuse", lightDiffuse);
-        SetShaderUniformVec3(shaderProgram, "light.specular", lightSpecular);
+        LightData *lightData = &drawingInfo->lightData;
+        SetShaderUniformVec3(shaderProgram, "light.ambient", lightData->lightAmbient);
+        SetShaderUniformVec3(shaderProgram, "light.diffuse", lightData->lightDiffuse);
+        SetShaderUniformVec3(shaderProgram, "light.specular", lightData->lightSpecular);
         
         SetShaderUniformVec3(shaderProgram, "cameraPos", globalCameraPos);
         
@@ -835,56 +855,54 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         {
             return -1;
         }
+        
         u32 lightShaderProgram;
         if (!CreateShaderProgram(&lightShaderProgram, "vertex_shader.vs", "light_fragment_shader.fs"))
         {
             return -1;
         }
 
-        u32 texture1 = CreateTextureFromImage("container.jpg", false, GL_REPEAT);
-        u32 texture2 = CreateTextureFromImage("awesomeface.png", true, GL_REPEAT);
-        
         f32 rectVertices[] = {
-            // Positions.    // Normals.
+            // Positions.    // Normals.    // Texture coordinates.
             
             // Face 1: front.
-            .5f,  .5f,  .5f, 0.f, 0.f, 1.f, // 0: top right.
-            .5f,  -.5f, .5f, 0.f, 0.f, 1.f, // 1: bottom right.
-            -.5f, -.5f, .5f, 0.f, 0.f, 1.f, // 2: bottom left.
-            -.5f, .5f,  .5f, 0.f, 0.f, 1.f, // 3: top left.
+            .5f,  .5f,  .5f, 0.f, 0.f, 1.f, 1.f, 1.f, // 0: top right.
+            .5f,  -.5f, .5f, 0.f, 0.f, 1.f, 1.f, 0.f, // 1: bottom right.
+            -.5f, -.5f, .5f, 0.f, 0.f, 1.f, 0.f, 0.f, // 2: bottom left.
+            -.5f, .5f,  .5f, 0.f, 0.f, 1.f, 0.f, 1.f, // 3: top left.
             
             // Face 2: our right.
-            .5f,  .5f,  -.5f, 1.f, 0.f, 0.f, // 0: top right.
-            .5f,  -.5f, -.5f, 1.f, 0.f, 0.f, // 1: bottom right.
-            .5f, -.5f, .5f,   1.f, 0.f, 0.f,  // 2: bottom left.
-            .5f, .5f,  .5f,   1.f, 0.f, 0.f,  // 3: top left.
+            .5f,  .5f,  -.5f, 1.f, 0.f, 0.f, 1.f, 1.f, // 0: top right.
+            .5f,  -.5f, -.5f, 1.f, 0.f, 0.f, 1.f, 0.f, // 1: bottom right.
+            .5f, -.5f, .5f,   1.f, 0.f, 0.f, 0.f, 0.f, // 2: bottom left.
+            .5f, .5f,  .5f,   1.f, 0.f, 0.f, 0.f, 1.f, // 3: top left.
             
             // Face 3: back.
-            -.5f,  .5f,  -.5f, 0.f, 0.f, -1.f, // 0: top right.
-            -.5f,  -.5f, -.5f, 0.f, 0.f, -1.f, // 1: bottom right.
-            .5f, -.5f, -.5f,   0.f, 0.f, -1.f, // 2: bottom left.
-            .5f, .5f,  -.5f,   0.f, 0.f, -1.f, // 3: top left.
+            -.5f,  .5f,  -.5f, 0.f, 0.f, -1.f, 1.f, 1.f, // 0: top right.
+            -.5f,  -.5f, -.5f, 0.f, 0.f, -1.f, 1.f, 0.f, // 1: bottom right.
+            .5f, -.5f, -.5f,   0.f, 0.f, -1.f, 0.f, 0.f, // 2: bottom left.
+            .5f, .5f,  -.5f,   0.f, 0.f, -1.f, 0.f, 1.f, // 3: top left.
             
             // Face 4: our left.
-            -.5f,  .5f,  .5f, -1.f, 0.f, 0.f,  // 0: top right.
-            -.5f,  -.5f, .5f, -1.f, 0.f, 0.f,  // 1: bottom right.
-            -.5f, -.5f, -.5f, -1.f, 0.f, 0.f, // 2: bottom left.
-            -.5f, .5f,  -.5f, -1.f, 0.f, 0.f, // 3: top left.
+            -.5f,  .5f,  .5f, -1.f, 0.f, 0.f, 1.f, 1.f, // 0: top right.
+            -.5f,  -.5f, .5f, -1.f, 0.f, 0.f, 1.f, 0.f, // 1: bottom right.
+            -.5f, -.5f, -.5f, -1.f, 0.f, 0.f, 0.f, 0.f, // 2: bottom left.
+            -.5f, .5f,  -.5f, -1.f, 0.f, 0.f, 0.f, 1.f, // 3: top left.
             
             // Face 5: top.
-            .5f,  .5f,  -.5f, 0.f, 1.f, 0.f, // 0: top right.
-            .5f,  .5f, .5f,   0.f, 1.f, 0.f,  // 1: bottom right.
-            -.5f, .5f, .5f,   0.f, 1.f, 0.f,  // 2: bottom left.
-            -.5f, .5f,  -.5f, 0.f, 1.f, 0.f, // 3: top left.
+            .5f,  .5f,  -.5f, 0.f, 1.f, 0.f, 1.f, 1.f, // 0: top right.
+            .5f,  .5f, .5f,   0.f, 1.f, 0.f, 1.f, 0.f, // 1: bottom right.
+            -.5f, .5f, .5f,   0.f, 1.f, 0.f, 0.f, 0.f, // 2: bottom left.
+            -.5f, .5f,  -.5f, 0.f, 1.f, 0.f, 0.f, 1.f, // 3: top left.
             
             // Face 6: bottom.
-            .5f,  -.5f,  .5f, 0.f, -1.f, 0.f,  // 0: top right.
-            .5f,  -.5f, -.5f, 0.f, -1.f, 0.f, // 1: bottom right.
-            -.5f, -.5f, -.5f, 0.f, -1.f, 0.f, // 2: bottom left.
-            -.5f, -.5f,  .5f, 0.f, -1.f, 0.f,  // 3: top left.
+            .5f,  -.5f,  .5f, 0.f, -1.f, 0.f, 1.f, 1.f, // 0: top right.
+            .5f,  -.5f, -.5f, 0.f, -1.f, 0.f, 1.f, 0.f, // 1: bottom right.
+            -.5f, -.5f, -.5f, 0.f, -1.f, 0.f, 0.f, 0.f, // 2: bottom left.
+            -.5f, -.5f,  .5f, 0.f, -1.f, 0.f, 0.f, 1.f, // 3: top left.
         };
         
-        s32 elemCounts[] = { 3, 3 };
+        s32 elemCounts[] = { 3, 3, 2 };
 
         u32 rectIndices[] = {
             0, 1, 3, // Triangle 1.
@@ -910,7 +928,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         vaoInfo.vertices = rectVertices;
         vaoInfo.verticesSize = sizeof(rectVertices);
         vaoInfo.elemCounts = elemCounts;
-        vaoInfo.elementCountsSize = 2;
+        vaoInfo.elementCountsSize = myArraySize(elemCounts);
         vaoInfo.indices = rectIndices;
         vaoInfo.indicesSize = sizeof(rectIndices);
         
@@ -925,16 +943,22 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         f32 height = (f32)clientRect.bottom;
         globalAspectRatio = width / height;
         
-        appState.drawingInfo.mixAlpha = .5f;
-        appState.drawingInfo.texture1 = texture1;
-        appState.drawingInfo.texture2 = texture2;
+        appState.drawingInfo.diffuseMap = CreateTextureFromImage("container2.png", true, GL_REPEAT);
+        appState.drawingInfo.specularMap = CreateTextureFromImage("container2_specular.png", true, GL_REPEAT);
+        appState.drawingInfo.emissiveMap = CreateTextureFromImage("matrix.jpg", false, GL_REPEAT);
+        
+        glUseProgram(containerShaderProgram);
+        SetShaderUniformSampler(containerShaderProgram, "material.diffuse", 0);
+        SetShaderUniformSampler(containerShaderProgram, "material.specular", 1);
+        SetShaderUniformSampler(containerShaderProgram, "material.emissive", 2);
         
         appState.drawingInfo.containerShaderProgram = containerShaderProgram;
         appState.drawingInfo.lightShaderProgram = lightShaderProgram;
         appState.drawingInfo.containerPos = { 0.f, 0.f, 0.f };
         appState.drawingInfo.containerVao = containerVao;
         // NOTE: X and Y values are set in the drawing function so that the light rotates over time.
-        appState.drawingInfo.lightPos = { 2.f, 2.f, 2.f };
+        f32 radius = appState.drawingInfo.lightRadius;
+        appState.drawingInfo.lightPos = { radius, 0.f, radius };
         appState.drawingInfo.lightVao = lightVao;
         appState.drawingInfo.initialized = true;
         
