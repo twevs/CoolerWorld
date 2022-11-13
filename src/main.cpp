@@ -585,28 +585,26 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     // drawingInfo->lightPos.x = radius * cosf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
     // drawingInfo->lightPos.z = radius * sinf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
     
-    glm::vec3 lightColor;
-    lightColor.r = sinf(Win32GetTime() * 2.f);
-    lightColor.g = sinf(Win32GetTime() * .7f);
-    lightColor.b = sinf(Win32GetTime() * 1.3f);
+    glm::vec3 lightColor = glm::vec3(1.f);
     
     // Container.
     {
         u32 shaderProgram = drawingInfo->containerShaderProgram;
         glUseProgram(shaderProgram);
         
-        f32 objectAmbient[] = { 1.f, .5f, .31f };
-        f32 objectDiffuse[] = { 1.f, .5f, .31f };
-        f32 objectSpecular[] = { .5f, .5f, .5f };
+        f32 objectAmbient[] = { 0.f, .1f, .06f };
+        f32 objectDiffuse[] = { 0.f, .50980392f, .50980392f };
+        f32 objectSpecular[] = { .50196078f, .50196078f, .50196078f };
+        f32 objectShininess = .25f;
         glUniform3fv(glGetUniformLocation(shaderProgram, "material.ambient"), 1, objectAmbient);
         glUniform3fv(glGetUniformLocation(shaderProgram, "material.diffuse"), 1, objectDiffuse);
         glUniform3fv(glGetUniformLocation(shaderProgram, "material.specular"), 1, objectSpecular);
-        SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
+        SetShaderUniformFloat(shaderProgram, "material.shininess", objectShininess * 128.f);
         
         SetShaderUniformVec3(shaderProgram, "light.position", drawingInfo->lightPos);
-        glm::vec3 lightDiffuse = lightColor * .5f;
-        glm::vec3 lightAmbient = lightDiffuse * .2f;
-        glm::vec3 lightSpecular = { 1.f, 1.f, 1.f };
+        glm::vec3 lightDiffuse = glm::vec3(1.f);
+        glm::vec3 lightAmbient = glm::vec3(1.f);
+        glm::vec3 lightSpecular = glm::vec3(1.f);
         SetShaderUniformVec3(shaderProgram, "light.ambient", lightAmbient);
         SetShaderUniformVec3(shaderProgram, "light.diffuse", lightDiffuse);
         SetShaderUniformVec3(shaderProgram, "light.specular", lightSpecular);
