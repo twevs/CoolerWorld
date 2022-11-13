@@ -69,11 +69,6 @@ struct DrawingInfo
     
     glm::vec3 lightPos;
     u32 lightVao;
-    
-    float ambientStrength = .1f;
-    float diffuseStrength = 1.f;
-    float specularStrength = .5f;
-    float shininess = 32;
 };
         
 struct VaoInformation
@@ -230,43 +225,21 @@ void Win32ProcessMessages(
                 *running = false;
                 return;
             case VK_UP:
-                if (altPressed)
-                {
-                    drawingInfo->diffuseStrength = fmin(drawingInfo->diffuseStrength + .1f, 1.f);
-                }
-                else
-                {
-                    drawingInfo->ambientStrength = fmin(drawingInfo->ambientStrength + .1f, 1.f);
-                }
+                drawingInfo->lightPos.y += .1f;
                 return;
             case VK_DOWN:
-                if (altPressed)
-                {
-                    drawingInfo->diffuseStrength = fmax(drawingInfo->diffuseStrength - .1f, 0.f);
-                }
-                else
-                {
-                    drawingInfo->ambientStrength = fmax(drawingInfo->ambientStrength - .1f, 0.f);
-                }
+                drawingInfo->lightPos.y -= .1f;
                 return;
             case VK_LEFT:
-                if (altPressed)
                 {
-                    drawingInfo->shininess = fmax(drawingInfo->shininess / 2.f, 2.f);
-                }
-                else
-                {
-                    drawingInfo->specularStrength = fmax(drawingInfo->specularStrength - .1f, 0.f);
+                    glm::vec3 lightToContainer = glm::normalize(drawingInfo->containerPos - drawingInfo->lightPos);
+                    drawingInfo->lightPos -= lightToContainer * .1f;
                 }
                 return;
             case VK_RIGHT:
-                if (altPressed)
                 {
-                    drawingInfo->shininess = fmin(drawingInfo->shininess * 2.f, 512.f);
-                }
-                else
-                {
-                    drawingInfo->specularStrength = fmin(drawingInfo->specularStrength + .1f, 1.f);
+                    glm::vec3 lightToContainer = glm::normalize(drawingInfo->containerPos - drawingInfo->lightPos);
+                    drawingInfo->lightPos += lightToContainer * .1f;
                 }
                 return;
             case 'Q':
@@ -294,6 +267,18 @@ u64 Win32GetWallClock()
     LARGE_INTEGER wallClock;
     QueryPerformanceCounter(&wallClock);
     return wallClock.QuadPart;
+}
+
+f32 Win32GetWallClockPeriod()
+{
+    LARGE_INTEGER perfCounterFrequency;
+    QueryPerformanceFrequency(&perfCounterFrequency);
+    return 1000.f / perfCounterFrequency.QuadPart;
+}
+
+float Win32GetTime()
+{
+    return Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f;
 }
 
 int InitializeOpenGLExtensions(HINSTANCE hInstance)
@@ -489,13 +474,6 @@ u32 CreateTextureFromImage(const char *filename, bool alpha, GLenum wrapMode)
     return texture;
 }
 
-f32 Win32GetWallClockPeriod()
-{
-    LARGE_INTEGER perfCounterFrequency;
-    QueryPerformanceFrequency(&perfCounterFrequency);
-    return 1000.f / perfCounterFrequency.QuadPart;
-}
-
 glm::mat4 LookAt(
      glm::vec3 cameraPosition,
      glm::vec3 cameraTarget,
@@ -535,6 +513,26 @@ glm::mat4 LookAt(
     };
     
     return inverseRotation * inverseTranslation;
+}
+
+void SetShaderUniformFloat(u32 shaderProgram, const char *uniformName, float value)
+{
+    glUniform1f(glGetUniformLocation(shaderProgram, uniformName), value);
+}
+
+void SetShaderUniformVec3(u32 shaderProgram, const char *uniformName, glm::vec3 vector)
+{
+    glUniform3fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
+}
+
+void SetShaderUniformMat3(u32 shaderProgram, const char *uniformName, glm::mat3* matrix)
+{
+    glUniformMatrix3fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
+}
+
+void SetShaderUniformMat4(u32 shaderProgram, const char *uniformName, glm::mat4* matrix)
+{
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
 }
 
 void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
@@ -583,26 +581,37 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         .1f, 
         farPlaneDistance);
     
-    f32 lightColor[] = { 1.f, 1.f, 1.f };
-    f32 objectColor[] = { 1.f, .5f, .31f };
-    
     f32 radius = 5.f;
-    drawingInfo->lightPos.x = radius * cosf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
-    drawingInfo->lightPos.z = radius * sinf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
+    // drawingInfo->lightPos.x = radius * cosf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
+    // drawingInfo->lightPos.z = radius * sinf(Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f);
+    
+    glm::vec3 lightColor;
+    lightColor.r = sinf(Win32GetTime() * 2.f);
+    lightColor.g = sinf(Win32GetTime() * .7f);
+    lightColor.b = sinf(Win32GetTime() * 1.3f);
     
     // Container.
     {
         u32 shaderProgram = drawingInfo->containerShaderProgram;
         glUseProgram(shaderProgram);
-        glUniform1f(glGetUniformLocation(shaderProgram, "ambientStrength"), drawingInfo->ambientStrength);
-        glUniform1f(glGetUniformLocation(shaderProgram, "diffuseStrength"), drawingInfo->diffuseStrength);
-        glUniform1f(glGetUniformLocation(shaderProgram, "specularStrength"), drawingInfo->specularStrength);
-        glUniform1f(glGetUniformLocation(shaderProgram, "shininess"), drawingInfo->shininess);
         
-        glUniform3fv(glGetUniformLocation(shaderProgram, "lightPos"), 1, glm::value_ptr(drawingInfo->lightPos));
-        glUniform3fv(glGetUniformLocation(shaderProgram, "cameraPos"), 1, glm::value_ptr(globalCameraPos));
-        glUniform3fv(glGetUniformLocation(shaderProgram, "lightColor"), 1, lightColor);
-        glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, objectColor);
+        f32 objectAmbient[] = { 1.f, .5f, .31f };
+        f32 objectDiffuse[] = { 1.f, .5f, .31f };
+        f32 objectSpecular[] = { .5f, .5f, .5f };
+        glUniform3fv(glGetUniformLocation(shaderProgram, "material.ambient"), 1, objectAmbient);
+        glUniform3fv(glGetUniformLocation(shaderProgram, "material.diffuse"), 1, objectDiffuse);
+        glUniform3fv(glGetUniformLocation(shaderProgram, "material.specular"), 1, objectSpecular);
+        SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
+        
+        SetShaderUniformVec3(shaderProgram, "light.position", drawingInfo->lightPos);
+        glm::vec3 lightDiffuse = lightColor * .5f;
+        glm::vec3 lightAmbient = lightDiffuse * .2f;
+        glm::vec3 lightSpecular = { 1.f, 1.f, 1.f };
+        SetShaderUniformVec3(shaderProgram, "light.ambient", lightAmbient);
+        SetShaderUniformVec3(shaderProgram, "light.diffuse", lightDiffuse);
+        SetShaderUniformVec3(shaderProgram, "light.specular", lightSpecular);
+        
+        SetShaderUniformVec3(shaderProgram, "cameraPos", globalCameraPos);
         
         glBindVertexArray(drawingInfo->containerVao);
     
@@ -612,22 +621,19 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
-        s32 modelMatrixLoc = glGetUniformLocation(drawingInfo->containerShaderProgram, "modelMatrix");
-        s32 normalMatrixLoc = glGetUniformLocation(drawingInfo->containerShaderProgram, "normalMatrix");
-        s32 viewMatrixLoc = glGetUniformLocation(drawingInfo->containerShaderProgram, "viewMatrix");
-        s32 projectionMatrixLoc = glGetUniformLocation(drawingInfo->containerShaderProgram, "projectionMatrix");
-    
-        glUniformMatrix4fv(modelMatrixLoc, 1, GL_FALSE, glm::value_ptr(modelMatrix));
-        glUniformMatrix3fv(normalMatrixLoc, 1, GL_FALSE, glm::value_ptr(normalMatrix));
-        glUniformMatrix4fv(viewMatrixLoc, 1, GL_FALSE, glm::value_ptr(viewMatrix));
-        glUniformMatrix4fv(projectionMatrixLoc, 1, GL_FALSE, glm::value_ptr(projectionMatrix));
+        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+        SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
     }
     
     // Light.
     {
-        glUseProgram(drawingInfo->lightShaderProgram);
-        glUniform3fv(glGetUniformLocation(drawingInfo->lightShaderProgram, "lightColor"), 1, lightColor);
+        u32 shaderProgram = drawingInfo->lightShaderProgram;
+        glUseProgram(shaderProgram);
+        
+        SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", lightColor);
         
         glBindVertexArray(drawingInfo->lightVao);
         
@@ -635,13 +641,9 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         glm::mat4 modelMatrix = glm::mat4(1.f);
         modelMatrix = glm::translate(modelMatrix, drawingInfo->lightPos);
         
-        s32 modelMatrixLoc = glGetUniformLocation(drawingInfo->lightShaderProgram, "modelMatrix");
-        s32 viewMatrixLoc = glGetUniformLocation(drawingInfo->lightShaderProgram, "viewMatrix");
-        s32 projectionMatrixLoc = glGetUniformLocation(drawingInfo->lightShaderProgram, "projectionMatrix");
-
-        glUniformMatrix4fv(modelMatrixLoc, 1, GL_FALSE, glm::value_ptr(modelMatrix));
-        glUniformMatrix4fv(viewMatrixLoc, 1, GL_FALSE, glm::value_ptr(viewMatrix));
-        glUniformMatrix4fv(projectionMatrixLoc, 1, GL_FALSE, glm::value_ptr(projectionMatrix));
+        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
     }
 
@@ -934,7 +936,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         appState.drawingInfo.containerPos = { 0.f, 0.f, 0.f };
         appState.drawingInfo.containerVao = containerVao;
         // NOTE: X and Y values are set in the drawing function so that the light rotates over time.
-        appState.drawingInfo.lightPos = { 0.f, 2.f, 0.f };
+        appState.drawingInfo.lightPos = { 2.f, 2.f, 2.f };
         appState.drawingInfo.lightVao = lightVao;
         appState.drawingInfo.initialized = true;
         
