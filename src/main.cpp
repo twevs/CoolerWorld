@@ -49,6 +49,7 @@ typedef float f32;
 typedef double f64;
 
 #define PI 3.1415926535f
+#define NUM_CONTAINERS 10
 
 global_variable f32 globalFov = 45.f;
 global_variable f32 globalAspectRatio;
@@ -69,17 +70,15 @@ struct DrawingInfo
     
     u32 diffuseMap;
     u32 specularMap;
-    u32 emissiveMap;
     
     u32 containerShaderProgram;
     u32 lightShaderProgram;
     
-    glm::vec3 containerPos;
+    glm::vec3 containerPos[NUM_CONTAINERS];
     u32 containerVao;
     
-    glm::vec3 lightPos;
+    glm::vec3 lightDir;
     LightData lightData;
-    f32 lightRadius = 3.f;
     u32 lightVao;
 };
         
@@ -237,16 +236,30 @@ void Win32ProcessMessages(
                 *running = false;
                 return;
             case VK_UP:
-                drawingInfo->lightPos.y += .1f;
+                if (altPressed)
+                {
+                    drawingInfo->lightDir.y += .1f;
+                }
+                else
+                {
+                    drawingInfo->lightDir.x += .1f;
+                }
                 return;
             case VK_DOWN:
-                drawingInfo->lightPos.y -= .1f;
+                if (altPressed)
+                {
+                    drawingInfo->lightDir.y -= .1f;
+                }
+                else
+                {
+                    drawingInfo->lightDir.x -= .1f;
+                }
                 return;
             case VK_LEFT:
-                drawingInfo->lightRadius -= .1f;
+                drawingInfo->lightDir.z -= .1f;
                 return;
             case VK_RIGHT:
-                drawingInfo->lightRadius += .1f;
+                drawingInfo->lightDir.z += .1f;
                 return;
             case 'Q':
                 globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
@@ -604,9 +617,6 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         .1f, 
         farPlaneDistance);
     
-    drawingInfo->lightPos.x = drawingInfo->lightRadius * cosf(Win32GetTime());
-    drawingInfo->lightPos.z = drawingInfo->lightRadius * sinf(Win32GetTime());
-    
     glm::vec3 lightColor = glm::vec3(1.f);
     
     // Container.
@@ -618,12 +628,10 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         glBindTexture(GL_TEXTURE_2D, drawingInfo->diffuseMap);
         glActiveTexture(GL_TEXTURE1);
         glBindTexture(GL_TEXTURE_2D, drawingInfo->specularMap);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, drawingInfo->emissiveMap);
         
         SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
         
-        SetShaderUniformVec3(shaderProgram, "light.position", drawingInfo->lightPos);
+        SetShaderUniformVec3(shaderProgram, "light.direction", drawingInfo->lightDir);
         LightData *lightData = &drawingInfo->lightData;
         SetShaderUniformVec3(shaderProgram, "light.ambient", lightData->lightAmbient);
         SetShaderUniformVec3(shaderProgram, "light.diffuse", lightData->lightDiffuse);
@@ -633,17 +641,20 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         glBindVertexArray(drawingInfo->containerVao);
     
-        // Model matrix: transforms vertices from local to world space.
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, drawingInfo->containerPos);
+        for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
+        {
+            // Model matrix: transforms vertices from local to world space.
+            glm::mat4 modelMatrix = glm::mat4(1.f);
+            modelMatrix = glm::translate(modelMatrix, drawingInfo->containerPos[containerIndex]);
         
-        glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+            glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-        SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+            SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+            SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+            SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        }
     }
     
     // Light.
@@ -657,7 +668,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         // Model matrix: transforms vertices from local to world space.
         glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, drawingInfo->lightPos);
+        modelMatrix = glm::translate(modelMatrix, drawingInfo->lightDir);
         
         SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
         SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
@@ -945,20 +956,28 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         
         appState.drawingInfo.diffuseMap = CreateTextureFromImage("container2.png", true, GL_REPEAT);
         appState.drawingInfo.specularMap = CreateTextureFromImage("container2_specular.png", true, GL_REPEAT);
-        appState.drawingInfo.emissiveMap = CreateTextureFromImage("matrix.jpg", false, GL_REPEAT);
         
         glUseProgram(containerShaderProgram);
         SetShaderUniformSampler(containerShaderProgram, "material.diffuse", 0);
         SetShaderUniformSampler(containerShaderProgram, "material.specular", 1);
-        SetShaderUniformSampler(containerShaderProgram, "material.emissive", 2);
         
         appState.drawingInfo.containerShaderProgram = containerShaderProgram;
         appState.drawingInfo.lightShaderProgram = lightShaderProgram;
-        appState.drawingInfo.containerPos = { 0.f, 0.f, 0.f };
+        srand((u32)Win32GetWallClock());
+        for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
+        {
+            f32 x = (f32)(rand() % 5);
+            x = (rand() > RAND_MAX / 2) ? x : -x;
+            f32 y = (f32)(rand() % 5);
+            y = (rand() > RAND_MAX / 2) ? y : -y;
+            f32 z = (f32)(rand() % 5);
+            z = (rand() > RAND_MAX / 2) ? z : -z;
+            appState.drawingInfo.containerPos[containerIndex] = { x, y, z };
+        }
         appState.drawingInfo.containerVao = containerVao;
         // NOTE: X and Y values are set in the drawing function so that the light rotates over time.
-        f32 radius = appState.drawingInfo.lightRadius;
-        appState.drawingInfo.lightPos = { radius, 0.f, radius };
+        glm::vec3 *containerPos = appState.drawingInfo.containerPos;
+        appState.drawingInfo.lightDir = containerPos[NUM_CONTAINERS - 1] - containerPos[0];
         appState.drawingInfo.lightVao = lightVao;
         appState.drawingInfo.initialized = true;
         
