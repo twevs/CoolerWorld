@@ -67,6 +67,7 @@ struct LightData
 struct DrawingInfo
 {
     bool initialized;
+    bool wireframeMode;
     
     u32 diffuseMap;
     u32 specularMap;
@@ -77,7 +78,7 @@ struct DrawingInfo
     glm::vec3 containerPos[NUM_CONTAINERS];
     u32 containerVao;
     
-    glm::vec3 lightDir;
+    glm::vec3 lightPos;
     LightData lightData;
     u32 lightVao;
 };
@@ -156,13 +157,15 @@ f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
 void Win32ProcessMessages(
     HWND window,
     bool *running,
-    bool *wireframeMode,
-    DrawingInfo *drawingInfo)
+    DrawingInfo *drawingInfo,
+    glm::vec3 *movement)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
     {
         local_persist bool capturing = false;
+        local_persist f32 speed = 1.f;
+        DebugPrintA("speed: %f\n", speed);
         
         POINT windowOrigin = {};
         ClientToScreen(window, &windowOrigin);
@@ -210,7 +213,15 @@ void Win32ProcessMessages(
         }
         case WM_MOUSEWHEEL: {
             s16 wheelRotation = HIWORD(message.wParam);
-            globalFov = clampf(globalFov - (f32)wheelRotation * 3.f / WHEEL_DELTA, 0.f, 90.f);
+            bool shiftPressed = (GetKeyState(VK_SHIFT) < 0);
+            if (shiftPressed)
+            {
+                globalFov = clampf(globalFov - (f32)wheelRotation * 3.f / WHEEL_DELTA, 0.f, 90.f);
+            }
+            else
+            {
+                speed = fmax(speed + (f32)wheelRotation / WHEEL_DELTA, 0.f);
+            }
             return;
         }
         case WM_KEYDOWN:
@@ -218,8 +229,8 @@ void Win32ProcessMessages(
             // Treat WASD specially.
             float deltaZ = (GetKeyState('W') < 0) ? .1f : (GetKeyState('S') < 0) ? -.1f : 0.f;
             float deltaX = (GetKeyState('D') < 0) ? .1f : (GetKeyState('A') < 0) ? -.1f : 0.f;
-            globalCameraPos += GetCameraForwardVector() * deltaZ;
-            globalCameraPos += GetCameraRightVector() * deltaX;
+            *movement += GetCameraForwardVector() * deltaZ * speed;
+            *movement += GetCameraRightVector() * deltaX * speed;
                 
             // Other keys.
             bool altPressed = (message.lParam >> 29) & 1;
@@ -238,28 +249,28 @@ void Win32ProcessMessages(
             case VK_UP:
                 if (altPressed)
                 {
-                    drawingInfo->lightDir.y += .1f;
+                    drawingInfo->lightPos.y += .1f;
                 }
                 else
                 {
-                    drawingInfo->lightDir.x += .1f;
+                    drawingInfo->lightPos.x += .1f;
                 }
                 return;
             case VK_DOWN:
                 if (altPressed)
                 {
-                    drawingInfo->lightDir.y -= .1f;
+                    drawingInfo->lightPos.y -= .1f;
                 }
                 else
                 {
-                    drawingInfo->lightDir.x -= .1f;
+                    drawingInfo->lightPos.x -= .1f;
                 }
                 return;
             case VK_LEFT:
-                drawingInfo->lightDir.z -= .1f;
+                drawingInfo->lightPos.z -= .1f;
                 return;
             case VK_RIGHT:
-                drawingInfo->lightDir.z += .1f;
+                drawingInfo->lightPos.z += .1f;
                 return;
             case 'Q':
                 globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
@@ -268,8 +279,8 @@ void Win32ProcessMessages(
                 globalAspectRatio = fmin(globalAspectRatio + .1f, 10.f);
                 return;
             case 'X':
-                *wireframeMode = !*wireframeMode;
-                glPolygonMode(GL_FRONT_AND_BACK, *wireframeMode ? GL_LINE : GL_FILL);
+                drawingInfo->wireframeMode = !drawingInfo->wireframeMode;
+                glPolygonMode(GL_FRONT_AND_BACK, drawingInfo->wireframeMode ? GL_LINE : GL_FILL);
                 return;
             case 'U':
                 drawingInfo->lightData.lightAmbient += glm::vec3(.1f);
@@ -631,7 +642,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
         
-        SetShaderUniformVec3(shaderProgram, "light.direction", drawingInfo->lightDir);
+        SetShaderUniformVec3(shaderProgram, "light.position", drawingInfo->lightPos);
         LightData *lightData = &drawingInfo->lightData;
         SetShaderUniformVec3(shaderProgram, "light.ambient", lightData->lightAmbient);
         SetShaderUniformVec3(shaderProgram, "light.diffuse", lightData->lightDiffuse);
@@ -668,7 +679,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         // Model matrix: transforms vertices from local to world space.
         glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, drawingInfo->lightDir);
+        modelMatrix = glm::translate(modelMatrix, drawingInfo->lightPos);
         
         SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
         SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
@@ -966,25 +977,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         srand((u32)Win32GetWallClock());
         for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
         {
-            f32 x = (f32)(rand() % 5);
+            f32 x = (f32)(rand() % 10);
             x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)(rand() % 5);
+            f32 y = (f32)(rand() % 10);
             y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)(rand() % 5);
+            f32 z = (f32)(rand() % 10);
             z = (rand() > RAND_MAX / 2) ? z : -z;
             appState.drawingInfo.containerPos[containerIndex] = { x, y, z };
         }
         appState.drawingInfo.containerVao = containerVao;
         // NOTE: X and Y values are set in the drawing function so that the light rotates over time.
-        glm::vec3 *containerPos = appState.drawingInfo.containerPos;
-        appState.drawingInfo.lightDir = containerPos[NUM_CONTAINERS - 1] - containerPos[0];
+        appState.drawingInfo.lightPos = glm::vec3(0.f);
         appState.drawingInfo.lightVao = lightVao;
         appState.drawingInfo.initialized = true;
+        
+        glm::vec3 movementPerFrame = {};
         
         appState.running = true;
         while (appState.running)
         {
-            Win32ProcessMessages(window, &appState.running, &wireframeMode, &appState.drawingInfo);
+            Win32ProcessMessages(window, &appState.running, &appState.drawingInfo, &movementPerFrame);
 
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
@@ -1012,6 +1024,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 frameTimeAccumulator = 0.f;
 
                 DrawWindow(window, hdc, &appState.running, &appState.drawingInfo);
+                globalCameraPos += movementPerFrame;
+                movementPerFrame = glm::vec3(0.f);
                 
                 // DebugPrintA("Camera pitch: %f\n", globalCameraPitch);
                 // DebugPrintA("Camera yaw: %f\n", globalCameraYaw);
