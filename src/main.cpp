@@ -108,6 +108,8 @@ struct DrawingInfo
     u32 containerVao;
     
     glm::vec3 lightPos;
+    glm::vec3 lightDir;
+    f32 lightCutoff = PI / 4;
     LightData lightData;
     u32 lightVao;
     u32 attIndex;
@@ -195,7 +197,6 @@ void Win32ProcessMessages(
     {
         local_persist bool capturing = false;
         local_persist f32 speed = 1.f;
-        DebugPrintA("speed: %f\n", speed);
         
         POINT windowOrigin = {};
         ClientToScreen(window, &windowOrigin);
@@ -283,7 +284,9 @@ void Win32ProcessMessages(
                 }
                 else
                 {
-                    drawingInfo->lightPos.x += .1f;
+                    // drawingInfo->lightPos.x += .1f;
+                    drawingInfo->lightCutoff = fmin(drawingInfo->lightCutoff + .05f, PI / 2);
+                    DebugPrintA("cutoff: %f\n", drawingInfo->lightCutoff * 180.f / PI);
                 }
                 return;
             case VK_DOWN:
@@ -293,7 +296,9 @@ void Win32ProcessMessages(
                 }
                 else
                 {
-                    drawingInfo->lightPos.x -= .1f;
+                    // drawingInfo->lightPos.x -= .1f;
+                    drawingInfo->lightCutoff = fmax(drawingInfo->lightCutoff - .05f, 0.f);
+                    DebugPrintA("cutoff: %f\n", drawingInfo->lightCutoff * 180.f / PI);
                 }
                 return;
             case VK_LEFT:
@@ -680,11 +685,9 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
         
-        Attenuation *att = &globalAttenuationTable[drawingInfo->attIndex];
-        SetShaderUniformFloat(shaderProgram, "att.linear", att->linear);
-        SetShaderUniformFloat(shaderProgram, "att.quadratic", att->quadratic);
-        
-        SetShaderUniformVec3(shaderProgram, "light.position", drawingInfo->lightPos);
+        SetShaderUniformVec3(shaderProgram, "light.position", globalCameraPos);
+        SetShaderUniformVec3(shaderProgram, "light.direction", GetCameraForwardVector());
+        SetShaderUniformFloat(shaderProgram, "light.cutoff", cosf(drawingInfo->lightCutoff));
         LightData *lightData = &drawingInfo->lightData;
         SetShaderUniformVec3(shaderProgram, "light.ambient", lightData->lightAmbient);
         SetShaderUniformVec3(shaderProgram, "light.diffuse", lightData->lightDiffuse);
@@ -1019,11 +1022,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         srand((u32)Win32GetWallClock());
         for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
         {
-            f32 x = (f32)(rand() % 10);
+            f32 x = (f32)(rand() % 7);
             x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)(rand() % 10);
+            f32 y = (f32)(rand() % 7);
             y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)(rand() % 10);
+            f32 z = (f32)(rand() % 7);
             z = (rand() > RAND_MAX / 2) ? z : -z;
             appState.drawingInfo.containerPos[containerIndex] = { x, y, z };
         }
