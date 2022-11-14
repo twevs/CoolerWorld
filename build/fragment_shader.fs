@@ -16,6 +16,12 @@ struct Light
     vec3 specular;
 };
 
+struct Attenuation
+{
+    float linear;
+    float quadratic;
+};
+
 // in vec2 ourTexCoord;
 
 in vec3 fragWorldPos;
@@ -26,6 +32,7 @@ out vec4 fragColor;
 
 uniform Material material;
 uniform Light light;
+uniform Attenuation att;
 
 uniform vec3 cameraPos;
 
@@ -45,7 +52,13 @@ void main()
     float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), material.shininess);
     vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
     
-    vec3 result = ambient + diffuse + specular;
+    // Calculate attenuation.
+    float d = distance(light.position, fragWorldPos);
+    float divisor = 1.f + att.linear * d + att.quadratic * d * d;
+    float attVal = 1.f / divisor;
+    
+    
+    vec3 result = attVal * (ambient + diffuse + specular);
     
     fragColor = vec4(result, 1.f);
 }

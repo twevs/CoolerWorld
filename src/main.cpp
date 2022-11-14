@@ -32,7 +32,13 @@
 #endif
 
 #define myArraySize(arr) \
-    (sizeof((arr)) / sizeof((arr[0])));
+    (sizeof((arr)) / sizeof((arr[0])))
+
+#define max(x, y) \
+    (((x) > (y)) ? (x) : (y))
+
+#define min(x, y) \
+    (((x) < (y)) ? (x) : (y))
 
 typedef unsigned char uchar;
 typedef uint8_t u8;
@@ -64,6 +70,29 @@ struct LightData
     glm::vec3 lightSpecular = glm::vec3(1.f);
 };
 
+struct Attenuation
+{
+    u32 range;
+    f32 linear = .7f;
+    f32 quadratic = 1.8f;
+};
+
+Attenuation globalAttenuationTable[] =
+{
+    { 7   , .7f   , 1.8f    },
+    { 13  , .35f  , .44f    },
+    { 20  , .22f  , .20f    },
+    { 32  , .14f  , .07f    },
+    { 50  , .09f  , .032f   },
+    { 65  , .07f  , .017f   },
+    { 100 , .045f , .0075f  },
+    { 160 , .027f , .0028f  },
+    { 200 , .022f , .0019f  },
+    { 325 , .014f , .0007f  },
+    { 600 , .007f , .0002f  },
+    { 3250, .0014f, .00007f },
+};
+
 struct DrawingInfo
 {
     bool initialized;
@@ -81,6 +110,7 @@ struct DrawingInfo
     glm::vec3 lightPos;
     LightData lightData;
     u32 lightVao;
+    u32 attIndex;
 };
         
 struct VaoInformation
@@ -299,6 +329,14 @@ void Win32ProcessMessages(
                 return;
             case 'L':
                 drawingInfo->lightData.lightSpecular -= glm::vec3(.1f);
+                return;
+            case 'G':
+                drawingInfo->attIndex = (drawingInfo->attIndex > 0) ? drawingInfo->attIndex - 1 : 0;
+                DebugPrintA("New range: %u\n", globalAttenuationTable[drawingInfo->attIndex].range);
+                return;
+            case 'H':
+                drawingInfo->attIndex = min(drawingInfo->attIndex + 1, myArraySize(globalAttenuationTable) - 1);
+                DebugPrintA("New range: %u\n", globalAttenuationTable[drawingInfo->attIndex].range);
                 return;
             }
             return;
@@ -641,6 +679,10 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         glBindTexture(GL_TEXTURE_2D, drawingInfo->specularMap);
         
         SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
+        
+        Attenuation *att = &globalAttenuationTable[drawingInfo->attIndex];
+        SetShaderUniformFloat(shaderProgram, "att.linear", att->linear);
+        SetShaderUniformFloat(shaderProgram, "att.quadratic", att->quadratic);
         
         SetShaderUniformVec3(shaderProgram, "light.position", drawingInfo->lightPos);
         LightData *lightData = &drawingInfo->lightData;
