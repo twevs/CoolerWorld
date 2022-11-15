@@ -40,6 +40,9 @@
 #define min(x, y) \
     (((x) < (y)) ? (x) : (y))
 
+#define clamp(x, min, max) \
+    (((x) < (min)) ? (min) : ((x) > (max)) ? (max) : (x))
+
 typedef unsigned char uchar;
 typedef uint8_t u8;
 typedef uint16_t u16;
@@ -55,6 +58,7 @@ typedef float f32;
 typedef double f64;
 
 #define PI 3.1415926535f
+#define NUM_POINTLIGHTS 4
 #define NUM_CONTAINERS 10
 
 global_variable f32 globalFov = 45.f;
@@ -63,11 +67,24 @@ global_variable glm::vec3 globalCameraPos;
 global_variable float globalCameraYaw = 0.f;
 global_variable float globalCameraPitch = 0.f;
 
-struct LightData
+struct DirLight
 {
-    glm::vec3 lightDiffuse = glm::vec3(.5f);
-    glm::vec3 lightAmbient = glm::vec3(.2f);
-    glm::vec3 lightSpecular = glm::vec3(1.f);
+    glm::vec3 direction;
+    
+    glm::vec3 ambient = glm::vec3(.1f);
+    glm::vec3 diffuse = glm::vec3(.5f);
+    glm::vec3 specular = glm::vec3(1.f);
+};
+
+struct PointLight
+{
+    glm::vec3 position;
+    
+    glm::vec3 ambient = glm::vec3(.05f);
+    glm::vec3 diffuse = glm::vec3(.5f);
+    glm::vec3 specular = glm::vec3(1.f);
+    
+    u32 attIndex = 4;
 };
 
 struct Attenuation
@@ -93,6 +110,19 @@ Attenuation globalAttenuationTable[] =
     { 3250, .0014f, .00007f },
 };
 
+struct SpotLight
+{
+    glm::vec3 position;
+    glm::vec3 direction;
+    
+    glm::vec3 ambient = glm::vec3(.1f);
+    glm::vec3 diffuse = glm::vec3(.5f);
+    glm::vec3 specular = glm::vec3(1.f);
+        
+    float innerCutoff = PI / 11.f;
+    float outerCutoff = PI / 9.f;
+};
+
 struct DrawingInfo
 {
     bool initialized;
@@ -107,13 +137,10 @@ struct DrawingInfo
     glm::vec3 containerPos[NUM_CONTAINERS];
     u32 containerVao;
     
-    glm::vec3 lightPos;
-    glm::vec3 lightDir;
-    f32 lightInnerCutoff = PI / 11;
-    f32 lightOuterCutoff = PI / 9;
-    LightData lightData;
+    DirLight dirLight;
+    PointLight pointLights[NUM_POINTLIGHTS];
+    SpotLight spotLight;
     u32 lightVao;
-    u32 attIndex;
 };
         
 struct VaoInformation
@@ -281,32 +308,30 @@ void Win32ProcessMessages(
             case VK_UP:
                 if (altPressed)
                 {
-                    drawingInfo->lightPos.y += .1f;
                 }
                 else
                 {
-                    // drawingInfo->lightPos.x += .1f;
-                    drawingInfo->lightInnerCutoff = fmin(drawingInfo->lightInnerCutoff + .05f, PI / 2);
-                    DebugPrintA("cutoff: %f\n", drawingInfo->lightInnerCutoff * 180.f / PI);
+                    drawingInfo->spotLight.innerCutoff += .05f;
+                    DebugPrintA("innerCutoff: %f\n", drawingInfo->spotLight.innerCutoff);
                 }
                 return;
             case VK_DOWN:
                 if (altPressed)
                 {
-                    drawingInfo->lightPos.y -= .1f;
                 }
                 else
                 {
-                    // drawingInfo->lightPos.x -= .1f;
-                    drawingInfo->lightInnerCutoff = fmax(drawingInfo->lightInnerCutoff - .05f, 0.f);
-                    DebugPrintA("cutoff: %f\n", drawingInfo->lightInnerCutoff * 180.f / PI);
+                    drawingInfo->spotLight.innerCutoff -= .05f;
+                    DebugPrintA("innerCutoff: %f\n", drawingInfo->spotLight.innerCutoff);
                 }
                 return;
             case VK_LEFT:
-                drawingInfo->lightPos.z -= .1f;
+                drawingInfo->spotLight.outerCutoff -= .05f;
+                DebugPrintA("outerCutoff: %f\n", drawingInfo->spotLight.outerCutoff);
                 return;
             case VK_RIGHT:
-                drawingInfo->lightPos.z += .1f;
+                drawingInfo->spotLight.outerCutoff += .05f;
+                DebugPrintA("outerCutoff: %f\n", drawingInfo->spotLight.outerCutoff);
                 return;
             case 'Q':
                 globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
@@ -319,30 +344,29 @@ void Win32ProcessMessages(
                 glPolygonMode(GL_FRONT_AND_BACK, drawingInfo->wireframeMode ? GL_LINE : GL_FILL);
                 return;
             case 'U':
-                drawingInfo->lightData.lightAmbient += glm::vec3(.1f);
                 return;
             case 'I':
-                drawingInfo->lightData.lightDiffuse += glm::vec3(.1f);
                 return;
             case 'O':
-                drawingInfo->lightData.lightSpecular += glm::vec3(.1f);
                 return;
             case 'J':
-                drawingInfo->lightData.lightAmbient -= glm::vec3(.1f);
                 return;
             case 'K':
-                drawingInfo->lightData.lightDiffuse -= glm::vec3(.1f);
                 return;
             case 'L':
-                drawingInfo->lightData.lightSpecular -= glm::vec3(.1f);
                 return;
+            case 'F':
+                {
+                    local_persist bool flashLightOn = true;
+                    flashLightOn = !flashLightOn;
+                    drawingInfo->spotLight.ambient = flashLightOn ? glm::vec3(.1f) : glm::vec3(0.f);
+                    drawingInfo->spotLight.diffuse = flashLightOn ? glm::vec3(.5f) : glm::vec3(0.f);
+                    drawingInfo->spotLight.specular = flashLightOn ? glm::vec3(1.f) : glm::vec3(0.f);
+                    return;
+                }
             case 'G':
-                drawingInfo->attIndex = (drawingInfo->attIndex > 0) ? drawingInfo->attIndex - 1 : 0;
-                DebugPrintA("New range: %u\n", globalAttenuationTable[drawingInfo->attIndex].range);
                 return;
             case 'H':
-                drawingInfo->attIndex = min(drawingInfo->attIndex + 1, myArraySize(globalAttenuationTable) - 1);
-                DebugPrintA("New range: %u\n", globalAttenuationTable[drawingInfo->attIndex].range);
                 return;
             }
             return;
@@ -681,18 +705,40 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
         
-        SetShaderUniformVec3(shaderProgram, "light.position", globalCameraPos);
-        SetShaderUniformVec3(shaderProgram, "light.direction", GetCameraForwardVector());
-        float cosInner = cosf(drawingInfo->lightInnerCutoff);
-        DebugPrintA("cosInner: %f\n", cosInner);
-        SetShaderUniformFloat(shaderProgram, "light.innerCutoff", cosInner);
-        float cosOuter = cosf(drawingInfo->lightOuterCutoff);
-        DebugPrintA("cosOuter: %f\n", cosOuter);
-        SetShaderUniformFloat(shaderProgram, "light.outerCutoff", cosOuter);
-        LightData *lightData = &drawingInfo->lightData;
-        SetShaderUniformVec3(shaderProgram, "light.ambient", lightData->lightAmbient);
-        SetShaderUniformVec3(shaderProgram, "light.diffuse", lightData->lightDiffuse);
-        SetShaderUniformVec3(shaderProgram, "light.specular", lightData->lightSpecular);
+        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+        {
+            PointLight *lights = drawingInfo->pointLights;
+            PointLight light = lights[lightIndex];
+            
+            char posString[32];
+            sprintf_s(posString, "pointLights[%i].position", lightIndex);
+            SetShaderUniformVec3(shaderProgram, posString, light.position);
+            char ambString[32];
+            sprintf_s(ambString, "pointLights[%i].ambient", lightIndex);
+            SetShaderUniformVec3(shaderProgram, ambString, light.ambient);
+            char diffString[32];
+            sprintf_s(diffString, "pointLights[%i].diffuse", lightIndex);
+            SetShaderUniformVec3(shaderProgram, diffString, light.diffuse);
+            char specString[32];
+            sprintf_s(specString, "pointLights[%i].specular", lightIndex);
+            SetShaderUniformVec3(shaderProgram, specString, light.specular);
+            
+            Attenuation *att = &globalAttenuationTable[light.attIndex];
+            char linString[32];
+            sprintf_s(linString, "pointLights[%i].linear", lightIndex);
+            SetShaderUniformFloat(shaderProgram, linString, att->linear);
+            char quadString[32];
+            sprintf_s(quadString, "pointLights[%i].quadratic", lightIndex);
+            SetShaderUniformFloat(shaderProgram, quadString, att->quadratic);
+        }
+        
+        SetShaderUniformVec3(shaderProgram, "spotLight.position", globalCameraPos);
+        SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector());
+        SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(drawingInfo->spotLight.innerCutoff));
+        SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(drawingInfo->spotLight.outerCutoff));
+        SetShaderUniformVec3(shaderProgram, "spotLight.ambient", drawingInfo->spotLight.ambient);
+        SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", drawingInfo->spotLight.diffuse);
+        SetShaderUniformVec3(shaderProgram, "spotLight.specular", drawingInfo->spotLight.specular);
         
         SetShaderUniformVec3(shaderProgram, "cameraPos", globalCameraPos);
         
@@ -714,23 +760,26 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         }
     }
     
-    // Light.
+    // Point lights.
     {
         u32 shaderProgram = drawingInfo->lightShaderProgram;
         glUseProgram(shaderProgram);
         
+        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
         SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", lightColor);
         
         glBindVertexArray(drawingInfo->lightVao);
         
-        // Model matrix: transforms vertices from local to world space.
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, drawingInfo->lightPos);
+        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+        {
+            // Model matrix: transforms vertices from local to world space.
+            glm::mat4 modelMatrix = glm::mat4(1.f);
+            modelMatrix = glm::translate(modelMatrix, drawingInfo->pointLights[lightIndex].position);
         
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        }
     }
 
     if (!SwapBuffers(hdc))
@@ -1020,20 +1069,35 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         
         appState.drawingInfo.containerShaderProgram = containerShaderProgram;
         appState.drawingInfo.lightShaderProgram = lightShaderProgram;
+        
         srand((u32)Win32GetWallClock());
+        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+        {
+            f32 x = (f32)(rand() % 10);
+            x = (rand() > RAND_MAX / 2) ? x : -x;
+            f32 y = (f32)(rand() % 10);
+            y = (rand() > RAND_MAX / 2) ? y : -y;
+            f32 z = (f32)(rand() % 10);
+            z = (rand() > RAND_MAX / 2) ? z : -z;
+            appState.drawingInfo.pointLights[lightIndex].position = { x, y, z };
+            
+            u32 attIndex = rand() % myArraySize(globalAttenuationTable);
+            appState.drawingInfo.pointLights[lightIndex].attIndex = clamp(attIndex, 2, 6);
+        }
+        
         for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
         {
-            f32 x = (f32)(rand() % 7);
+            f32 x = (f32)(rand() % 10);
             x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)(rand() % 7);
+            f32 y = (f32)(rand() % 10);
             y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)(rand() % 7);
+            f32 z = (f32)(rand() % 10);
             z = (rand() > RAND_MAX / 2) ? z : -z;
             appState.drawingInfo.containerPos[containerIndex] = { x, y, z };
         }
         appState.drawingInfo.containerVao = containerVao;
         // NOTE: X and Y values are set in the drawing function so that the light rotates over time.
-        appState.drawingInfo.lightPos = glm::vec3(0.f);
+        // appState.drawingInfo.lightPos = glm::vec3(0.f);
         appState.drawingInfo.lightVao = lightVao;
         appState.drawingInfo.initialized = true;
         
