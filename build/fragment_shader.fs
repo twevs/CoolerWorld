@@ -40,7 +40,8 @@ struct SpotLight
     vec3 diffuse;
     vec3 specular;
         
-    float cutoff;
+    float innerCutoff;
+    float outerCutoff;
 };
 
 in vec3 fragWorldPos;
@@ -56,31 +57,25 @@ uniform vec3 cameraPos;
 
 void main()
 {
+    vec3 lightDir = normalize(light.position - fragWorldPos);
+    float dotDirs = dot(lightDir, normalize(-light.direction));
+    float intensity = (dotDirs - light.outerCutoff) / (light.innerCutoff - light.outerCutoff);
+    intensity = clamp(intensity, 0.f, 1.f);
+        
     // Ambient contribution.
     vec3 ambient = vec3(texture(material.diffuse, texCoords)) * light.ambient;
     
-    vec3 lightDir = normalize(light.position - fragWorldPos);
-    float dotDirs = dot(lightDir, -light.direction);
-    if (dotDirs > light.cutoff)
-    {
-        // Diffuse contribution.
-        float diff = max(dot(normalize(normal), lightDir), 0.f);
-        vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
+    // Diffuse contribution.
+    float diff = max(dot(normalize(normal), lightDir), 0.f);
+    vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
+
+    // Specular contribution.
+    vec3 reflectionDir = reflect(-lightDir, normal);
+    vec3 cameraDir = normalize(cameraPos - fragWorldPos);
+    float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), material.shininess);
+    vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
+
+    vec3 result = ambient + intensity * (diffuse + specular);
     
-        // Specular contribution.
-        vec3 reflectionDir = reflect(-lightDir, normal);
-        vec3 cameraDir = normalize(cameraPos - fragWorldPos);
-        float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), material.shininess);
-        vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
-    
-        vec3 result = ambient + diffuse + specular;
-        
-        fragColor = vec4(result, 1.f);
-    }
-    else
-    {
-        fragColor = vec4(ambient, 1.f);
-    }
-    
-    
+    fragColor = vec4(result, 1.f);
 }

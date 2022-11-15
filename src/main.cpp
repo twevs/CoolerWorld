@@ -109,7 +109,8 @@ struct DrawingInfo
     
     glm::vec3 lightPos;
     glm::vec3 lightDir;
-    f32 lightCutoff = PI / 4;
+    f32 lightInnerCutoff = PI / 11;
+    f32 lightOuterCutoff = PI / 9;
     LightData lightData;
     u32 lightVao;
     u32 attIndex;
@@ -285,8 +286,8 @@ void Win32ProcessMessages(
                 else
                 {
                     // drawingInfo->lightPos.x += .1f;
-                    drawingInfo->lightCutoff = fmin(drawingInfo->lightCutoff + .05f, PI / 2);
-                    DebugPrintA("cutoff: %f\n", drawingInfo->lightCutoff * 180.f / PI);
+                    drawingInfo->lightInnerCutoff = fmin(drawingInfo->lightInnerCutoff + .05f, PI / 2);
+                    DebugPrintA("cutoff: %f\n", drawingInfo->lightInnerCutoff * 180.f / PI);
                 }
                 return;
             case VK_DOWN:
@@ -297,8 +298,8 @@ void Win32ProcessMessages(
                 else
                 {
                     // drawingInfo->lightPos.x -= .1f;
-                    drawingInfo->lightCutoff = fmax(drawingInfo->lightCutoff - .05f, 0.f);
-                    DebugPrintA("cutoff: %f\n", drawingInfo->lightCutoff * 180.f / PI);
+                    drawingInfo->lightInnerCutoff = fmax(drawingInfo->lightInnerCutoff - .05f, 0.f);
+                    DebugPrintA("cutoff: %f\n", drawingInfo->lightInnerCutoff * 180.f / PI);
                 }
                 return;
             case VK_LEFT:
@@ -646,11 +647,6 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     // How do we obtain the forward vector? Translate world forward vec by camera world rotation matrix.
     glm::vec3 cameraForwardVec = glm::normalize(GetCameraForwardVector());
     
-    // float fvX = cosf(PI/2 + globalCameraYaw);
-    // float fvY = sinf(globalCameraPitch);
-    // float fvZ = -sinf(PI/2 + globalCameraYaw);
-    // glm::vec3 cameraForwardVec = glm::normalize(glm::vec3(fvX, fvY, fvZ));
-    
     glm::vec3 cameraTarget = globalCameraPos + cameraForwardVec;
         
     // The camera direction vector points from the camera target to the camera itself, maintaining
@@ -687,7 +683,12 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         SetShaderUniformVec3(shaderProgram, "light.position", globalCameraPos);
         SetShaderUniformVec3(shaderProgram, "light.direction", GetCameraForwardVector());
-        SetShaderUniformFloat(shaderProgram, "light.cutoff", cosf(drawingInfo->lightCutoff));
+        float cosInner = cosf(drawingInfo->lightInnerCutoff);
+        DebugPrintA("cosInner: %f\n", cosInner);
+        SetShaderUniformFloat(shaderProgram, "light.innerCutoff", cosInner);
+        float cosOuter = cosf(drawingInfo->lightOuterCutoff);
+        DebugPrintA("cosOuter: %f\n", cosOuter);
+        SetShaderUniformFloat(shaderProgram, "light.outerCutoff", cosOuter);
         LightData *lightData = &drawingInfo->lightData;
         SetShaderUniformVec3(shaderProgram, "light.ambient", lightData->lightAmbient);
         SetShaderUniformVec3(shaderProgram, "light.diffuse", lightData->lightDiffuse);
