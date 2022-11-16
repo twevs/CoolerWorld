@@ -52,8 +52,9 @@ uniform Material material;
 uniform DirLight dirLight;
 vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir);
 
-uniform PointLight pointLights[4];
-vec3 CalcPointLights(PointLight[4] lights, vec3 normal, vec3 cameraDir);
+#define NUM_POINTLIGHTS 4
+uniform PointLight pointLights[NUM_POINTLIGHTS];
+vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 cameraDir);
 
 uniform SpotLight spotLight;
 vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir);
@@ -62,10 +63,11 @@ uniform vec3 cameraPos;
 
 void main()
 {
+    vec3 norm = normalize(normal);
     vec3 cameraDir = normalize(cameraPos - fragWorldPos);
-    vec3 dirContribution = CalcDirLight(dirLight, normal, cameraDir);
-    vec3 pointsContribution = CalcPointLights(pointLights, normal, cameraDir);
-    vec3 spotContribution = CalcSpotLight(spotLight, normal, cameraDir);
+    vec3 dirContribution = CalcDirLight(dirLight, norm, cameraDir);
+    vec3 pointsContribution = CalcPointLights(pointLights, norm, cameraDir);
+    vec3 spotContribution = CalcSpotLight(spotLight, norm, cameraDir);
     
     vec3 result = dirContribution + pointsContribution + spotContribution;
     
@@ -79,7 +81,7 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir)
     
     // Diffuse contribution.
     vec3 lightDir = normalize(-light.direction);
-    float diff = max(dot(normalize(normal), lightDir), 0.f);
+    float diff = max(dot(normal, lightDir), 0.f);
     vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
 
     // Specular contribution.
@@ -90,7 +92,7 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir)
     return ambient + diffuse + specular;
 }
 
-vec3 CalcPointLights(PointLight[4] lights, vec3 normal, vec3 cameraDir)
+vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 cameraDir)
 {
     vec3 result = vec3(0.f);
     
@@ -106,7 +108,7 @@ vec3 CalcPointLights(PointLight[4] lights, vec3 normal, vec3 cameraDir)
     
         // Diffuse contribution.
         vec3 lightDir = normalize(light.position - fragWorldPos);
-        float diff = max(dot(normalize(normal), lightDir), 0.f);
+        float diff = max(dot(normal, lightDir), 0.f);
         vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
 
         // Specular contribution.
@@ -114,7 +116,7 @@ vec3 CalcPointLights(PointLight[4] lights, vec3 normal, vec3 cameraDir)
         float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), material.shininess);
         vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
         
-        result += ambient + intensity * (diffuse + specular);
+        result += intensity * (ambient + diffuse + specular);
     }
 
     return result;
@@ -131,7 +133,7 @@ vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir)
     vec3 ambient = vec3(texture(material.diffuse, texCoords)) * light.ambient;
     
     // Diffuse contribution.
-    float diff = max(dot(normalize(normal), lightDir), 0.f);
+    float diff = max(dot(normal, lightDir), 0.f);
     vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
 
     // Specular contribution.
@@ -139,5 +141,5 @@ vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir)
     float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), material.shininess);
     vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
 
-    return ambient + intensity * (diffuse + specular);
+    return intensity * (diffuse + specular);
 }

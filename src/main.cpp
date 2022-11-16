@@ -71,7 +71,7 @@ struct DirLight
 {
     glm::vec3 direction;
     
-    glm::vec3 ambient = glm::vec3(.1f);
+    glm::vec3 ambient = glm::vec3(.05f);
     glm::vec3 diffuse = glm::vec3(.5f);
     glm::vec3 specular = glm::vec3(1.f);
 };
@@ -115,7 +115,7 @@ struct SpotLight
     glm::vec3 position;
     glm::vec3 direction;
     
-    glm::vec3 ambient = glm::vec3(.1f);
+    glm::vec3 ambient = glm::vec3(0.f);
     glm::vec3 diffuse = glm::vec3(.5f);
     glm::vec3 specular = glm::vec3(1.f);
         
@@ -1083,7 +1083,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             drawingInfo->pointLights[lightIndex].position = { x, y, z };
             
             u32 attIndex = rand() % myArraySize(globalAttenuationTable);
-            drawingInfo->pointLights[lightIndex].attIndex = clamp(attIndex, 2, 6);
+            // NOTE: constant-range point lights makes for easier visualization of light effects.
+            drawingInfo->pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
         }
         
         for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
