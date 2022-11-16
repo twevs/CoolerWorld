@@ -17,6 +17,10 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#include "imgui/imgui.h"
+#include "imgui/imgui_impl_win32.h"
+#include "imgui/imgui_impl_opengl3.h"
+
 #define global_variable static
 #define internal static
 #define local_persist static
@@ -123,6 +127,14 @@ struct SpotLight
     float outerCutoff = PI / 9.f;
 };
 
+struct Preset
+{
+    glm::vec3 clearColor;
+    DirLight dirLight;
+    PointLight pointLights[NUM_POINTLIGHTS];
+    SpotLight spotLight;
+};
+
 struct DrawingInfo
 {
     bool initialized;
@@ -214,15 +226,22 @@ f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 void Win32ProcessMessages(
     HWND window,
     bool *running,
     DrawingInfo *drawingInfo,
-    glm::vec3 *movement)
+    glm::vec3 *movement,
+    ImGuiIO *imGuiIO)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
-    {
+    {        
+        if (ImGui_ImplWin32_WndProcHandler(window, message.message, message.wParam, message.lParam))
+        {
+            return;
+        }
         local_persist bool capturing = false;
         local_persist f32 speed = 1.f;
         
@@ -665,6 +684,14 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     
     glClearColor(.1f, .1f, .1f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    
+    ImGui_ImplWin32_NewFrame();
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui::NewFrame();
+    ImGui::ShowDemoWindow(running);
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
 
     // The camera target should always be camera pos + local forward vector.
     // We want to be able to rotate the camera, however.
@@ -1105,10 +1132,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         
         glm::vec3 movementPerFrame = {};
         
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO(); (void)io;
+        ImGui::StyleColorsDark();
+        ImGui_ImplWin32_Init(window);
+        ImGui_ImplOpenGL3_Init("#version 330");
+        
         appState.running = true;
         while (appState.running)
         {
-            Win32ProcessMessages(window, &appState.running, &appState.drawingInfo, &movementPerFrame);
+            Win32ProcessMessages(window, &appState.running, &appState.drawingInfo, &movementPerFrame, &io);
 
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
@@ -1134,7 +1168,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 // OutputDebugStringW(frameTimeString);
 
                 frameTimeAccumulator = 0.f;
-
+                
                 DrawWindow(window, hdc, &appState.running, &appState.drawingInfo);
                 globalCameraPos += movementPerFrame;
                 movementPerFrame = glm::vec3(0.f);
