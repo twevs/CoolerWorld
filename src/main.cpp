@@ -705,31 +705,31 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
         
+        SetShaderUniformVec3(shaderProgram, "dirLight.direction", drawingInfo->dirLight.direction);
+        SetShaderUniformVec3(shaderProgram, "dirLight.ambient", drawingInfo->dirLight.ambient);
+        SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", drawingInfo->dirLight.diffuse);
+        SetShaderUniformVec3(shaderProgram, "dirLight.specular", drawingInfo->dirLight.specular);
+        
         for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
         {
             PointLight *lights = drawingInfo->pointLights;
             PointLight light = lights[lightIndex];
             
-            char posString[32];
-            sprintf_s(posString, "pointLights[%i].position", lightIndex);
-            SetShaderUniformVec3(shaderProgram, posString, light.position);
-            char ambString[32];
-            sprintf_s(ambString, "pointLights[%i].ambient", lightIndex);
-            SetShaderUniformVec3(shaderProgram, ambString, light.ambient);
-            char diffString[32];
-            sprintf_s(diffString, "pointLights[%i].diffuse", lightIndex);
-            SetShaderUniformVec3(shaderProgram, diffString, light.diffuse);
-            char specString[32];
-            sprintf_s(specString, "pointLights[%i].specular", lightIndex);
-            SetShaderUniformVec3(shaderProgram, specString, light.specular);
+            char uniformString[32];
+            sprintf_s(uniformString, "pointLights[%i].position", lightIndex);
+            SetShaderUniformVec3(shaderProgram, uniformString, light.position);
+            sprintf_s(uniformString, "pointLights[%i].ambient", lightIndex);
+            SetShaderUniformVec3(shaderProgram, uniformString, light.ambient);
+            sprintf_s(uniformString, "pointLights[%i].diffuse", lightIndex);
+            SetShaderUniformVec3(shaderProgram, uniformString, light.diffuse);
+            sprintf_s(uniformString, "pointLights[%i].specular", lightIndex);
+            SetShaderUniformVec3(shaderProgram, uniformString, light.specular);
             
             Attenuation *att = &globalAttenuationTable[light.attIndex];
-            char linString[32];
-            sprintf_s(linString, "pointLights[%i].linear", lightIndex);
-            SetShaderUniformFloat(shaderProgram, linString, att->linear);
-            char quadString[32];
-            sprintf_s(quadString, "pointLights[%i].quadratic", lightIndex);
-            SetShaderUniformFloat(shaderProgram, quadString, att->quadratic);
+            sprintf_s(uniformString, "pointLights[%i].linear", lightIndex);
+            SetShaderUniformFloat(shaderProgram, uniformString, att->linear);
+            sprintf_s(uniformString, "pointLights[%i].quadratic", lightIndex);
+            SetShaderUniformFloat(shaderProgram, uniformString, att->quadratic);
         }
         
         SetShaderUniformVec3(shaderProgram, "spotLight.position", globalCameraPos);
@@ -1060,15 +1060,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         f32 height = (f32)clientRect.bottom;
         globalAspectRatio = width / height;
         
-        appState.drawingInfo.diffuseMap = CreateTextureFromImage("container2.png", true, GL_REPEAT);
-        appState.drawingInfo.specularMap = CreateTextureFromImage("container2_specular.png", true, GL_REPEAT);
+        DrawingInfo *drawingInfo = &appState.drawingInfo;
+        drawingInfo->diffuseMap = CreateTextureFromImage("container2.png", true, GL_REPEAT);
+        drawingInfo->specularMap = CreateTextureFromImage("container2_specular.png", true, GL_REPEAT);
         
         glUseProgram(containerShaderProgram);
         SetShaderUniformSampler(containerShaderProgram, "material.diffuse", 0);
         SetShaderUniformSampler(containerShaderProgram, "material.specular", 1);
         
-        appState.drawingInfo.containerShaderProgram = containerShaderProgram;
-        appState.drawingInfo.lightShaderProgram = lightShaderProgram;
+        drawingInfo->containerShaderProgram = containerShaderProgram;
+        drawingInfo->lightShaderProgram = lightShaderProgram;
         
         srand((u32)Win32GetWallClock());
         for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
@@ -1079,10 +1080,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             y = (rand() > RAND_MAX / 2) ? y : -y;
             f32 z = (f32)(rand() % 10);
             z = (rand() > RAND_MAX / 2) ? z : -z;
-            appState.drawingInfo.pointLights[lightIndex].position = { x, y, z };
+            drawingInfo->pointLights[lightIndex].position = { x, y, z };
             
             u32 attIndex = rand() % myArraySize(globalAttenuationTable);
-            appState.drawingInfo.pointLights[lightIndex].attIndex = clamp(attIndex, 2, 6);
+            drawingInfo->pointLights[lightIndex].attIndex = clamp(attIndex, 2, 6);
         }
         
         for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
@@ -1093,13 +1094,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             y = (rand() > RAND_MAX / 2) ? y : -y;
             f32 z = (f32)(rand() % 10);
             z = (rand() > RAND_MAX / 2) ? z : -z;
-            appState.drawingInfo.containerPos[containerIndex] = { x, y, z };
+            drawingInfo->containerPos[containerIndex] = { x, y, z };
         }
-        appState.drawingInfo.containerVao = containerVao;
-        // NOTE: X and Y values are set in the drawing function so that the light rotates over time.
-        // appState.drawingInfo.lightPos = glm::vec3(0.f);
-        appState.drawingInfo.lightVao = lightVao;
-        appState.drawingInfo.initialized = true;
+        glm::vec3 *containerPos = drawingInfo->containerPos;
+        drawingInfo->dirLight.direction = glm::normalize(containerPos[NUM_CONTAINERS - 1] - containerPos[0]);
+        drawingInfo->containerVao = containerVao;
+        drawingInfo->lightVao = lightVao;
+        drawingInfo->initialized = true;
         
         glm::vec3 movementPerFrame = {};
         
