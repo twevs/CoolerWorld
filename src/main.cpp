@@ -21,6 +21,10 @@
 #include "imgui/imgui_impl_win32.h"
 #include "imgui/imgui_impl_opengl3.h"
 
+#include "assimp/Importer.hpp"
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
+
 #define global_variable static
 #define internal static
 #define local_persist static
@@ -164,6 +168,32 @@ struct ApplicationState
 {
     DrawingInfo drawingInfo;
     bool running;
+};
+
+struct Vertex
+{
+    glm::vec3 position;
+    glm::vec3 normal;
+    glm::vec3 texCoords;
+};
+
+enum class TextureType
+{
+    Diffuse,
+    Specular
+};
+
+struct Texture
+{
+    u32 id;
+    TextureType type;
+};
+
+struct Mesh
+{
+    Vertex *vertices;
+    u32 *indices;
+    Texture *textures;
 };
 
 PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
@@ -873,6 +903,31 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     }
 }
 
+Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene)
+{
+    Mesh result;
+    
+    for (u32 i = 0; i < mesh->mNumVertices; i++)
+    {
+    }
+    
+    return result;
+}
+
+void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount)
+{
+    for (u32 i = 0; i < node->mNumMeshes; i++)
+    {
+        aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
+        meshes[*meshCount++] = ProcessMesh(mesh, scene);
+    }
+    
+    for (u32 i = 0; i < node->mNumChildren; i++)
+    {
+        ProcessNode(node->mChildren[i], scene, meshes, meshCount);
+    }
+}
+
 u32 CreateVAO(VaoInformation *vaoInfo)
 {
     u32 vao;
@@ -1200,6 +1255,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         ImGui::StyleColorsDark();
         ImGui_ImplWin32_Init(window);
         ImGui_ImplOpenGL3_Init("#version 330");
+        
+        Assimp::Importer importer;
+        char path[32];
+        const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
+        myAssert(scene);
+        Mesh meshes[512];
+        u32 meshCount = 0;
+        ProcessNode(scene->mRootNode, scene, meshes, &meshCount);
         
         appState.running = true;
         while (appState.running)
