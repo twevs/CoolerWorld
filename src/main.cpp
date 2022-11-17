@@ -129,14 +129,6 @@ struct SpotLight
     float outerCutoff = PI / 9.f;
 };
 
-struct Preset
-{
-    glm::vec3 clearColor;
-    DirLight dirLight;
-    PointLight pointLights[NUM_POINTLIGHTS];
-    SpotLight spotLight;
-};
-
 struct DrawingInfo
 {
     bool initialized;
@@ -151,6 +143,7 @@ struct DrawingInfo
     glm::vec3 containerPos[NUM_CONTAINERS];
     u32 containerVao;
     
+    float clearColor[4] = { .1f, .1f, .1f, 1.f };
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;
@@ -244,6 +237,12 @@ void Win32ProcessMessages(
         {
             break;
         }
+        if (imGuiIO->WantCaptureKeyboard || imGuiIO->WantTextInput)
+        {
+            TranslateMessage(&message);
+            DispatchMessage(&message);
+            break;
+        }
         local_persist bool capturing = false;
         local_persist f32 speed = 1.f;
         
@@ -305,12 +304,11 @@ void Win32ProcessMessages(
             }
             break;
         }
+        case WM_CHAR:
+            imGuiIO->AddInputCharacter((u32)message.wParam);
+            break;
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
-            if (imGuiIO->WantCaptureKeyboard || imGuiIO->WantTextInput)
-            {
-                break;
-            }
             // Treat WASD specially.
             float deltaZ = (GetKeyState('W') < 0) ? .1f : (GetKeyState('S') < 0) ? -.1f : 0.f;
             float deltaX = (GetKeyState('D') < 0) ? .1f : (GetKeyState('A') < 0) ? -.1f : 0.f;
@@ -689,7 +687,8 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         return;
     }
     
-    glClearColor(.1f, .1f, .1f, 1.f);
+    float *cc = drawingInfo->clearColor;
+    glClearColor(cc[0], cc[1], cc[2], cc[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
     // The camera target should always be camera pos + local forward vector.
@@ -716,8 +715,6 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         globalAspectRatio, 
         .1f, 
         farPlaneDistance);
-    
-    glm::vec3 lightColor = glm::vec3(1.f);
     
     // Container.
     {
@@ -793,31 +790,41 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
         SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", lightColor);
         
         glBindVertexArray(drawingInfo->lightVao);
         
         for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
         {
+            PointLight *curLight = &drawingInfo->pointLights[lightIndex];
             // Model matrix: transforms vertices from local to world space.
             glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, drawingInfo->pointLights[lightIndex].position);
+            modelMatrix = glm::translate(modelMatrix, curLight->position);
         
+            SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", curLight->diffuse);
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
             glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
         }
     }
     
-    ImGui::ShowDemoWindow();
-    
+    u32 id = 0;
     ImGui::Begin("Debug Window");
+    ImGui::SliderFloat4("Clear color", drawingInfo->clearColor, 0.f, 1.f);
+    if (ImGui::CollapsingHeader("Containers"))
+    {
+        for (u32 index = 0; index < NUM_CONTAINERS; index++)
+        {
+            ImGui::PushID(id++);
+            ImGui::SliderFloat3("Position", glm::value_ptr(drawingInfo->containerPos[index]), -10.f, 10.f);
+            ImGui::PopID();
+        }
+    }
     if (ImGui::CollapsingHeader("Directional light"))
     {
-        ImGui::PushID(0);
-        ImGui::InputFloat3("Direction", glm::value_ptr(drawingInfo->dirLight.direction));
-        ImGui::InputFloat3("Ambient", glm::value_ptr(drawingInfo->dirLight.ambient));
-        ImGui::InputFloat3("Diffuse", glm::value_ptr(drawingInfo->dirLight.diffuse));
-        ImGui::InputFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular));
+        ImGui::PushID(id++);
+        ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->dirLight.direction), -10.f, 10.f);
+        ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->dirLight.ambient), 0.f, 1.f);
+        ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->dirLight.diffuse), 0.f, 1.f);
+        ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular), 0.f, 1.f);
         ImGui::PopID();
     }
     if (ImGui::CollapsingHeader("Point lights"))
@@ -825,25 +832,31 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         PointLight *lights = drawingInfo->pointLights;
         for (u32 index = 0; index < NUM_POINTLIGHTS; index++)
         {
-            ImGui::PushID(index + 1);
-            ImGui::InputFloat3("Direction", glm::value_ptr(lights[index].position));
-            ImGui::InputFloat3("Ambient", glm::value_ptr(lights[index].ambient));
-            ImGui::InputFloat3("Diffuse", glm::value_ptr(lights[index].diffuse));
-            ImGui::InputFloat3("Specular", glm::value_ptr(lights[index].specular));
-            ImGui::InputInt("Attenuation", &lights[index].attIndex);
+            ImGui::PushID(id++);
+            char treeName[32];
+            sprintf_s(treeName, "Light #%i", index);
+            if (ImGui::TreeNode(treeName))
+            {
+                ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -10.f, 10.f);
+                ImGui::SliderFloat3("Ambient", glm::value_ptr(lights[index].ambient), 0.f, 1.f);
+                ImGui::SliderFloat3("Diffuse", glm::value_ptr(lights[index].diffuse), 0.f, 1.f);
+                ImGui::SliderFloat3("Specular", glm::value_ptr(lights[index].specular), 0.f, 1.f);
+                ImGui::SliderInt("Attenuation", &lights[index].attIndex, 0, myArraySize(globalAttenuationTable) - 1);
+                ImGui::TreePop();
+            }
             ImGui::PopID();
         }
     }
     if (ImGui::CollapsingHeader("Spot light"))
     {
-        ImGui::PushID(NUM_POINTLIGHTS + 1);
-        ImGui::InputFloat3("Position", glm::value_ptr(drawingInfo->spotLight.position));
-        ImGui::InputFloat3("Direction", glm::value_ptr(drawingInfo->spotLight.direction));
-        ImGui::InputFloat3("Ambient", glm::value_ptr(drawingInfo->spotLight.ambient));
-        ImGui::InputFloat3("Diffuse", glm::value_ptr(drawingInfo->spotLight.diffuse));
-        ImGui::InputFloat3("Specular", glm::value_ptr(drawingInfo->spotLight.specular));
-        ImGui::InputFloat("Inner cutoff", &drawingInfo->spotLight.innerCutoff);
-        ImGui::InputFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff);
+        ImGui::PushID(id++);
+        ImGui::SliderFloat3("Position", glm::value_ptr(drawingInfo->spotLight.position), -10.f, 10.f);
+        ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->spotLight.direction), -10.f, 10.f);
+        ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->spotLight.ambient), 0.f, 1.f);
+        ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->spotLight.diffuse), 0.f, 1.f);
+        ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->spotLight.specular), 0.f, 1.f);
+        ImGui::SliderFloat("Inner cutoff", &drawingInfo->spotLight.innerCutoff, 0.f, PI / 2.f);
+        ImGui::SliderFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
         ImGui::PopID();
     }
     ImGui::End();
