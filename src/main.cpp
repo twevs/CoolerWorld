@@ -65,6 +65,8 @@ typedef double f64;
 #define NUM_POINTLIGHTS 4
 #define NUM_CONTAINERS 10
 
+PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
+
 global_variable f32 globalFov = 45.f;
 global_variable f32 globalAspectRatio;
 global_variable glm::vec3 globalCameraPos;
@@ -88,7 +90,7 @@ struct PointLight
     glm::vec3 diffuse = glm::vec3(.5f);
     glm::vec3 specular = glm::vec3(1.f);
     
-    u32 attIndex = 4;
+    s32 attIndex = 4;
 };
 
 struct Attenuation
@@ -240,7 +242,7 @@ void Win32ProcessMessages(
     {        
         if (ImGui_ImplWin32_WndProcHandler(window, message.message, message.wParam, message.lParam))
         {
-            return;
+            break;
         }
         local_persist bool capturing = false;
         local_persist f32 speed = 1.f;
@@ -259,17 +261,18 @@ void Win32ProcessMessages(
         {
         case WM_QUIT:
             *running = false;
-            return;
+            break;
         case WM_RBUTTONDOWN:
             SetCapture(window);
             capturing = true;
             ShowCursor(FALSE);
             SetCursorPos(centreX, centreY);
-            return;
+            break;
         case WM_RBUTTONUP:
             ShowCursor(TRUE);
             ReleaseCapture();
             capturing = false;
+            break;
         case WM_MOUSEMOVE: {
             bool rightButtonDown = (message.wParam & 0x2);
             if (capturing)
@@ -287,7 +290,7 @@ void Win32ProcessMessages(
                     
                 SetCursorPos(centreX, centreY);
             }
-            return;
+            break;
         }
         case WM_MOUSEWHEEL: {
             s16 wheelRotation = HIWORD(message.wParam);
@@ -300,10 +303,14 @@ void Win32ProcessMessages(
             {
                 speed = fmax(speed + (f32)wheelRotation / WHEEL_DELTA, 0.f);
             }
-            return;
+            break;
         }
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
+            if (imGuiIO->WantCaptureKeyboard || imGuiIO->WantTextInput)
+            {
+                break;
+            }
             // Treat WASD specially.
             float deltaZ = (GetKeyState('W') < 0) ? .1f : (GetKeyState('S') < 0) ? -.1f : 0.f;
             float deltaX = (GetKeyState('D') < 0) ? .1f : (GetKeyState('A') < 0) ? -.1f : 0.f;
@@ -320,10 +327,10 @@ void Win32ProcessMessages(
                 {
                     *running = false;
                 }
-                return;
+                break;
             case VK_ESCAPE:
                 *running = false;
-                return;
+                break;
             case VK_UP:
                 if (altPressed)
                 {
@@ -333,7 +340,7 @@ void Win32ProcessMessages(
                     drawingInfo->spotLight.innerCutoff += .05f;
                     DebugPrintA("innerCutoff: %f\n", drawingInfo->spotLight.innerCutoff);
                 }
-                return;
+                break;
             case VK_DOWN:
                 if (altPressed)
                 {
@@ -343,37 +350,37 @@ void Win32ProcessMessages(
                     drawingInfo->spotLight.innerCutoff -= .05f;
                     DebugPrintA("innerCutoff: %f\n", drawingInfo->spotLight.innerCutoff);
                 }
-                return;
+                break;
             case VK_LEFT:
                 drawingInfo->spotLight.outerCutoff -= .05f;
                 DebugPrintA("outerCutoff: %f\n", drawingInfo->spotLight.outerCutoff);
-                return;
+                break;
             case VK_RIGHT:
                 drawingInfo->spotLight.outerCutoff += .05f;
                 DebugPrintA("outerCutoff: %f\n", drawingInfo->spotLight.outerCutoff);
-                return;
+                break;
             case 'Q':
                 globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
-                return;
+                break;
             case 'E':
                 globalAspectRatio = fmin(globalAspectRatio + .1f, 10.f);
-                return;
+                break;
             case 'X':
                 drawingInfo->wireframeMode = !drawingInfo->wireframeMode;
                 glPolygonMode(GL_FRONT_AND_BACK, drawingInfo->wireframeMode ? GL_LINE : GL_FILL);
-                return;
+                break;
             case 'U':
-                return;
+                break;
             case 'I':
-                return;
+                break;
             case 'O':
-                return;
+                break;
             case 'J':
-                return;
+                break;
             case 'K':
-                return;
+                break;
             case 'L':
-                return;
+                break;
             case 'F':
                 {
                     local_persist bool flashLightOn = true;
@@ -381,14 +388,14 @@ void Win32ProcessMessages(
                     drawingInfo->spotLight.ambient = flashLightOn ? glm::vec3(.1f) : glm::vec3(0.f);
                     drawingInfo->spotLight.diffuse = flashLightOn ? glm::vec3(.5f) : glm::vec3(0.f);
                     drawingInfo->spotLight.specular = flashLightOn ? glm::vec3(1.f) : glm::vec3(0.f);
-                    return;
+                    break;
                 }
             case 'G':
-                return;
+                break;
             case 'H':
-                return;
+                break;
             }
-            return;
+            break;
         }
         default:
             TranslateMessage(&message);
@@ -685,14 +692,6 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     glClearColor(.1f, .1f, .1f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
-    ImGui_ImplWin32_NewFrame();
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui::NewFrame();
-    ImGui::ShowDemoWindow(running);
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-
     // The camera target should always be camera pos + local forward vector.
     // We want to be able to rotate the camera, however.
     // How do we obtain the forward vector? Translate world forward vec by camera world rotation matrix.
@@ -808,6 +807,49 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
             glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
         }
     }
+    
+    ImGui::ShowDemoWindow();
+    
+    ImGui::Begin("Debug Window");
+    if (ImGui::CollapsingHeader("Directional light"))
+    {
+        ImGui::PushID(0);
+        ImGui::InputFloat3("Direction", glm::value_ptr(drawingInfo->dirLight.direction));
+        ImGui::InputFloat3("Ambient", glm::value_ptr(drawingInfo->dirLight.ambient));
+        ImGui::InputFloat3("Diffuse", glm::value_ptr(drawingInfo->dirLight.diffuse));
+        ImGui::InputFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular));
+        ImGui::PopID();
+    }
+    if (ImGui::CollapsingHeader("Point lights"))
+    {
+        PointLight *lights = drawingInfo->pointLights;
+        for (u32 index = 0; index < NUM_POINTLIGHTS; index++)
+        {
+            ImGui::PushID(index + 1);
+            ImGui::InputFloat3("Direction", glm::value_ptr(lights[index].position));
+            ImGui::InputFloat3("Ambient", glm::value_ptr(lights[index].ambient));
+            ImGui::InputFloat3("Diffuse", glm::value_ptr(lights[index].diffuse));
+            ImGui::InputFloat3("Specular", glm::value_ptr(lights[index].specular));
+            ImGui::InputInt("Attenuation", &lights[index].attIndex);
+            ImGui::PopID();
+        }
+    }
+    if (ImGui::CollapsingHeader("Spot light"))
+    {
+        ImGui::PushID(NUM_POINTLIGHTS + 1);
+        ImGui::InputFloat3("Position", glm::value_ptr(drawingInfo->spotLight.position));
+        ImGui::InputFloat3("Direction", glm::value_ptr(drawingInfo->spotLight.direction));
+        ImGui::InputFloat3("Ambient", glm::value_ptr(drawingInfo->spotLight.ambient));
+        ImGui::InputFloat3("Diffuse", glm::value_ptr(drawingInfo->spotLight.diffuse));
+        ImGui::InputFloat3("Specular", glm::value_ptr(drawingInfo->spotLight.specular));
+        ImGui::InputFloat("Inner cutoff", &drawingInfo->spotLight.innerCutoff);
+        ImGui::InputFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff);
+        ImGui::PopID();
+    }
+    ImGui::End();
+    
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
     if (!SwapBuffers(hdc))
     {
@@ -970,6 +1012,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                                L"current rendering context.");
             return -1;
         }
+        
+        wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
+        if (!wglSwapIntervalEXT(1))
+        {
+            OutputDebugStringW(L"Failed to make the created OpenGL rendering context the hardware device context's "
+                               L"current rendering context.");
+            return -1;
+        }
 
         if (glewInit() != GLEW_OK)
         {
@@ -988,7 +1038,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         f32 targetFrameTime = 1000.f / 60;
         f32 deltaTime = targetFrameTime;
-        f32 frameTimeAccumulator = 0.f;
 
         u64 lastFrameCount = Win32GetWallClock();
 
@@ -1141,14 +1190,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         
         appState.running = true;
         while (appState.running)
-        {
+        {    
             Win32ProcessMessages(window, &appState.running, &appState.drawingInfo, &movementPerFrame, &io);
-
+            
+            ImGui_ImplOpenGL3_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+            ImGui::NewFrame();
+            
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
             lastFrameCount = currentFrameCount;
 
             deltaTime = (f32)diff * Win32GetWallClockPeriod();
+            DebugPrintA("deltaTime: %f\n", deltaTime);
 
             // Handle resuming from a breakpoint.
             if (deltaTime >= 1000.f)
@@ -1161,25 +1215,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // TODO: investigate whether it's worth keeping this around as a framerate cap mechanism.
             // Won't it produce screen-tearing since it won't necessarily be synchronized with the
             // v-blank? How many users actually disable v-sync anyway?
-            if (frameTimeAccumulator >= targetFrameTime)
-            {
-                // WCHAR frameTimeString[32];
-                // swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
-                // OutputDebugStringW(frameTimeString);
-
-                frameTimeAccumulator = 0.f;
-                
-                DrawWindow(window, hdc, &appState.running, &appState.drawingInfo);
-                globalCameraPos += movementPerFrame;
-                movementPerFrame = glm::vec3(0.f);
-                
-                // DebugPrintA("Camera pitch: %f\n", globalCameraPitch);
-                // DebugPrintA("Camera yaw: %f\n", globalCameraYaw);
-            }
-            else
-            {
-                frameTimeAccumulator += deltaTime;
-            }
+        
+            // WCHAR frameTimeString[32];
+            // swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
+            // OutputDebugStringW(frameTimeString);
+        
+            DrawWindow(window, hdc, &appState.running, &appState.drawingInfo);
+            globalCameraPos += movementPerFrame;
+            movementPerFrame = glm::vec3(0.f);
+            
+            // DebugPrintA("Camera pitch: %f\n", globalCameraPitch);
+            // DebugPrintA("Camera yaw: %f\n", globalCameraYaw);
         }
     }
 
