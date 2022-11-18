@@ -77,6 +77,65 @@ global_variable glm::vec3 globalCameraPos;
 global_variable float globalCameraYaw = 0.f;
 global_variable float globalCameraPitch = 0.f;
 
+u64 fnv1a(u8 *data, size_t len)
+{
+    u64 hash = 14695981039346656037;
+    u64 fnvPrime = 1099511628211;
+
+    BYTE *currentByte = data;
+    BYTE *end = data + len;
+    while (currentByte < end)
+    {
+        hash ^= *currentByte;
+        hash *= fnvPrime;
+        ++currentByte;
+    }
+
+    return hash;
+}
+
+struct Arena
+{
+    void *memory;
+    u64 stackPointer;
+    u64 size;
+};
+
+global_variable Arena globalArena;
+
+Arena *AllocArena(u64 size)
+{
+    void *mem = VirtualAlloc(NULL, sizeof(Arena) + size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    Arena *newArena = (Arena *)mem;
+    newArena->memory = (u8 *)mem + sizeof(Arena);
+    newArena->size = size;
+    return newArena;
+}
+
+void FreeArena(Arena *arena)
+{
+    VirtualFree(arena, arena->size, MEM_RELEASE);
+}
+
+void *ArenaPush(Arena *arena, u64 size)
+{
+    void *mem = (void *)((u8 *)arena->memory + arena->stackPointer);
+    arena->stackPointer += size;
+    myAssert(arena->stackPointer <= arena->size);
+    return mem;
+}
+
+void ArenaPop(Arena *arena, u64 size)
+{
+    arena->stackPointer -= size;
+    myAssert(arena->stackPointer >= 0);
+}
+
+void ArenaClear(Arena *arena)
+{
+    arena->stackPointer = 0;
+}
+
 struct DirLight
 {
     glm::vec3 direction;
@@ -133,15 +192,49 @@ struct SpotLight
     float outerCutoff = PI / 9.f;
 };
 
+struct Vertex
+{
+    glm::vec3 position;
+    glm::vec3 normal;
+    glm::vec2 texCoords;
+};
+
+enum class TextureType
+{
+    Diffuse,
+    Specular
+};
+
+struct Texture
+{
+    u32 id;
+    TextureType type;
+    u64 hash;
+};
+
+struct Mesh
+{
+    Vertex *vertices;
+    u32 verticesSize;
+    u32 *indices;
+    u32 indicesSize;
+    Texture *textures;
+    u32 numTextures;
+};
+
+struct Model
+{
+    Mesh *meshes;
+    u32 meshCount;
+    u32 *vaos;
+};
+
 struct DrawingInfo
 {
     bool initialized;
     bool wireframeMode;
     
-    u32 diffuseMap;
-    u32 specularMap;
-    
-    u32 containerShaderProgram;
+    u32 objectShaderProgram;
     u32 lightShaderProgram;
     
     glm::vec3 containerPos[NUM_CONTAINERS];
@@ -152,6 +245,8 @@ struct DrawingInfo
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;
     u32 lightVao;
+    
+    Model backpack;
 };
         
 struct VaoInformation
@@ -168,32 +263,6 @@ struct ApplicationState
 {
     DrawingInfo drawingInfo;
     bool running;
-};
-
-struct Vertex
-{
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec3 texCoords;
-};
-
-enum class TextureType
-{
-    Diffuse,
-    Specular
-};
-
-struct Texture
-{
-    u32 id;
-    TextureType type;
-};
-
-struct Mesh
-{
-    Vertex *vertices;
-    u32 *indices;
-    Texture *textures;
 };
 
 PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
@@ -617,33 +686,6 @@ bool CreateShaderProgram(u32 *programID, const char *vertexShaderFilename, const
     return true;
 }
 
-u32 CreateTextureFromImage(const char *filename, bool alpha, GLenum wrapMode)
-{
-    s32 width;
-    s32 height;
-    s32 numChannels;
-    stbi_set_flip_vertically_on_load_thread(true);
-    uchar *textureData = stbi_load(filename, &width, &height, &numChannels, 0);
-    myAssert(textureData);
-
-    u32 texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-    GLenum pixelFormat = alpha ? GL_RGBA : GL_RGB;
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
-    glGenerateMipmap(GL_TEXTURE_2D);
-
-    stbi_image_free(textureData);
-
-    return texture;
-}
-
 glm::mat4 LookAt(
      glm::vec3 cameraPosition,
      glm::vec3 cameraTarget,
@@ -748,13 +790,8 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     
     // Container.
     {
-        u32 shaderProgram = drawingInfo->containerShaderProgram;
+        u32 shaderProgram = drawingInfo->objectShaderProgram;
         glUseProgram(shaderProgram);
-        
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, drawingInfo->diffuseMap);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, drawingInfo->specularMap);
         
         SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
         
@@ -795,13 +832,26 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         
         SetShaderUniformVec3(shaderProgram, "cameraPos", globalCameraPos);
         
-        glBindVertexArray(drawingInfo->containerVao);
-    
-        for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
+        Model *model = &drawingInfo->backpack;
+        for (u32 i = 0; i < model->meshCount; i++)
         {
+            glBindVertexArray(model->vaos[i]);
+    
+            Mesh *mesh = &drawingInfo->backpack.meshes[i];
+            if (mesh->numTextures > 0)
+            {
+                glActiveTexture(GL_TEXTURE0);
+                glBindTexture(GL_TEXTURE_2D, mesh->textures[0].id);
+            }
+            if (mesh->numTextures > 1)
+            {
+                glActiveTexture(GL_TEXTURE1);
+                glBindTexture(GL_TEXTURE_2D, mesh->textures[1].id);
+            }
+            
             // Model matrix: transforms vertices from local to world space.
             glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, drawingInfo->containerPos[containerIndex]);
+            modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
         
             glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
@@ -809,7 +859,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
             SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
             SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
             SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+            glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
         }
     }
     
@@ -903,28 +953,145 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
     }
 }
 
-Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene)
+u32 CreateTextureFromImage(const char *filename)
 {
-    Mesh result;
+    s32 width;
+    s32 height;
+    s32 numChannels;
+    stbi_set_flip_vertically_on_load_thread(true);
+    uchar *textureData = stbi_load(filename, &width, &height, &numChannels, 0);
+    myAssert(textureData);
+
+    u32 texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    bool alpha = strstr(filename, "png") != NULL;
+    GLenum pixelFormat = alpha ? GL_RGBA : GL_RGB;
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
+    glGenerateMipmap(GL_TEXTURE_2D);
+
+    stbi_image_free(textureData);
+
+    return texture;
+}
+
+struct LoadedTextures
+{
+    Texture *textures;
+    u32 numTextures;
+};
+
+void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type, Arena *texturesArena, LoadedTextures *loadedTextures)
+{
+    for (u32 i = 0; i < num; i++)
+    {
+        aiString path;
+        material->GetTexture(type, i, &path);
+        u64 hash = fnv1a((u8 *)path.C_Str(), strlen(path.C_Str()));
+        bool skip = false;
+        for (u32 j = 0; j < loadedTextures->numTextures; j++)
+        {
+            if (loadedTextures->textures[j].hash == hash)
+            {
+                mesh->textures[mesh->numTextures].id = loadedTextures->textures[j].id;
+                mesh->textures[mesh->numTextures].type = loadedTextures->textures[j].type;
+                mesh->textures[mesh->numTextures].hash = hash;
+                skip = true;
+                break;
+            }
+        }
+        if (!skip)
+        {
+            Texture *texture = (Texture *)ArenaPush(texturesArena, sizeof(Texture));
+            texture->id = CreateTextureFromImage(path.C_Str());
+            texture->type = (type == aiTextureType_DIFFUSE) ? TextureType::Diffuse : TextureType::Specular;
+            texture->hash = hash;
+            mesh->textures[mesh->numTextures].id = texture->id;
+            mesh->textures[mesh->numTextures].type = texture->type;
+            mesh->textures[mesh->numTextures].hash = texture->hash;
+            loadedTextures->textures[loadedTextures->numTextures++] = *texture;
+        }
+        mesh->numTextures++;
+    }
+}
+
+Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures)
+{
+    Mesh result = {};
+    
+    result.verticesSize = mesh->mNumVertices * sizeof(Vertex);
+    result.vertices = (Vertex *)ArenaPush(&globalArena, result.verticesSize);
+    myAssert(((u8 *)result.vertices + result.verticesSize) == ((u8 *)globalArena.memory + globalArena.stackPointer));
     
     for (u32 i = 0; i < mesh->mNumVertices; i++)
     {
+        result.vertices[i].position.x = mesh->mVertices[i].x;
+        result.vertices[i].position.y = mesh->mVertices[i].y;
+        result.vertices[i].position.z = mesh->mVertices[i].z;
+        
+        result.vertices[i].normal.x = mesh->mNormals[i].x;
+        result.vertices[i].normal.y = mesh->mNormals[i].y;
+        result.vertices[i].normal.z = mesh->mNormals[i].z;
+        
+        if (mesh->mTextureCoords[0])
+        {
+            result.vertices[i].texCoords.x = mesh->mTextureCoords[0][i].x;
+            result.vertices[i].texCoords.y = mesh->mTextureCoords[0][i].y;
+        }
+    }
+    
+    result.indices = (u32 *)((u8 *)result.vertices + result.verticesSize);
+    u32 indicesCount = 0;
+    for (u32 i = 0; i < mesh->mNumFaces; i++)
+    {
+        aiFace face = mesh->mFaces[i];
+        
+        u32 *faceIndices = (u32 *)ArenaPush(&globalArena, sizeof(u32) * face.mNumIndices);
+        for (u32 j = 0; j < face.mNumIndices; j++)
+        {
+            faceIndices[j] = face.mIndices[j];
+            indicesCount++;
+        }
+    }
+    result.indicesSize = indicesCount * sizeof(u32);
+    myAssert(((u8 *)result.indices + result.indicesSize) == ((u8 *)globalArena.memory + globalArena.stackPointer));
+    
+    if (mesh->mMaterialIndex >= 0)
+    {
+        aiMaterial *material = scene->mMaterials[mesh->mMaterialIndex];
+        
+        u32 numDiffuse = material->GetTextureCount(aiTextureType_DIFFUSE);
+        u32 numSpecular = material->GetTextureCount(aiTextureType_SPECULAR);
+        u32 numTextures = numDiffuse + numSpecular;
+        
+        u64 texturesSize = sizeof(Texture) * numTextures;
+        result.textures = (Texture *)ArenaPush(&globalArena, texturesSize);
+        
+        LoadTextures(&result, numDiffuse, material, aiTextureType_DIFFUSE, texturesArena, loadedTextures);
+        LoadTextures(&result, numSpecular, material, aiTextureType_SPECULAR, texturesArena, loadedTextures);
     }
     
     return result;
 }
 
-void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount)
+void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount, Arena *texturesArena, LoadedTextures *loadedTextures)
 {
     for (u32 i = 0; i < node->mNumMeshes; i++)
     {
         aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
-        meshes[*meshCount++] = ProcessMesh(mesh, scene);
+        meshes[*meshCount] = ProcessMesh(mesh, scene, texturesArena, loadedTextures);
+        *meshCount += 1;
     }
     
     for (u32 i = 0; i < node->mNumChildren; i++)
     {
-        ProcessNode(node->mChildren[i], scene, meshes, meshCount);
+        ProcessNode(node->mChildren[i], scene, meshes, meshCount, texturesArena, loadedTextures);
     }
 }
 
@@ -1205,14 +1372,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         globalAspectRatio = width / height;
         
         DrawingInfo *drawingInfo = &appState.drawingInfo;
-        drawingInfo->diffuseMap = CreateTextureFromImage("container2.png", true, GL_REPEAT);
-        drawingInfo->specularMap = CreateTextureFromImage("container2_specular.png", true, GL_REPEAT);
         
         glUseProgram(containerShaderProgram);
         SetShaderUniformSampler(containerShaderProgram, "material.diffuse", 0);
         SetShaderUniformSampler(containerShaderProgram, "material.specular", 1);
         
-        drawingInfo->containerShaderProgram = containerShaderProgram;
+        drawingInfo->objectShaderProgram = containerShaderProgram;
         drawingInfo->lightShaderProgram = lightShaderProgram;
         
         srand((u32)Win32GetWallClock());
@@ -1256,13 +1421,42 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         ImGui_ImplWin32_Init(window);
         ImGui_ImplOpenGL3_Init("#version 330");
         
+        u64 arenaSize = 100 * 1024 * 1024;
+        globalArena = *AllocArena(arenaSize);
+        
         Assimp::Importer importer;
-        char path[32];
+        char path[] = "backpack.obj";
         const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
         myAssert(scene);
-        Mesh meshes[512];
+        Mesh meshes[2048];
         u32 meshCount = 0;
-        ProcessNode(scene->mRootNode, scene, meshes, &meshCount);
+        
+        Arena *texturesArena = AllocArena(arenaSize);
+        LoadedTextures loadedTextures = {};
+        loadedTextures.textures = (Texture *)texturesArena->memory;
+        ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures);
+        FreeArena(texturesArena);
+        
+        u32 meshVAOs[2048];
+        for (u32 i = 0; i < meshCount; i++)
+        {
+            Mesh *mesh = &meshes[i];
+            
+            VaoInformation meshVaoInfo;
+            meshVaoInfo.vertices = (f32 *)mesh->vertices;
+            meshVaoInfo.verticesSize = mesh->verticesSize;
+            meshVaoInfo.elemCounts = elemCounts;
+            meshVaoInfo.elementCountsSize = myArraySize(elemCounts);
+            meshVaoInfo.indices = mesh->indices;
+            meshVaoInfo.indicesSize = mesh->indicesSize;
+        
+            meshVAOs[i] = CreateVAO(&meshVaoInfo);
+        }
+        drawingInfo->backpack.meshes = meshes;
+        drawingInfo->backpack.meshCount = meshCount;
+        drawingInfo->backpack.vaos = meshVAOs;
+        
+        DebugPrintA("Processed %u meshes\n", meshCount);
         
         appState.running = true;
         while (appState.running)
@@ -1278,7 +1472,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             lastFrameCount = currentFrameCount;
 
             deltaTime = (f32)diff * Win32GetWallClockPeriod();
-            DebugPrintA("deltaTime: %f\n", deltaTime);
+            // DebugPrintA("deltaTime: %f\n", deltaTime);
 
             // Handle resuming from a breakpoint.
             if (deltaTime >= 1000.f)
@@ -1332,7 +1526,6 @@ LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
     case WM_SIZE: {
         ResizeGLViewport(hWnd);
         HDC hdc = GetDC(hWnd);
-        DrawWindow(hWnd, hdc, &appState->running, &appState->drawingInfo);
         return 0;
     }
     case WM_ERASEBKGND:
