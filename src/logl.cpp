@@ -197,7 +197,8 @@ void DrawWindow(
     }
     
     float *cc = drawingInfo->clearColor;
-    glClearColor(cc[0], cc[1], cc[2], cc[3]);
+    glClearColor(0.f, 1.f, 0.f, 1.f);
+    // glClearColor(cc[0], cc[1], cc[2], cc[3]);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
     
     // The camera target should always be camera pos + local forward vector.

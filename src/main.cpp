@@ -4,27 +4,37 @@ typedef bool (*SetShaderUniformSampler_t)(
             u32 shaderProgram,
             const char *uniformName,
             u32 slot);
+SetShaderUniformSampler_t SetShaderUniformSampler;
+
 typedef bool (*LoadDrawingInfo_t)(
             DrawingInfo *drawingInfo,
             CameraInfo *cameraInfo);
+LoadDrawingInfo_t LoadDrawingInfo;
+
 typedef bool (*SaveDrawingInfo_t)(
             DrawingInfo *drawingInfo,
             CameraInfo *cameraInfo);
+SaveDrawingInfo_t SaveDrawingInfo;
+
 typedef void (*ProvideCameraVectors_t)(
         CameraInfo *cameraInfo);
+ProvideCameraVectors_t ProvideCameraVectors;
+
 typedef void (*DrawWindow_t)(
             HWND window,
             HDC hdc,
             bool *running,
             DrawingInfo *drawingInfo,
             CameraInfo *cameraInfo);
+DrawWindow_t DrawWindow;
+
 typedef void (*PrintDepthTestFunc_t)(
     u32 val,
     char *outputBuffer,
     u32 bufSize);
+PrintDepthTestFunc_t PrintDepthTestFunc;
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
-SaveDrawingInfo_t SaveDrawingInfo;
 
 u64 fnv1a(u8 *data, size_t len)
 {
@@ -712,6 +722,42 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     return result;
 }
 
+void LoadRenderingCode()
+{
+    HMODULE loglLib = GetModuleHandleW(L"logl_runtime.dll");
+    if (loglLib != NULL)
+    {
+        FreeLibrary(loglLib);
+    }
+    CopyFileW(L"logl.dll", L"logl_runtime.dll", FALSE);
+    loglLib = LoadLibraryW(L"logl_runtime.dll");
+    myAssert(loglLib != NULL);
+    
+    DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
+    
+    LoadDrawingInfo = (LoadDrawingInfo_t)GetProcAddress(loglLib, "LoadDrawingInfo");
+    SaveDrawingInfo = (SaveDrawingInfo_t)GetProcAddress(loglLib, "SaveDrawingInfo");
+    
+    SetShaderUniformSampler = (SetShaderUniformSampler_t)GetProcAddress(loglLib, "SetShaderUniformSampler");
+    
+    PrintDepthTestFunc = (PrintDepthTestFunc_t)GetProcAddress(loglLib, "PrintDepthTestFunc");
+    
+    ProvideCameraVectors = (ProvideCameraVectors_t)GetProcAddress(loglLib, "ProvideCameraVectors");
+}
+
+void CheckForNewDLL(FILETIME *lastFileTime)
+{
+    HANDLE renderingDLL = CreateFileW(L"logl.dll", GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
+    FILETIME fileTime = {};
+    GetFileTime(renderingDLL, 0, 0, &fileTime);
+    CloseHandle(renderingDLL);
+    if (CompareFileTime(lastFileTime, &fileTime) != 0)
+    {
+        LoadRenderingCode();
+    }
+    *lastFileTime = fileTime;
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     if (InitializeOpenGLExtensions(hInstance) == -1)
@@ -881,24 +927,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         drawingInfo->lightShaderProgram = lightShaderProgram;
         drawingInfo->lightVao = lightVao;
         
-        HMODULE loglLib = LoadLibraryW(L"logl.dll");
-        myAssert(loglLib != NULL);
-        
-        DrawWindow_t DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
-        
-        LoadDrawingInfo_t LoadDrawingInfo = (LoadDrawingInfo_t)GetProcAddress(loglLib, "LoadDrawingInfo");
-        SaveDrawingInfo = (SaveDrawingInfo_t)GetProcAddress(loglLib, "SaveDrawingInfo");
-        
-        SetShaderUniformSampler_t SetShaderUniformSampler =
-            (SetShaderUniformSampler_t)GetProcAddress(loglLib, "SetShaderUniformSampler");
-        
-        PrintDepthTestFunc_t PrintDepthTestFunc =
-            (PrintDepthTestFunc_t)GetProcAddress(loglLib, "PrintDepthTestFunc");
-        
-        ProvideCameraVectors_t ProvideCameraVectors =
-            (ProvideCameraVectors_t)GetProcAddress(loglLib, "ProvideCameraVectors");
-        
         CameraInfo *cameraInfo = &appState.cameraInfo;
+        
+        LoadRenderingCode();
         
         if (!LoadDrawingInfo(drawingInfo, cameraInfo))
         {
@@ -955,9 +986,23 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         u64 lastFrameCount = Win32GetWallClock();
         
+        HANDLE renderingDLL = CreateFileW(L"logl.dll", GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
+        FILETIME lastFileTime = {};
+        GetFileTime(renderingDLL, 0, 0, &lastFileTime);
+        CloseHandle(renderingDLL);
+        
+        f32 dllAccumulator = 0.f;
+        
         appState.running = true;
         while (appState.running)
         {    
+            dllAccumulator += deltaTime;
+            if (dllAccumulator >= 50.f)
+            {
+                CheckForNewDLL(&lastFileTime);
+                dllAccumulator = 0.f;
+            }
+            
             ProvideCameraVectors(cameraInfo);
             
             Win32ProcessMessages(
