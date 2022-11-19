@@ -17,9 +17,13 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#include "imgui/imgui.h"
-#include "imgui/imgui_impl_win32.h"
+#include "imgui/imgui.cpp"
+#include "imgui/imgui_impl_win32.cpp"
 #include "imgui/imgui_impl_opengl3.h"
+#include "imgui/imgui_demo.cpp"
+#include "imgui/imgui_draw.cpp"
+#include "imgui/imgui_tables.cpp"
+#include "imgui/imgui_widgets.cpp"
 
 #include "assimp/Importer.hpp"
 #include <assimp/scene.h>
@@ -67,7 +71,6 @@ typedef double f64;
 
 #define PI 3.1415926535f
 #define NUM_POINTLIGHTS 4
-#define NUM_CONTAINERS 10
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 
@@ -232,22 +235,65 @@ struct Model
 struct DrawingInfo
 {
     bool initialized;
-    bool wireframeMode;
+    bool wireframeMode = false;
+    u32 depthTestFunc = GL_LESS;
     
+    // Transient data.
     u32 objectShaderProgram;
     u32 lightShaderProgram;
-    
-    glm::vec3 containerPos[NUM_CONTAINERS];
-    u32 containerVao;
+    u32 lightVao;
     
     float clearColor[4] = { .1f, .1f, .1f, 1.f };
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;
-    u32 lightVao;
     
     Model backpack;
 };
+
+void SaveDrawingInfo(DrawingInfo *info)
+{
+    FILE *file;
+    fopen_s(&file, "save.bin", "wb");
+    
+    fwrite(&globalCameraPos, sizeof(globalCameraPos), 1, file);
+    fwrite(&globalCameraPitch, sizeof(globalCameraPitch), 1, file);
+    fwrite(&globalCameraYaw, sizeof(globalCameraYaw), 1, file);
+    fwrite(&info->wireframeMode, sizeof(info->wireframeMode), 1, file);
+    fwrite(&info->depthTestFunc, sizeof(info->depthTestFunc), 1, file);
+    fwrite(&info->clearColor, sizeof(info->clearColor), 1, file);
+    fwrite(&info->dirLight, sizeof(DirLight), 1, file);
+    fwrite(&info->pointLights, sizeof(PointLight), NUM_POINTLIGHTS, file);
+    fwrite(&info->spotLight, sizeof(SpotLight), 1, file);
+    
+    fclose(file);
+}
+
+bool LoadDrawingInfo(DrawingInfo *info)
+{
+    FILE *file;
+    errno_t opened = fopen_s(&file, "save.bin", "rb");
+    if (opened != 0)
+    {
+        return false;
+    }
+    
+    fread(&globalCameraPos, sizeof(globalCameraPos), 1, file);
+    fread(&globalCameraPitch, sizeof(globalCameraPitch), 1, file);
+    fread(&globalCameraYaw, sizeof(globalCameraYaw), 1, file);
+    fread(&info->wireframeMode, sizeof(info->wireframeMode), 1, file);
+    glPolygonMode(GL_FRONT_AND_BACK, info->wireframeMode ? GL_LINE : GL_FILL);
+    fread(&info->depthTestFunc, sizeof(info->depthTestFunc), 1, file);
+    glDepthFunc(info->depthTestFunc);
+    fread(&info->clearColor, sizeof(info->clearColor), 1, file);
+    fread(&info->dirLight, sizeof(DirLight), 1, file);
+    fread(&info->pointLights, sizeof(PointLight), NUM_POINTLIGHTS, file);
+    fread(&info->spotLight, sizeof(SpotLight), 1, file);
+    
+    fclose(file);
+    
+    return true;
+}
         
 struct VaoInformation
 {
@@ -320,6 +366,40 @@ f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
+void PrintDepthTestFunc(u32 val, char *outputBuffer, u32 bufSize)
+{
+    switch (val)
+    {
+        case GL_NEVER:
+            sprintf_s(outputBuffer, bufSize, "GL_NEVER\n");
+            break;
+        case GL_LESS:
+            sprintf_s(outputBuffer, bufSize, "GL_LESS\n");
+            break;
+        case GL_EQUAL:
+            sprintf_s(outputBuffer, bufSize, "GL_EQUAL\n");
+            break;
+        case GL_LEQUAL:
+            sprintf_s(outputBuffer, bufSize, "GL_LEQUAL\n");
+            break;
+        case GL_GREATER:
+            sprintf_s(outputBuffer, bufSize, "GL_GREATER\n");
+            break;
+        case GL_NOTEQUAL:
+            sprintf_s(outputBuffer, bufSize, "GL_NOTEQUAL\n");
+            break;
+        case GL_GEQUAL:
+            sprintf_s(outputBuffer, bufSize, "GL_GEQUAL\n");
+            break;
+        case GL_ALWAYS:
+            sprintf_s(outputBuffer, bufSize, "GL_ALWAYS\n");
+            break;
+        default:
+            myAssert(false);
+            break;
+    }
+}
+
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
 void Win32ProcessMessages(
@@ -343,7 +423,7 @@ void Win32ProcessMessages(
             break;
         }
         local_persist bool capturing = false;
-        local_persist f32 speed = 1.f;
+        local_persist f32 speed = .1f;
         
         POINT windowOrigin = {};
         ClientToScreen(window, &windowOrigin);
@@ -399,7 +479,8 @@ void Win32ProcessMessages(
             }
             else
             {
-                speed = fmax(speed + (f32)wheelRotation / WHEEL_DELTA, 0.f);
+                speed = fmax(speed + (f32)wheelRotation / (20.f * WHEEL_DELTA), 0.f);
+                DebugPrintA("New speed: %f\n", speed);
             }
             break;
         }
@@ -467,8 +548,12 @@ void Win32ProcessMessages(
                 glPolygonMode(GL_FRONT_AND_BACK, drawingInfo->wireframeMode ? GL_LINE : GL_FILL);
                 break;
             case 'U':
+                drawingInfo->depthTestFunc = max(drawingInfo->depthTestFunc - 1, 0x200);
+                glDepthFunc(drawingInfo->depthTestFunc);
                 break;
             case 'I':
+                drawingInfo->depthTestFunc = min(drawingInfo->depthTestFunc + 1, 0x207);
+                glDepthFunc(drawingInfo->depthTestFunc);
                 break;
             case 'O':
                 break;
@@ -788,7 +873,30 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         .1f, 
         farPlaneDistance);
     
-    // Container.
+    // Point lights.
+    {
+        u32 shaderProgram = drawingInfo->lightShaderProgram;
+        glUseProgram(shaderProgram);
+        
+        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+        
+        glBindVertexArray(drawingInfo->lightVao);
+        
+        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+        {
+            PointLight *curLight = &drawingInfo->pointLights[lightIndex];
+            // Model matrix: transforms vertices from local to world space.
+            glm::mat4 modelMatrix = glm::mat4(1.f);
+            modelMatrix = glm::translate(modelMatrix, curLight->position);
+        
+            SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", curLight->diffuse);
+            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        }
+    }
+    
+    // Object.
     {
         u32 shaderProgram = drawingInfo->objectShaderProgram;
         glUseProgram(shaderProgram);
@@ -863,41 +971,17 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         }
     }
     
-    // Point lights.
-    {
-        u32 shaderProgram = drawingInfo->lightShaderProgram;
-        glUseProgram(shaderProgram);
-        
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        
-        glBindVertexArray(drawingInfo->lightVao);
-        
-        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-        {
-            PointLight *curLight = &drawingInfo->pointLights[lightIndex];
-            // Model matrix: transforms vertices from local to world space.
-            glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, curLight->position);
-        
-            SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", curLight->diffuse);
-            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-        }
-    }
-    
     u32 id = 0;
     ImGui::Begin("Debug Window");
+    
+    char depthTestFuncStr[16];
+    PrintDepthTestFunc(drawingInfo->depthTestFunc, depthTestFuncStr, sizeof(depthTestFuncStr));
+    ImGui::Text("Depth-test function: %s", depthTestFuncStr);
+    
+    ImGui::Separator();
+    
     ImGui::SliderFloat4("Clear color", drawingInfo->clearColor, 0.f, 1.f);
-    if (ImGui::CollapsingHeader("Containers"))
-    {
-        for (u32 index = 0; index < NUM_CONTAINERS; index++)
-        {
-            ImGui::PushID(id++);
-            ImGui::SliderFloat3("Position", glm::value_ptr(drawingInfo->containerPos[index]), -10.f, 10.f);
-            ImGui::PopID();
-        }
-    }
+    
     if (ImGui::CollapsingHeader("Directional light"))
     {
         ImGui::PushID(id++);
@@ -907,6 +991,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular), 0.f, 1.f);
         ImGui::PopID();
     }
+    
     if (ImGui::CollapsingHeader("Point lights"))
     {
         PointLight *lights = drawingInfo->pointLights;
@@ -917,7 +1002,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
             sprintf_s(treeName, "Light #%i", index);
             if (ImGui::TreeNode(treeName))
             {
-                ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -10.f, 10.f);
+                ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -150.f, 150.f);
                 ImGui::SliderFloat3("Ambient", glm::value_ptr(lights[index].ambient), 0.f, 1.f);
                 ImGui::SliderFloat3("Diffuse", glm::value_ptr(lights[index].diffuse), 0.f, 1.f);
                 ImGui::SliderFloat3("Specular", glm::value_ptr(lights[index].specular), 0.f, 1.f);
@@ -927,6 +1012,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
             ImGui::PopID();
         }
     }
+    
     if (ImGui::CollapsingHeader("Spot light"))
     {
         ImGui::PushID(id++);
@@ -939,6 +1025,7 @@ void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
         ImGui::SliderFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
         ImGui::PopID();
     }
+    
     ImGui::End();
     
     ImGui::Render();
@@ -1142,6 +1229,45 @@ u32 CreateVAO(VaoInformation *vaoInfo)
     return vao;
 }
 
+Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSize)
+{
+    Model result;
+    
+    Assimp::Importer importer;
+    char path[] = "backpack.obj";
+    const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
+    myAssert(scene);
+    Mesh meshes[2048];
+    u32 meshCount = 0;
+
+    Arena *texturesArena = AllocArena(1024);
+    LoadedTextures loadedTextures = {};
+    loadedTextures.textures = (Texture *)texturesArena->memory;
+    ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures);
+    FreeArena(texturesArena);
+
+    u32 meshVAOs[2048];
+    for (u32 i = 0; i < meshCount; i++)
+    {
+        Mesh *mesh = &meshes[i];
+    
+        VaoInformation meshVaoInfo;
+        meshVaoInfo.vertices = (f32 *)mesh->vertices;
+        meshVaoInfo.verticesSize = mesh->verticesSize;
+        meshVaoInfo.elemCounts = elemCounts;
+        meshVaoInfo.elementCountsSize = elemCountsSize;
+        meshVaoInfo.indices = mesh->indices;
+        meshVaoInfo.indicesSize = mesh->indicesSize;
+
+        meshVAOs[i] = CreateVAO(&meshVaoInfo);
+    }
+    result.meshes = meshes;
+    result.meshCount = meshCount;
+    result.vaos = meshVAOs;
+    
+    return result;
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     if (InitializeOpenGLExtensions(hInstance) == -1)
@@ -1271,15 +1397,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         // MessageBoxA(NULL, (char *)glGetString(GL_VERSION), "OpenGL version", MB_OK);
 
-        f32 targetFrameTime = 1000.f / 60;
-        f32 deltaTime = targetFrameTime;
-
-        u64 lastFrameCount = Win32GetWallClock();
-
         // Shader initialization.
         
-        u32 containerShaderProgram;
-        if (!CreateShaderProgram(&containerShaderProgram, "vertex_shader.vs", "fragment_shader.fs"))
+        u32 objectShaderProgram;
+        if (!CreateShaderProgram(&objectShaderProgram, "vertex_shader.vs", "fragment_shader.fs"))
         {
             return -1;
         }
@@ -1290,67 +1411,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             return -1;
         }
 
-        f32 rectVertices[] = {
-            // Positions.    // Normals.    // Texture coordinates.
-            
-            // Face 1: front.
-            .5f,  .5f,  .5f, 0.f, 0.f, 1.f, 1.f, 1.f, // 0: top right.
-            .5f,  -.5f, .5f, 0.f, 0.f, 1.f, 1.f, 0.f, // 1: bottom right.
-            -.5f, -.5f, .5f, 0.f, 0.f, 1.f, 0.f, 0.f, // 2: bottom left.
-            -.5f, .5f,  .5f, 0.f, 0.f, 1.f, 0.f, 1.f, // 3: top left.
-            
-            // Face 2: our right.
-            .5f,  .5f,  -.5f, 1.f, 0.f, 0.f, 1.f, 1.f, // 0: top right.
-            .5f,  -.5f, -.5f, 1.f, 0.f, 0.f, 1.f, 0.f, // 1: bottom right.
-            .5f, -.5f, .5f,   1.f, 0.f, 0.f, 0.f, 0.f, // 2: bottom left.
-            .5f, .5f,  .5f,   1.f, 0.f, 0.f, 0.f, 1.f, // 3: top left.
-            
-            // Face 3: back.
-            -.5f,  .5f,  -.5f, 0.f, 0.f, -1.f, 1.f, 1.f, // 0: top right.
-            -.5f,  -.5f, -.5f, 0.f, 0.f, -1.f, 1.f, 0.f, // 1: bottom right.
-            .5f, -.5f, -.5f,   0.f, 0.f, -1.f, 0.f, 0.f, // 2: bottom left.
-            .5f, .5f,  -.5f,   0.f, 0.f, -1.f, 0.f, 1.f, // 3: top left.
-            
-            // Face 4: our left.
-            -.5f,  .5f,  .5f, -1.f, 0.f, 0.f, 1.f, 1.f, // 0: top right.
-            -.5f,  -.5f, .5f, -1.f, 0.f, 0.f, 1.f, 0.f, // 1: bottom right.
-            -.5f, -.5f, -.5f, -1.f, 0.f, 0.f, 0.f, 0.f, // 2: bottom left.
-            -.5f, .5f,  -.5f, -1.f, 0.f, 0.f, 0.f, 1.f, // 3: top left.
-            
-            // Face 5: top.
-            .5f,  .5f,  -.5f, 0.f, 1.f, 0.f, 1.f, 1.f, // 0: top right.
-            .5f,  .5f, .5f,   0.f, 1.f, 0.f, 1.f, 0.f, // 1: bottom right.
-            -.5f, .5f, .5f,   0.f, 1.f, 0.f, 0.f, 0.f, // 2: bottom left.
-            -.5f, .5f,  -.5f, 0.f, 1.f, 0.f, 0.f, 1.f, // 3: top left.
-            
-            // Face 6: bottom.
-            .5f,  -.5f,  .5f, 0.f, -1.f, 0.f, 1.f, 1.f, // 0: top right.
-            .5f,  -.5f, -.5f, 0.f, -1.f, 0.f, 1.f, 0.f, // 1: bottom right.
-            -.5f, -.5f, -.5f, 0.f, -1.f, 0.f, 0.f, 0.f, // 2: bottom left.
-            -.5f, -.5f,  .5f, 0.f, -1.f, 0.f, 0.f, 1.f, // 3: top left.
-        };
-        
         s32 elemCounts[] = { 3, 3, 2 };
 
-        u32 rectIndices[] = {
-            0, 1, 3, // Triangle 1.
-            1, 2, 3, // Triangle 2.
-            
-            4, 5, 7, // Triangle 3.
-            5, 6, 7, // Triangle 4.
-            
-            8, 9, 11, // Triangle 5.
-            9, 10, 11, // Triangle 6.
-            
-            12, 13, 15, // Triangle 7.
-            13, 14, 15, // Triangle 8.
-            
-            16, 17, 19, // Triangle 9.
-            17, 18, 19, // Triangle 10.
-            
-            20, 21, 23, // Triangle 11.
-            21, 22, 23  // Triangle 12.
-        };
+        FILE *rectFile;
+        fopen_s(&rectFile, "rect.bin", "rb");
+        // 4 vertices per face * 6 faces * (vec3 pos + vec3 normal + vec2 texCoords).
+        f32 rectVertices[192];
+        u32 rectIndices[36];
+        fread(rectVertices, sizeof(f32), myArraySize(rectVertices), rectFile);
+        fread(rectIndices, sizeof(u32), myArraySize(rectIndices), rectFile);
+        fclose(rectFile);
         
         VaoInformation vaoInfo = {};
         vaoInfo.vertices = rectVertices;
@@ -1360,10 +1430,40 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         vaoInfo.indices = rectIndices;
         vaoInfo.indicesSize = sizeof(rectIndices);
         
-        u32 containerVao = CreateVAO(&vaoInfo);
         u32 lightVao = CreateVAO(&vaoInfo);
         
-        bool wireframeMode = false;
+        DrawingInfo *drawingInfo = &appState.drawingInfo;
+        drawingInfo->objectShaderProgram = objectShaderProgram;
+        drawingInfo->lightShaderProgram = lightShaderProgram;
+        drawingInfo->lightVao = lightVao;
+        
+        if (!LoadDrawingInfo(drawingInfo))
+        {
+            PointLight *pointLights = drawingInfo->pointLights;
+            
+            srand((u32)Win32GetWallClock());
+            for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+            {
+                f32 x = (f32)(rand() % 10);
+                x = (rand() > RAND_MAX / 2) ? x : -x;
+                f32 y = (f32)(rand() % 10);
+                y = (rand() > RAND_MAX / 2) ? y : -y;
+                f32 z = (f32)(rand() % 10);
+                z = (rand() > RAND_MAX / 2) ? z : -z;
+                pointLights[lightIndex].position = { x, y, z };
+            
+                u32 attIndex = rand() % myArraySize(globalAttenuationTable);
+                // NOTE: constant-range point lights makes for easier visualization of light effects.
+                pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
+            }
+            
+            drawingInfo->dirLight.direction =
+                glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
+        }
+        
+        drawingInfo->backpack = LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts));
+        
+        drawingInfo->initialized = true;
         
         RECT clientRect;
         GetClientRect(window, &clientRect);
@@ -1371,48 +1471,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         f32 height = (f32)clientRect.bottom;
         globalAspectRatio = width / height;
         
-        DrawingInfo *drawingInfo = &appState.drawingInfo;
-        
-        glUseProgram(containerShaderProgram);
-        SetShaderUniformSampler(containerShaderProgram, "material.diffuse", 0);
-        SetShaderUniformSampler(containerShaderProgram, "material.specular", 1);
-        
-        drawingInfo->objectShaderProgram = containerShaderProgram;
-        drawingInfo->lightShaderProgram = lightShaderProgram;
-        
-        srand((u32)Win32GetWallClock());
-        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-        {
-            f32 x = (f32)(rand() % 10);
-            x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)(rand() % 10);
-            y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)(rand() % 10);
-            z = (rand() > RAND_MAX / 2) ? z : -z;
-            drawingInfo->pointLights[lightIndex].position = { x, y, z };
-            
-            u32 attIndex = rand() % myArraySize(globalAttenuationTable);
-            // NOTE: constant-range point lights makes for easier visualization of light effects.
-            drawingInfo->pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
-        }
-        
-        for (u32 containerIndex = 0; containerIndex < NUM_CONTAINERS; containerIndex++)
-        {
-            f32 x = (f32)(rand() % 10);
-            x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)(rand() % 10);
-            y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)(rand() % 10);
-            z = (rand() > RAND_MAX / 2) ? z : -z;
-            drawingInfo->containerPos[containerIndex] = { x, y, z };
-        }
-        glm::vec3 *containerPos = drawingInfo->containerPos;
-        drawingInfo->dirLight.direction = glm::normalize(containerPos[NUM_CONTAINERS - 1] - containerPos[0]);
-        drawingInfo->containerVao = containerVao;
-        drawingInfo->lightVao = lightVao;
-        drawingInfo->initialized = true;
-        
-        glm::vec3 movementPerFrame = {};
+        glUseProgram(objectShaderProgram);
+        SetShaderUniformSampler(objectShaderProgram, "material.diffuse", 0);
+        SetShaderUniformSampler(objectShaderProgram, "material.specular", 1);
         
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
@@ -1424,40 +1485,13 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         u64 arenaSize = 100 * 1024 * 1024;
         globalArena = *AllocArena(arenaSize);
         
-        Assimp::Importer importer;
-        char path[] = "backpack.obj";
-        const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
-        myAssert(scene);
-        Mesh meshes[2048];
-        u32 meshCount = 0;
+        glm::vec3 movementPerFrame = {};
         
-        Arena *texturesArena = AllocArena(arenaSize);
-        LoadedTextures loadedTextures = {};
-        loadedTextures.textures = (Texture *)texturesArena->memory;
-        ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures);
-        FreeArena(texturesArena);
-        
-        u32 meshVAOs[2048];
-        for (u32 i = 0; i < meshCount; i++)
-        {
-            Mesh *mesh = &meshes[i];
-            
-            VaoInformation meshVaoInfo;
-            meshVaoInfo.vertices = (f32 *)mesh->vertices;
-            meshVaoInfo.verticesSize = mesh->verticesSize;
-            meshVaoInfo.elemCounts = elemCounts;
-            meshVaoInfo.elementCountsSize = myArraySize(elemCounts);
-            meshVaoInfo.indices = mesh->indices;
-            meshVaoInfo.indicesSize = mesh->indicesSize;
-        
-            meshVAOs[i] = CreateVAO(&meshVaoInfo);
-        }
-        drawingInfo->backpack.meshes = meshes;
-        drawingInfo->backpack.meshCount = meshCount;
-        drawingInfo->backpack.vaos = meshVAOs;
-        
-        DebugPrintA("Processed %u meshes\n", meshCount);
-        
+        f32 targetFrameTime = 1000.f / 60;
+        f32 deltaTime = targetFrameTime;
+
+        u64 lastFrameCount = Win32GetWallClock();
+
         appState.running = true;
         while (appState.running)
         {    
@@ -1490,14 +1524,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
             // OutputDebugStringW(frameTimeString);
         
+            globalCameraPos += movementPerFrame * deltaTime;
             DrawWindow(window, hdc, &appState.running, &appState.drawingInfo);
-            globalCameraPos += movementPerFrame;
             movementPerFrame = glm::vec3(0.f);
             
             // DebugPrintA("Camera pitch: %f\n", globalCameraPitch);
             // DebugPrintA("Camera yaw: %f\n", globalCameraYaw);
         }
     }
+    
+    SaveDrawingInfo(&appState.drawingInfo);
 
     return 0;
 }
