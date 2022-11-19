@@ -4,5 +4,6 @@ set "compilerflags=/I..\src\ /Zi /W4 /WX /wd4100 /wd4127 /wd4189 /wd4201 /MT /no
 set "linkerflags=/DEBUG:FULL /INCREMENTAL:NO /opt:ref User32.lib Gdi32.lib Opengl32.lib glew32.lib ..\..\vcpkg\installed\x64-windows\lib\assimp-vc143-mt.lib"
 mkdir ..\build
 pushd ..\build
-cl ..\src\main.cpp ..\src\imgui\imgui_impl_opengl3.cpp %compilerflags% /link %linkerflags%
+cl ..\src\main.cpp ..\src\imgui\imgui_impl_opengl3.cpp %compilerflags% /link %linkerflags% ..\build\logl.lib
+cl /LD ..\src\logl.cpp ..\src\imgui\imgui_impl_opengl3.cpp %compilerflags% /link %linkerflags%
 popd

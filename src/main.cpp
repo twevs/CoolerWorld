@@ -1,84 +1,30 @@
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#include <wingdi.h>
-#include <winuser.h>
-#include <windowsx.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <math.h> // sinf().
+#include "common.h"
 
-#include <GL/glew.h>
-#include "wglext.h"
-
-#include "glm/glm.hpp"
-#include "glm/gtc/matrix_transform.hpp"
-#include "glm/gtc/type_ptr.hpp"
-
-#define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
-
-#include "imgui/imgui.cpp"
-#include "imgui/imgui_impl_win32.cpp"
-#include "imgui/imgui_impl_opengl3.h"
-#include "imgui/imgui_demo.cpp"
-#include "imgui/imgui_draw.cpp"
-#include "imgui/imgui_tables.cpp"
-#include "imgui/imgui_widgets.cpp"
-
-#include "assimp/Importer.hpp"
-#include <assimp/scene.h>
-#include <assimp/postprocess.h>
-
-#define global_variable static
-#define internal static
-#define local_persist static
-
-#ifndef NDEBUG
-#define myAssert(x)                                                                                                    \
-    if (!(x))                                                                                                          \
-    {                                                                                                                  \
-        __debugbreak();                                                                                                \
-    }
-#else
-#define myAssert(x)
-#endif
-
-#define myArraySize(arr) \
-    (sizeof((arr)) / sizeof((arr[0])))
-
-#define max(x, y) \
-    (((x) > (y)) ? (x) : (y))
-
-#define min(x, y) \
-    (((x) < (y)) ? (x) : (y))
-
-#define clamp(x, min, max) \
-    (((x) < (min)) ? (min) : ((x) > (max)) ? (max) : (x))
-
-typedef unsigned char uchar;
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
-
-typedef int8_t s8;
-typedef int16_t s16;
-typedef int32_t s32;
-typedef int64_t s64;
-
-typedef float f32;
-typedef double f64;
-
-#define PI 3.1415926535f
-#define NUM_POINTLIGHTS 4
+typedef bool (*SetShaderUniformSampler_t)(
+            u32 shaderProgram,
+            const char *uniformName,
+            u32 slot);
+typedef bool (*LoadDrawingInfo_t)(
+            DrawingInfo *drawingInfo,
+            CameraInfo *cameraInfo);
+typedef bool (*SaveDrawingInfo_t)(
+            DrawingInfo *drawingInfo,
+            CameraInfo *cameraInfo);
+typedef void (*ProvideCameraVectors_t)(
+        CameraInfo *cameraInfo);
+typedef void (*DrawWindow_t)(
+            HWND window,
+            HDC hdc,
+            bool *running,
+            DrawingInfo *drawingInfo,
+            CameraInfo *cameraInfo);
+typedef void (*PrintDepthTestFunc_t)(
+    u32 val,
+    char *outputBuffer,
+    u32 bufSize);
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
-
-global_variable f32 globalFov = 45.f;
-global_variable f32 globalAspectRatio;
-global_variable glm::vec3 globalCameraPos;
-global_variable float globalCameraYaw = 0.f;
-global_variable float globalCameraPitch = 0.f;
+SaveDrawingInfo_t SaveDrawingInfo;
 
 u64 fnv1a(u8 *data, size_t len)
 {
@@ -106,7 +52,7 @@ struct Arena
 
 global_variable Arena globalArena;
 
-Arena *AllocArena(u64 size)
+internal Arena *AllocArena(u64 size)
 {
     void *mem = VirtualAlloc(NULL, sizeof(Arena) + size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     Arena *newArena = (Arena *)mem;
@@ -115,12 +61,12 @@ Arena *AllocArena(u64 size)
     return newArena;
 }
 
-void FreeArena(Arena *arena)
+internal void FreeArena(Arena *arena)
 {
     VirtualFree(arena, arena->size, MEM_RELEASE);
 }
 
-void *ArenaPush(Arena *arena, u64 size)
+internal void *ArenaPush(Arena *arena, u64 size)
 {
     void *mem = (void *)((u8 *)arena->memory + arena->stackPointer);
     arena->stackPointer += size;
@@ -128,195 +74,23 @@ void *ArenaPush(Arena *arena, u64 size)
     return mem;
 }
 
-void ArenaPop(Arena *arena, u64 size)
+internal void ArenaPop(Arena *arena, u64 size)
 {
     arena->stackPointer -= size;
     myAssert(arena->stackPointer >= 0);
 }
 
-void ArenaClear(Arena *arena)
+internal void ArenaClear(Arena *arena)
 {
     arena->stackPointer = 0;
 }
-
-struct DirLight
-{
-    glm::vec3 direction;
-    
-    glm::vec3 ambient = glm::vec3(.05f);
-    glm::vec3 diffuse = glm::vec3(.5f);
-    glm::vec3 specular = glm::vec3(1.f);
-};
-
-struct PointLight
-{
-    glm::vec3 position;
-    
-    glm::vec3 ambient = glm::vec3(.05f);
-    glm::vec3 diffuse = glm::vec3(.5f);
-    glm::vec3 specular = glm::vec3(1.f);
-    
-    s32 attIndex = 4;
-};
-
-struct Attenuation
-{
-    u32 range;
-    f32 linear = .7f;
-    f32 quadratic = 1.8f;
-};
-
-Attenuation globalAttenuationTable[] =
-{
-    { 7   , .7f   , 1.8f    },
-    { 13  , .35f  , .44f    },
-    { 20  , .22f  , .20f    },
-    { 32  , .14f  , .07f    },
-    { 50  , .09f  , .032f   },
-    { 65  , .07f  , .017f   },
-    { 100 , .045f , .0075f  },
-    { 160 , .027f , .0028f  },
-    { 200 , .022f , .0019f  },
-    { 325 , .014f , .0007f  },
-    { 600 , .007f , .0002f  },
-    { 3250, .0014f, .00007f },
-};
-
-struct SpotLight
-{
-    glm::vec3 position;
-    glm::vec3 direction;
-    
-    glm::vec3 ambient = glm::vec3(0.f);
-    glm::vec3 diffuse = glm::vec3(.5f);
-    glm::vec3 specular = glm::vec3(1.f);
-        
-    float innerCutoff = PI / 11.f;
-    float outerCutoff = PI / 9.f;
-};
-
-struct Vertex
-{
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec2 texCoords;
-};
-
-enum class TextureType
-{
-    Diffuse,
-    Specular
-};
-
-struct Texture
-{
-    u32 id;
-    TextureType type;
-    u64 hash;
-};
-
-struct Mesh
-{
-    Vertex *vertices;
-    u32 verticesSize;
-    u32 *indices;
-    u32 indicesSize;
-    Texture *textures;
-    u32 numTextures;
-};
-
-struct Model
-{
-    Mesh *meshes;
-    u32 meshCount;
-    u32 *vaos;
-};
-
-struct DrawingInfo
-{
-    bool initialized;
-    bool wireframeMode = false;
-    u32 depthTestFunc = GL_LESS;
-    
-    // Transient data.
-    u32 objectShaderProgram;
-    u32 lightShaderProgram;
-    u32 lightVao;
-    
-    float clearColor[4] = { .1f, .1f, .1f, 1.f };
-    DirLight dirLight;
-    PointLight pointLights[NUM_POINTLIGHTS];
-    SpotLight spotLight;
-    
-    Model backpack;
-};
-
-void SaveDrawingInfo(DrawingInfo *info)
-{
-    FILE *file;
-    fopen_s(&file, "save.bin", "wb");
-    
-    fwrite(&globalCameraPos, sizeof(globalCameraPos), 1, file);
-    fwrite(&globalCameraPitch, sizeof(globalCameraPitch), 1, file);
-    fwrite(&globalCameraYaw, sizeof(globalCameraYaw), 1, file);
-    fwrite(&info->wireframeMode, sizeof(info->wireframeMode), 1, file);
-    fwrite(&info->depthTestFunc, sizeof(info->depthTestFunc), 1, file);
-    fwrite(&info->clearColor, sizeof(info->clearColor), 1, file);
-    fwrite(&info->dirLight, sizeof(DirLight), 1, file);
-    fwrite(&info->pointLights, sizeof(PointLight), NUM_POINTLIGHTS, file);
-    fwrite(&info->spotLight, sizeof(SpotLight), 1, file);
-    
-    fclose(file);
-}
-
-bool LoadDrawingInfo(DrawingInfo *info)
-{
-    FILE *file;
-    errno_t opened = fopen_s(&file, "save.bin", "rb");
-    if (opened != 0)
-    {
-        return false;
-    }
-    
-    fread(&globalCameraPos, sizeof(globalCameraPos), 1, file);
-    fread(&globalCameraPitch, sizeof(globalCameraPitch), 1, file);
-    fread(&globalCameraYaw, sizeof(globalCameraYaw), 1, file);
-    fread(&info->wireframeMode, sizeof(info->wireframeMode), 1, file);
-    glPolygonMode(GL_FRONT_AND_BACK, info->wireframeMode ? GL_LINE : GL_FILL);
-    fread(&info->depthTestFunc, sizeof(info->depthTestFunc), 1, file);
-    glDepthFunc(info->depthTestFunc);
-    fread(&info->clearColor, sizeof(info->clearColor), 1, file);
-    fread(&info->dirLight, sizeof(DirLight), 1, file);
-    fread(&info->pointLights, sizeof(PointLight), NUM_POINTLIGHTS, file);
-    fread(&info->spotLight, sizeof(SpotLight), 1, file);
-    
-    fclose(file);
-    
-    return true;
-}
-        
-struct VaoInformation
-{
-    f32 *vertices;
-    u32 verticesSize;
-    s32 *elemCounts;
-    u32 elementCountsSize;
-    u32 *indices;
-    u32 indicesSize;
-};
-
-struct ApplicationState
-{
-    DrawingInfo drawingInfo;
-    bool running;
-};
 
 PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
 
 LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-void DebugPrintA(const char *formatString, ...)
+internal void DebugPrintA(const char *formatString, ...)
 {
     CHAR debugString[1024];
     va_list args;
@@ -326,87 +100,26 @@ void DebugPrintA(const char *formatString, ...)
     OutputDebugStringA(debugString);
 }
 
-void ResizeGLViewport(HWND window)
+internal void ResizeGLViewport(HWND window)
 {
     RECT clientRect;
     GetClientRect(window, &clientRect);
     glViewport(0, 0, clientRect.right, clientRect.bottom);
 }
 
-glm::mat4 GetCameraWorldRotation()
-{
-    // We are rotating in world space so this returns a world-space rotation.
-    glm::vec3 cameraYawAxis = glm::vec3(0.f, 1.f, 0.f);
-    glm::vec3 cameraPitchAxis = glm::vec3(1.f, 0.f, 0.f);
-    
-    glm::mat4 cameraYaw = glm::rotate(glm::mat4(1.f), globalCameraYaw, cameraYawAxis);
-    glm::mat4 cameraPitch = glm::rotate(glm::mat4(1.f), globalCameraPitch, cameraPitchAxis);
-    glm::mat4 cameraRotation = cameraYaw * cameraPitch;
-    
-    return cameraRotation;
-}
-
-glm::vec3 GetCameraRightVector()
-{
-    // World-space rotation * world-space axis -> world-space value.
-    glm::vec4 cameraRightVec = GetCameraWorldRotation() * glm::vec4(1.f, 0.f, 0.f, 0.f);
-    
-    return glm::vec3(cameraRightVec);
-}
-
-glm::vec3 GetCameraForwardVector()
-{
-    glm::vec4 cameraForwardVec = GetCameraWorldRotation() * glm::vec4(0.f, 0.f, -1.f, 0.f);
-    
-    return glm::vec3(cameraForwardVec);
-}
-
-f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
+internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
 {
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
-void PrintDepthTestFunc(u32 val, char *outputBuffer, u32 bufSize)
-{
-    switch (val)
-    {
-        case GL_NEVER:
-            sprintf_s(outputBuffer, bufSize, "GL_NEVER\n");
-            break;
-        case GL_LESS:
-            sprintf_s(outputBuffer, bufSize, "GL_LESS\n");
-            break;
-        case GL_EQUAL:
-            sprintf_s(outputBuffer, bufSize, "GL_EQUAL\n");
-            break;
-        case GL_LEQUAL:
-            sprintf_s(outputBuffer, bufSize, "GL_LEQUAL\n");
-            break;
-        case GL_GREATER:
-            sprintf_s(outputBuffer, bufSize, "GL_GREATER\n");
-            break;
-        case GL_NOTEQUAL:
-            sprintf_s(outputBuffer, bufSize, "GL_NOTEQUAL\n");
-            break;
-        case GL_GEQUAL:
-            sprintf_s(outputBuffer, bufSize, "GL_GEQUAL\n");
-            break;
-        case GL_ALWAYS:
-            sprintf_s(outputBuffer, bufSize, "GL_ALWAYS\n");
-            break;
-        default:
-            myAssert(false);
-            break;
-    }
-}
-
 extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-void Win32ProcessMessages(
+internal void Win32ProcessMessages(
     HWND window,
     bool *running,
     DrawingInfo *drawingInfo,
     glm::vec3 *movement,
+    CameraInfo *cameraInfo,
     ImGuiIO *imGuiIO)
 {
     MSG message;
@@ -460,8 +173,8 @@ void Win32ProcessMessages(
                 // https://learn.microsoft.com/en-us/windows/win32/inputdev/wm-rbuttondown
                 s16 xCoord = originX + GET_X_LPARAM(message.lParam);
                 s16 yCoord = originY + GET_Y_LPARAM(message.lParam);
-                globalCameraYaw -= (xCoord - centreX) / 100.f;
-                globalCameraPitch = clampf(globalCameraPitch - (yCoord - centreY) / 100.f,
+                cameraInfo->yaw -= (xCoord - centreX) / 100.f;
+                cameraInfo->pitch = clampf(cameraInfo->pitch - (yCoord - centreY) / 100.f,
                          -PI/2,
                          PI/2,
                          .01f);
@@ -475,7 +188,7 @@ void Win32ProcessMessages(
             bool shiftPressed = (GetKeyState(VK_SHIFT) < 0);
             if (shiftPressed)
             {
-                globalFov = clampf(globalFov - (f32)wheelRotation * 3.f / WHEEL_DELTA, 0.f, 90.f);
+                cameraInfo->fov = clampf(cameraInfo->fov - (f32)wheelRotation * 3.f / WHEEL_DELTA, 0.f, 90.f);
             }
             else
             {
@@ -492,8 +205,8 @@ void Win32ProcessMessages(
             // Treat WASD specially.
             float deltaZ = (GetKeyState('W') < 0) ? .1f : (GetKeyState('S') < 0) ? -.1f : 0.f;
             float deltaX = (GetKeyState('D') < 0) ? .1f : (GetKeyState('A') < 0) ? -.1f : 0.f;
-            *movement += GetCameraForwardVector() * deltaZ * speed;
-            *movement += GetCameraRightVector() * deltaX * speed;
+            *movement += cameraInfo->forwardVector * deltaZ * speed;
+            *movement += cameraInfo->rightVector * deltaX * speed;
                 
             // Other keys.
             bool altPressed = (message.lParam >> 29) & 1;
@@ -538,10 +251,10 @@ void Win32ProcessMessages(
                 DebugPrintA("outerCutoff: %f\n", drawingInfo->spotLight.outerCutoff);
                 break;
             case 'Q':
-                globalAspectRatio = fmax(globalAspectRatio - .1f, 0.f);
+                cameraInfo->aspectRatio = fmax(cameraInfo->aspectRatio - .1f, 0.f);
                 break;
             case 'E':
-                globalAspectRatio = fmin(globalAspectRatio + .1f, 10.f);
+                cameraInfo->aspectRatio = fmin(cameraInfo->aspectRatio + .1f, 10.f);
                 break;
             case 'X':
                 drawingInfo->wireframeMode = !drawingInfo->wireframeMode;
@@ -586,26 +299,26 @@ void Win32ProcessMessages(
     }
 }
 
-u64 Win32GetWallClock()
+internal u64 Win32GetWallClock()
 {
     LARGE_INTEGER wallClock;
     QueryPerformanceCounter(&wallClock);
     return wallClock.QuadPart;
 }
 
-f32 Win32GetWallClockPeriod()
+internal f32 Win32GetWallClockPeriod()
 {
     LARGE_INTEGER perfCounterFrequency;
     QueryPerformanceFrequency(&perfCounterFrequency);
     return 1000.f / perfCounterFrequency.QuadPart;
 }
 
-float Win32GetTime()
+internal float Win32GetTime()
 {
     return Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f;
 }
 
-int InitializeOpenGLExtensions(HINSTANCE hInstance)
+internal int InitializeOpenGLExtensions(HINSTANCE hInstance)
 {
     WCHAR dummyWindowClassName[] = L"DummyOGLExtensionsWindow";
 
@@ -701,7 +414,7 @@ int InitializeOpenGLExtensions(HINSTANCE hInstance)
     return 0;
 }
 
-bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shaderFilename)
+internal bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shaderFilename)
 {
 
     HANDLE file = CreateFileA(shaderFilename,        // lpFileName,
@@ -736,7 +449,7 @@ bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shaderFilename)
     return true;
 }
 
-bool CreateShaderProgram(u32 *programID, const char *vertexShaderFilename, const char *fragmentShaderFilename)
+internal bool CreateShaderProgram(u32 *programID, const char *vertexShaderFilename, const char *fragmentShaderFilename)
 {
     u32 vertexShaderID;
     if (!CompileShader(&vertexShaderID, GL_VERTEX_SHADER, vertexShaderFilename))
@@ -771,276 +484,7 @@ bool CreateShaderProgram(u32 *programID, const char *vertexShaderFilename, const
     return true;
 }
 
-glm::mat4 LookAt(
-     glm::vec3 cameraPosition,
-     glm::vec3 cameraTarget,
-     glm::vec3 cameraUpVector,
-     float farPlaneDistance)
-{
-    glm::mat4 inverseTranslation = glm::mat4(1.f);
-    inverseTranslation[3][0] = -cameraPosition.x;
-    inverseTranslation[3][1] = -cameraPosition.y;
-    inverseTranslation[3][2] = -cameraPosition.z;
-    
-    glm::vec3 direction = glm::normalize(cameraPosition - cameraTarget);
-    glm::vec3 rightVector = glm::normalize(glm::cross(cameraUpVector, direction));
-    glm::vec3 upVector = (glm::cross(direction, rightVector));
-    
-    // TODO: investigate why filling the last column with the negative of cameraPosition does not
-    // produce the same effect as the multiplication by the inverse translation.
-    glm::mat4 inverseRotation = glm::mat4(1.f);
-    inverseRotation[0][0] = rightVector.x;
-    inverseRotation[1][0] = rightVector.y;
-    inverseRotation[2][0] = rightVector.z;
-    inverseRotation[0][1] = upVector.x;
-    inverseRotation[1][1] = upVector.y;
-    inverseRotation[2][1] = upVector.z;
-    inverseRotation[0][2] = direction.x;
-    inverseRotation[1][2] = direction.y;
-    inverseRotation[2][2] = direction.z;
-    
-    // TODO: figure out what the deal is with the inverse scaling matrix in "Computer graphics:
-    // Principles and practice", p. 306. I'm leaving this unused for now as it breaks rendering.
-    glm::mat4 inverseScale =
-    {
-        1.f / (farPlaneDistance * (tanf(globalFov / globalAspectRatio * PI / 180.f) / 2.f)), 0.f, 0.f, 0.f,
-        0.f, 1.f / (farPlaneDistance * (tanf(globalFov * PI / 180.f) / 2.f)), 0.f, 0.f,
-        0.f, 0.f, 1.f / farPlaneDistance, 0.f,
-        0.f, 0.f, 0.f, 1.f
-    };
-    
-    return inverseRotation * inverseTranslation;
-}
-
-void SetShaderUniformSampler(u32 shaderProgram, const char *uniformName, u32 slot)
-{
-    glUniform1i(glGetUniformLocation(shaderProgram, uniformName), slot);
-}
-
-void SetShaderUniformFloat(u32 shaderProgram, const char *uniformName, float value)
-{
-    glUniform1f(glGetUniformLocation(shaderProgram, uniformName), value);
-}
-
-void SetShaderUniformVec3(u32 shaderProgram, const char *uniformName, glm::vec3 vector)
-{
-    glUniform3fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
-}
-
-void SetShaderUniformMat3(u32 shaderProgram, const char *uniformName, glm::mat3* matrix)
-{
-    glUniformMatrix3fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
-}
-
-void SetShaderUniformMat4(u32 shaderProgram, const char *uniformName, glm::mat4* matrix)
-{
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
-}
-
-void DrawWindow(HWND window, HDC hdc, bool *running, DrawingInfo *drawingInfo)
-{
-    if (!drawingInfo->initialized)
-    {
-        return;
-    }
-    
-    float *cc = drawingInfo->clearColor;
-    glClearColor(cc[0], cc[1], cc[2], cc[3]);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
-    // The camera target should always be camera pos + local forward vector.
-    // We want to be able to rotate the camera, however.
-    // How do we obtain the forward vector? Translate world forward vec by camera world rotation matrix.
-    glm::vec3 cameraForwardVec = glm::normalize(GetCameraForwardVector());
-    
-    glm::vec3 cameraTarget = globalCameraPos + cameraForwardVec;
-        
-    // The camera direction vector points from the camera target to the camera itself, maintaining
-    // the OpenGL convention of the Z-axis being positive towards the viewer.
-    glm::vec3 cameraDirection = glm::normalize(globalCameraPos - cameraTarget);
-    
-    glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
-    glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
-    glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
-    
-    float farPlaneDistance = 100.f;
-    glm::mat4 viewMatrix = LookAt(globalCameraPos, cameraTarget, cameraUpVec, farPlaneDistance);
-    
-    // Projection matrix: transforms vertices from view space to clip space.
-    glm::mat4 projectionMatrix = glm::perspective(
-        glm::radians(globalFov), 
-        globalAspectRatio, 
-        .1f, 
-        farPlaneDistance);
-    
-    // Point lights.
-    {
-        u32 shaderProgram = drawingInfo->lightShaderProgram;
-        glUseProgram(shaderProgram);
-        
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        
-        glBindVertexArray(drawingInfo->lightVao);
-        
-        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-        {
-            PointLight *curLight = &drawingInfo->pointLights[lightIndex];
-            // Model matrix: transforms vertices from local to world space.
-            glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, curLight->position);
-        
-            SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", curLight->diffuse);
-            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-        }
-    }
-    
-    // Object.
-    {
-        u32 shaderProgram = drawingInfo->objectShaderProgram;
-        glUseProgram(shaderProgram);
-        
-        SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
-        
-        SetShaderUniformVec3(shaderProgram, "dirLight.direction", drawingInfo->dirLight.direction);
-        SetShaderUniformVec3(shaderProgram, "dirLight.ambient", drawingInfo->dirLight.ambient);
-        SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", drawingInfo->dirLight.diffuse);
-        SetShaderUniformVec3(shaderProgram, "dirLight.specular", drawingInfo->dirLight.specular);
-        
-        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-        {
-            PointLight *lights = drawingInfo->pointLights;
-            PointLight light = lights[lightIndex];
-            
-            char uniformString[32];
-            sprintf_s(uniformString, "pointLights[%i].position", lightIndex);
-            SetShaderUniformVec3(shaderProgram, uniformString, light.position);
-            sprintf_s(uniformString, "pointLights[%i].ambient", lightIndex);
-            SetShaderUniformVec3(shaderProgram, uniformString, light.ambient);
-            sprintf_s(uniformString, "pointLights[%i].diffuse", lightIndex);
-            SetShaderUniformVec3(shaderProgram, uniformString, light.diffuse);
-            sprintf_s(uniformString, "pointLights[%i].specular", lightIndex);
-            SetShaderUniformVec3(shaderProgram, uniformString, light.specular);
-            
-            Attenuation *att = &globalAttenuationTable[light.attIndex];
-            sprintf_s(uniformString, "pointLights[%i].linear", lightIndex);
-            SetShaderUniformFloat(shaderProgram, uniformString, att->linear);
-            sprintf_s(uniformString, "pointLights[%i].quadratic", lightIndex);
-            SetShaderUniformFloat(shaderProgram, uniformString, att->quadratic);
-        }
-        
-        SetShaderUniformVec3(shaderProgram, "spotLight.position", globalCameraPos);
-        SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector());
-        SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(drawingInfo->spotLight.innerCutoff));
-        SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(drawingInfo->spotLight.outerCutoff));
-        SetShaderUniformVec3(shaderProgram, "spotLight.ambient", drawingInfo->spotLight.ambient);
-        SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", drawingInfo->spotLight.diffuse);
-        SetShaderUniformVec3(shaderProgram, "spotLight.specular", drawingInfo->spotLight.specular);
-        
-        SetShaderUniformVec3(shaderProgram, "cameraPos", globalCameraPos);
-        
-        Model *model = &drawingInfo->backpack;
-        for (u32 i = 0; i < model->meshCount; i++)
-        {
-            glBindVertexArray(model->vaos[i]);
-    
-            Mesh *mesh = &drawingInfo->backpack.meshes[i];
-            if (mesh->numTextures > 0)
-            {
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, mesh->textures[0].id);
-            }
-            if (mesh->numTextures > 1)
-            {
-                glActiveTexture(GL_TEXTURE1);
-                glBindTexture(GL_TEXTURE_2D, mesh->textures[1].id);
-            }
-            
-            // Model matrix: transforms vertices from local to world space.
-            glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
-        
-            glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
-
-            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-            SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-            SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-            SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-            glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
-        }
-    }
-    
-    u32 id = 0;
-    ImGui::Begin("Debug Window");
-    
-    char depthTestFuncStr[16];
-    PrintDepthTestFunc(drawingInfo->depthTestFunc, depthTestFuncStr, sizeof(depthTestFuncStr));
-    ImGui::Text("Depth-test function: %s", depthTestFuncStr);
-    
-    ImGui::Separator();
-    
-    ImGui::SliderFloat4("Clear color", drawingInfo->clearColor, 0.f, 1.f);
-    
-    if (ImGui::CollapsingHeader("Directional light"))
-    {
-        ImGui::PushID(id++);
-        ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->dirLight.direction), -10.f, 10.f);
-        ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->dirLight.ambient), 0.f, 1.f);
-        ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->dirLight.diffuse), 0.f, 1.f);
-        ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular), 0.f, 1.f);
-        ImGui::PopID();
-    }
-    
-    if (ImGui::CollapsingHeader("Point lights"))
-    {
-        PointLight *lights = drawingInfo->pointLights;
-        for (u32 index = 0; index < NUM_POINTLIGHTS; index++)
-        {
-            ImGui::PushID(id++);
-            char treeName[32];
-            sprintf_s(treeName, "Light #%i", index);
-            if (ImGui::TreeNode(treeName))
-            {
-                ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -150.f, 150.f);
-                ImGui::SliderFloat3("Ambient", glm::value_ptr(lights[index].ambient), 0.f, 1.f);
-                ImGui::SliderFloat3("Diffuse", glm::value_ptr(lights[index].diffuse), 0.f, 1.f);
-                ImGui::SliderFloat3("Specular", glm::value_ptr(lights[index].specular), 0.f, 1.f);
-                ImGui::SliderInt("Attenuation", &lights[index].attIndex, 0, myArraySize(globalAttenuationTable) - 1);
-                ImGui::TreePop();
-            }
-            ImGui::PopID();
-        }
-    }
-    
-    if (ImGui::CollapsingHeader("Spot light"))
-    {
-        ImGui::PushID(id++);
-        ImGui::SliderFloat3("Position", glm::value_ptr(drawingInfo->spotLight.position), -10.f, 10.f);
-        ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->spotLight.direction), -10.f, 10.f);
-        ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->spotLight.ambient), 0.f, 1.f);
-        ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->spotLight.diffuse), 0.f, 1.f);
-        ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->spotLight.specular), 0.f, 1.f);
-        ImGui::SliderFloat("Inner cutoff", &drawingInfo->spotLight.innerCutoff, 0.f, PI / 2.f);
-        ImGui::SliderFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
-        ImGui::PopID();
-    }
-    
-    ImGui::End();
-    
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-    if (!SwapBuffers(hdc))
-    {
-        if (MessageBoxW(window, L"Failed to swap buffers", L"OpenGL error", MB_OK) == S_OK)
-        {
-            *running = false;
-        }
-    }
-}
-
-u32 CreateTextureFromImage(const char *filename)
+internal u32 CreateTextureFromImage(const char *filename)
 {
     s32 width;
     s32 height;
@@ -1074,7 +518,7 @@ struct LoadedTextures
     u32 numTextures;
 };
 
-void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type, Arena *texturesArena, LoadedTextures *loadedTextures)
+internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type, Arena *texturesArena, LoadedTextures *loadedTextures)
 {
     for (u32 i = 0; i < num; i++)
     {
@@ -1108,7 +552,7 @@ void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type,
     }
 }
 
-Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures)
+internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures)
 {
     Mesh result = {};
     
@@ -1167,7 +611,7 @@ Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, Loade
     return result;
 }
 
-void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount, Arena *texturesArena, LoadedTextures *loadedTextures)
+internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount, Arena *texturesArena, LoadedTextures *loadedTextures)
 {
     for (u32 i = 0; i < node->mNumMeshes; i++)
     {
@@ -1182,7 +626,7 @@ void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCoun
     }
 }
 
-u32 CreateVAO(VaoInformation *vaoInfo)
+internal u32 CreateVAO(VaoInformation *vaoInfo)
 {
     u32 vao;
     glGenVertexArrays(1, &vao);
@@ -1229,7 +673,7 @@ u32 CreateVAO(VaoInformation *vaoInfo)
     return vao;
 }
 
-Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSize)
+internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSize)
 {
     Model result;
     
@@ -1437,7 +881,26 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         drawingInfo->lightShaderProgram = lightShaderProgram;
         drawingInfo->lightVao = lightVao;
         
-        if (!LoadDrawingInfo(drawingInfo))
+        HMODULE loglLib = LoadLibraryW(L"logl.dll");
+        myAssert(loglLib != NULL);
+        
+        DrawWindow_t DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
+        
+        LoadDrawingInfo_t LoadDrawingInfo = (LoadDrawingInfo_t)GetProcAddress(loglLib, "LoadDrawingInfo");
+        SaveDrawingInfo = (SaveDrawingInfo_t)GetProcAddress(loglLib, "SaveDrawingInfo");
+        
+        SetShaderUniformSampler_t SetShaderUniformSampler =
+            (SetShaderUniformSampler_t)GetProcAddress(loglLib, "SetShaderUniformSampler");
+        
+        PrintDepthTestFunc_t PrintDepthTestFunc =
+            (PrintDepthTestFunc_t)GetProcAddress(loglLib, "PrintDepthTestFunc");
+        
+        ProvideCameraVectors_t ProvideCameraVectors =
+            (ProvideCameraVectors_t)GetProcAddress(loglLib, "ProvideCameraVectors");
+        
+        CameraInfo *cameraInfo = &appState.cameraInfo;
+        
+        if (!LoadDrawingInfo(drawingInfo, cameraInfo))
         {
             PointLight *pointLights = drawingInfo->pointLights;
             
@@ -1461,6 +924,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
         }
         
+        u64 arenaSize = 100 * 1024 * 1024;
+        globalArena = *AllocArena(arenaSize);
+        
         drawingInfo->backpack = LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts));
         
         drawingInfo->initialized = true;
@@ -1469,7 +935,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         GetClientRect(window, &clientRect);
         f32 width = (f32)clientRect.right;
         f32 height = (f32)clientRect.bottom;
-        globalAspectRatio = width / height;
+        cameraInfo->aspectRatio = width / height;
         
         glUseProgram(objectShaderProgram);
         SetShaderUniformSampler(objectShaderProgram, "material.diffuse", 0);
@@ -1482,20 +948,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         ImGui_ImplWin32_Init(window);
         ImGui_ImplOpenGL3_Init("#version 330");
         
-        u64 arenaSize = 100 * 1024 * 1024;
-        globalArena = *AllocArena(arenaSize);
-        
         glm::vec3 movementPerFrame = {};
         
         f32 targetFrameTime = 1000.f / 60;
         f32 deltaTime = targetFrameTime;
 
         u64 lastFrameCount = Win32GetWallClock();
-
+        
         appState.running = true;
         while (appState.running)
         {    
-            Win32ProcessMessages(window, &appState.running, &appState.drawingInfo, &movementPerFrame, &io);
+            ProvideCameraVectors(cameraInfo);
+            
+            Win32ProcessMessages(
+                window,
+                &appState.running,
+                drawingInfo,
+                &movementPerFrame,
+                cameraInfo,
+                &io);
             
             ImGui_ImplOpenGL3_NewFrame();
             ImGui_ImplWin32_NewFrame();
@@ -1524,16 +995,87 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
             // OutputDebugStringW(frameTimeString);
         
-            globalCameraPos += movementPerFrame * deltaTime;
-            DrawWindow(window, hdc, &appState.running, &appState.drawingInfo);
+            cameraInfo->pos += movementPerFrame * deltaTime;
+            DebugPrintA("movement: %f %f %f\n", movementPerFrame.x, movementPerFrame.x, movementPerFrame.z);
+            DrawWindow(window, hdc, &appState.running, drawingInfo, cameraInfo);
             movementPerFrame = glm::vec3(0.f);
             
-            // DebugPrintA("Camera pitch: %f\n", globalCameraPitch);
-            // DebugPrintA("Camera yaw: %f\n", globalCameraYaw);
+            HGLRC currentContext = wglGetCurrentContext();
+            myAssert(currentContext != NULL);
+            
+            u32 id = 0;
+            ImGui::Begin("Debug Window");
+    
+            char depthTestFuncStr[16];
+            PrintDepthTestFunc(drawingInfo->depthTestFunc, depthTestFuncStr, sizeof(depthTestFuncStr));
+            ImGui::Text("Depth-test function: %s", depthTestFuncStr);
+    
+            ImGui::Separator();
+    
+            ImGui::SliderFloat4("Clear color", drawingInfo->clearColor, 0.f, 1.f);
+    
+            if (ImGui::CollapsingHeader("Directional light"))
+            {
+                ImGui::PushID(id++);
+                ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->dirLight.direction), -10.f, 10.f);
+                ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->dirLight.ambient), 0.f, 1.f);
+                ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->dirLight.diffuse), 0.f, 1.f);
+                ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular), 0.f, 1.f);
+                ImGui::PopID();
+            }
+    
+            if (ImGui::CollapsingHeader("Point lights"))
+            {
+                PointLight *lights = drawingInfo->pointLights;
+                for (u32 index = 0; index < NUM_POINTLIGHTS; index++)
+                {
+                    ImGui::PushID(id++);
+                    char treeName[32];
+                    sprintf_s(treeName, "Light #%i", index);
+                    if (ImGui::TreeNode(treeName))
+                    {
+                        ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -150.f, 150.f);
+                        ImGui::SliderFloat3("Ambient", glm::value_ptr(lights[index].ambient), 0.f, 1.f);
+                        ImGui::SliderFloat3("Diffuse", glm::value_ptr(lights[index].diffuse), 0.f, 1.f);
+                        ImGui::SliderFloat3("Specular", glm::value_ptr(lights[index].specular), 0.f, 1.f);
+                        ImGui::SliderInt("Attenuation", &lights[index].attIndex, 0, myArraySize(globalAttenuationTable) - 1);
+                        ImGui::TreePop();
+                    }
+                    ImGui::PopID();
+                }
+            }
+    
+            if (ImGui::CollapsingHeader("Spot light"))
+            {
+                ImGui::PushID(id++);
+                ImGui::SliderFloat3("Position", glm::value_ptr(drawingInfo->spotLight.position), -10.f, 10.f);
+                ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->spotLight.direction), -10.f, 10.f);
+                ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->spotLight.ambient), 0.f, 1.f);
+                ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->spotLight.diffuse), 0.f, 1.f);
+                ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->spotLight.specular), 0.f, 1.f);
+                ImGui::SliderFloat("Inner cutoff", &drawingInfo->spotLight.innerCutoff, 0.f, PI / 2.f);
+                ImGui::SliderFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
+                ImGui::PopID();
+            }
+    
+            ImGui::End();
+    
+            ImGui::Render();
+            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+            if (!SwapBuffers(hdc))
+            {
+                if (MessageBoxW(window, L"Failed to swap buffers", L"OpenGL error", MB_OK) == S_OK)
+                {
+                    appState.running = false;
+                }
+            }
+            // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
+            // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
         }
     }
     
-    SaveDrawingInfo(&appState.drawingInfo);
+    SaveDrawingInfo(&appState.drawingInfo, &appState.cameraInfo);
 
     return 0;
 }
