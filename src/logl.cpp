@@ -125,6 +125,11 @@ internal void SetShaderUniformVec3(u32 shaderProgram, const char *uniformName, g
     glUniform3fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
 }
 
+internal void SetShaderUniformVec4(u32 shaderProgram, const char *uniformName, glm::vec4 vector)
+{
+    glUniform4fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
+}
+
 internal void SetShaderUniformMat3(u32 shaderProgram, const char *uniformName, glm::mat3* matrix)
 {
     glUniformMatrix3fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
@@ -231,7 +236,6 @@ void DrawWindow(
     }
     
     float *cc = drawingInfo->clearColor;
-    // glClearColor(0.f, 1.f, 0.f, 1.f);
     glClearColor(cc[0], cc[1], cc[2], cc[3]);
     glStencilMask(0xff);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -290,7 +294,7 @@ void DrawWindow(
             
             glStencilMask(0x00);
             
-            glm::vec3 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
+            glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
             SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", stencilColor);
             glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.1f));
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
@@ -299,7 +303,7 @@ void DrawWindow(
             glDisable(GL_STENCIL_TEST);
         }
     }
-  
+    
     // Object.
     {
         u32 shaderProgram = drawingInfo->objectShaderProgram;
@@ -347,6 +351,9 @@ void DrawWindow(
         Model *model = &drawingInfo->backpack;
         for (u32 i = 0; i < model->meshCount; i++)
         {
+            shaderProgram = drawingInfo->objectShaderProgram;
+            glUseProgram(shaderProgram);
+            
             glBindVertexArray(model->vaos[i]);
     
             Mesh *mesh = &drawingInfo->backpack.meshes[i];
@@ -367,11 +374,36 @@ void DrawWindow(
         
             glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
+            glEnable(GL_STENCIL_TEST);
+            glStencilMask(0xff);
+            glStencilFunc(GL_ALWAYS, 1, 0xff);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+            
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
             SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
             SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
             SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
             glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+            
+            glStencilMask(0x00);
+            
+            shaderProgram = drawingInfo->outlineShaderProgram;
+            glUseProgram(shaderProgram);
+            
+            glDisable(GL_DEPTH_TEST);
+            glStencilFunc(GL_NOTEQUAL, 1, 0xff);
+            
+            glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
+            SetShaderUniformVec4(shaderProgram, "color", stencilColor);
+            glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.02f));
+            SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
+            SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+            SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+            SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+            glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+            
+            glDisable(GL_STENCIL_TEST);
+            glEnable(GL_DEPTH_TEST);
         }
     }
     

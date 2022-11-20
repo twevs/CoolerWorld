@@ -923,6 +923,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         {
             return -1;
         }
+        
+        u32 outlineShaderProgram;
+        if (!CreateShaderProgram(&outlineShaderProgram, "vertex_shader.vs", "outline.fs"))
+        {
+            return -1;
+        }
 
         s32 elemCounts[] = { 3, 3, 2 };
 
@@ -948,6 +954,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         DrawingInfo *drawingInfo = &appState.drawingInfo;
         drawingInfo->objectShaderProgram = objectShaderProgram;
         drawingInfo->lightShaderProgram = lightShaderProgram;
+        drawingInfo->outlineShaderProgram = outlineShaderProgram;
         drawingInfo->lightVao = lightVao;
         
         CameraInfo *cameraInfo = &appState.cameraInfo;

@@ -183,6 +183,7 @@ struct DrawingInfo
     // Transient data.
     u32 objectShaderProgram;
     u32 lightShaderProgram;
+    u32 outlineShaderProgram;
     u32 lightVao;
     
     float clearColor[4] = { .1f, .1f, .1f, 1.f };
