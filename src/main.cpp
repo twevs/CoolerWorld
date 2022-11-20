@@ -282,13 +282,21 @@ internal void Win32ProcessMessages(
                 glPolygonMode(GL_FRONT_AND_BACK, drawingInfo->wireframeMode ? GL_LINE : GL_FILL);
                 break;
             case 'U':
-                drawingInfo->depthTestFunc = max(drawingInfo->depthTestFunc - 1, 0x200);
-                glDepthFunc(drawingInfo->depthTestFunc);
-                break;
+                {
+                    s32 depthFunc;
+                    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+                    depthFunc = max(depthFunc - 1, 0x200);
+                    glDepthFunc(depthFunc);
+                    break;
+                }
             case 'I':
-                drawingInfo->depthTestFunc = min(drawingInfo->depthTestFunc + 1, 0x207);
-                glDepthFunc(drawingInfo->depthTestFunc);
-                break;
+                {
+                    s32 depthFunc;
+                    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+                    depthFunc = min(depthFunc + 1, 0x207);
+                    glDepthFunc(depthFunc);
+                    break;
+                }
             case 'O':
                 break;
             case 'J':
@@ -893,8 +901,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             __debugbreak();
         }
 
-        glEnable(GL_DEPTH_TEST);
-        glEnable(GL_STENCIL_TEST);
 #ifndef NDEBUG
         // glDebugMessageCallback(&DebugCallback, NULL);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);

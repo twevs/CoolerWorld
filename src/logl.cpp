@@ -145,7 +145,6 @@ void SaveDrawingInfo(DrawingInfo *info, CameraInfo *cameraInfo)
     fwrite(&cameraInfo->pitch, sizeof(cameraInfo->pitch), 1, file);
     fwrite(&cameraInfo->yaw, sizeof(cameraInfo->yaw), 1, file);
     fwrite(&info->wireframeMode, sizeof(info->wireframeMode), 1, file);
-    fwrite(&info->depthTestFunc, sizeof(info->depthTestFunc), 1, file);
     fwrite(&info->clearColor, sizeof(info->clearColor), 1, file);
     fwrite(&info->dirLight, sizeof(DirLight), 1, file);
     fwrite(&info->pointLights, sizeof(PointLight), NUM_POINTLIGHTS, file);
@@ -169,8 +168,6 @@ bool LoadDrawingInfo(DrawingInfo *info, CameraInfo *cameraInfo)
     fread(&cameraInfo->yaw, sizeof(cameraInfo->yaw), 1, file);
     fread(&info->wireframeMode, sizeof(info->wireframeMode), 1, file);
     glPolygonMode(GL_FRONT_AND_BACK, info->wireframeMode ? GL_LINE : GL_FILL);
-    fread(&info->depthTestFunc, sizeof(info->depthTestFunc), 1, file);
-    glDepthFunc(info->depthTestFunc);
     fread(&info->clearColor, sizeof(info->clearColor), 1, file);
     fread(&info->dirLight, sizeof(DirLight), 1, file);
     fread(&info->pointLights, sizeof(PointLight), NUM_POINTLIGHTS, file);
@@ -236,7 +233,9 @@ void DrawWindow(
     float *cc = drawingInfo->clearColor;
     // glClearColor(0.f, 1.f, 0.f, 1.f);
     glClearColor(cc[0], cc[1], cc[2], cc[3]);
+    glStencilMask(0xff);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+    glStencilMask(0x00);
   
     // The camera target should always be camera pos + local forward vector.
     // We want to be able to rotate the camera, however.
@@ -279,10 +278,25 @@ void DrawWindow(
             // Model matrix: transforms vertices from local to world space.
             glm::mat4 modelMatrix = glm::mat4(1.f);
             modelMatrix = glm::translate(modelMatrix, curLight->position);
-      
+            
+            glEnable(GL_STENCIL_TEST);
+            glStencilMask(0xff);
+            glStencilFunc(GL_EQUAL, 0, 0xff);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+            
             SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", curLight->diffuse);
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
             glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+            
+            glStencilMask(0x00);
+            
+            glm::vec3 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
+            SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", stencilColor);
+            glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.1f));
+            SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+            
+            glDisable(GL_STENCIL_TEST);
         }
     }
   
@@ -364,10 +378,6 @@ void DrawWindow(
     u32 id = 0;
     ImGui::Begin("Debug Window");
 
-    char depthTestFuncStr[16];
-    PrintDepthTestFunc(drawingInfo->depthTestFunc, depthTestFuncStr, sizeof(depthTestFuncStr));
-    ImGui::Text("Depth-test function: %s", depthTestFuncStr);
-  
     ImGui::SliderFloat3("Camera position", glm::value_ptr(cameraInfo->pos), -150.f, 150.f);
     ImGui::SliderFloat2("Camera rotation", &cameraInfo->yaw, -PI, PI);
     if (ImGui::Button("Reset camera"))
@@ -376,6 +386,40 @@ void DrawWindow(
         cameraInfo->yaw = 0.f;
         cameraInfo->pitch = 0.f;
     }
+    
+    ImGui::Text("Stencil testing: %s", glIsEnabled(GL_STENCIL_TEST) ? "enabled" : "disabled");
+    ImGui::SameLine();
+    if (ImGui::Button("Toggle stencil testing"))
+    {
+        if (glIsEnabled(GL_STENCIL_TEST))
+        {
+            glDisable(GL_STENCIL_TEST);
+        }
+        else
+        {
+            glEnable(GL_STENCIL_TEST);
+        }
+    }
+    
+    ImGui::Text("Depth testing: %s", glIsEnabled(GL_DEPTH_TEST) ? "enabled" : "disabled");
+    ImGui::SameLine();
+    if (ImGui::Button("Toggle depth testing"))
+    {
+        if (glIsEnabled(GL_DEPTH_TEST))
+        {
+            glDisable(GL_DEPTH_TEST);
+        }
+        else
+        {
+            glEnable(GL_DEPTH_TEST);
+        }
+    }
+    
+    char depthTestFuncStr[16];
+    s32 depthFunc;
+    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+    PrintDepthTestFunc(depthFunc, depthTestFuncStr, sizeof(depthTestFuncStr));
+    ImGui::Text("Depth-test function (press U/I to change): %s", depthTestFuncStr);
 
     ImGui::Separator();
 

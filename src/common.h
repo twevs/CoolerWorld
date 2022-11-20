@@ -179,7 +179,6 @@ struct DrawingInfo
 {
     bool initialized;
     bool wireframeMode = false;
-    u32 depthTestFunc = GL_LESS;
     
     // Transient data.
     u32 objectShaderProgram;
