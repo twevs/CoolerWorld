@@ -1,5 +1,38 @@
 #include "common.h"
 
+global_variable ImGuiContext *imGuiContext;
+global_variable ImGuiIO *imGuiIO;
+
+extern "C" __declspec(dllexport)
+void InitializeImGuiInModule(HWND window)
+{
+    IMGUI_CHECKVERSION();
+    imGuiContext = ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    imGuiIO = &io;
+    ImGui::StyleColorsDark();
+    ImGui_ImplWin32_Init(window);
+    ImGui_ImplOpenGL3_Init("#version 330");
+}
+
+extern "C" __declspec(dllexport)
+ImGuiIO *GetImGuiIO()
+{
+  return imGuiIO;
+}
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(
+  HWND hWnd,
+  UINT msg,
+  WPARAM wParam,
+  LPARAM lParam);
+
+extern "C" __declspec(dllexport)
+LRESULT ImGui_WndProcHandler(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+  return ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
+}
+
 extern "C" __declspec(dllexport)
 void PrintDepthTestFunc(u32 val, char *outputBuffer, u32 bufSize)
 {
@@ -191,16 +224,20 @@ void DrawWindow(
   DrawingInfo *drawingInfo,
   CameraInfo *cameraInfo)
 {
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+  
     if (!drawingInfo->initialized)
     {
         return;
     }
     
     float *cc = drawingInfo->clearColor;
-    glClearColor(0.f, 1.f, 0.f, 1.f);
-    // glClearColor(cc[0], cc[1], cc[2], cc[3]);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    
+    // glClearColor(0.f, 1.f, 0.f, 1.f);
+    glClearColor(cc[0], cc[1], cc[2], cc[3]);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+  
     // The camera target should always be camera pos + local forward vector.
     // We want to be able to rotate the camera, however.
     // How do we obtain the forward vector? Translate world forward vec by camera world rotation matrix.
@@ -225,7 +262,7 @@ void DrawWindow(
         cameraInfo->aspectRatio, 
         .1f, 
         farPlaneDistance);
-    
+  
     // Point lights.
     {
         u32 shaderProgram = drawingInfo->lightShaderProgram;
@@ -242,13 +279,13 @@ void DrawWindow(
             // Model matrix: transforms vertices from local to world space.
             glm::mat4 modelMatrix = glm::mat4(1.f);
             modelMatrix = glm::translate(modelMatrix, curLight->position);
-        
+      
             SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", curLight->diffuse);
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
             glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
         }
     }
-    
+  
     // Object.
     {
         u32 shaderProgram = drawingInfo->objectShaderProgram;
@@ -324,7 +361,82 @@ void DrawWindow(
         }
     }
     
-  HGLRC currentContext = wglGetCurrentContext();
-  myAssert(currentContext != NULL);
+    u32 id = 0;
+    ImGui::Begin("Debug Window");
+
+    char depthTestFuncStr[16];
+    PrintDepthTestFunc(drawingInfo->depthTestFunc, depthTestFuncStr, sizeof(depthTestFuncStr));
+    ImGui::Text("Depth-test function: %s", depthTestFuncStr);
+  
+    ImGui::SliderFloat3("Camera position", glm::value_ptr(cameraInfo->pos), -150.f, 150.f);
+    ImGui::SliderFloat2("Camera rotation", &cameraInfo->yaw, -PI, PI);
+    if (ImGui::Button("Reset camera"))
+    {
+        cameraInfo->pos = glm::vec3(0.f);
+        cameraInfo->yaw = 0.f;
+        cameraInfo->pitch = 0.f;
+    }
+
+    ImGui::Separator();
+
+    ImGui::SliderFloat4("Clear color", drawingInfo->clearColor, 0.f, 1.f);
+
+    if (ImGui::CollapsingHeader("Directional light"))
+    {
+        ImGui::PushID(id++);
+        ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->dirLight.direction), -10.f, 10.f);
+        ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->dirLight.ambient), 0.f, 1.f);
+        ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->dirLight.diffuse), 0.f, 1.f);
+        ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular), 0.f, 1.f);
+        ImGui::PopID();
+    }
+
+    if (ImGui::CollapsingHeader("Point lights"))
+    {
+        PointLight *lights = drawingInfo->pointLights;
+        for (u32 index = 0; index < NUM_POINTLIGHTS; index++)
+        {
+            ImGui::PushID(id++);
+            char treeName[32];
+            sprintf_s(treeName, "Light #%i", index);
+            if (ImGui::TreeNode(treeName))
+            {
+                ImGui::InputFloat3("Position", glm::value_ptr(lights[index].position));
+                // ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -150.f, 150.f);
+                ImGui::SliderFloat3("Ambient", glm::value_ptr(lights[index].ambient), 0.f, 1.f);
+                ImGui::SliderFloat3("Diffuse", glm::value_ptr(lights[index].diffuse), 0.f, 1.f);
+                ImGui::SliderFloat3("Specular", glm::value_ptr(lights[index].specular), 0.f, 1.f);
+                ImGui::SliderInt("Attenuation", &lights[index].attIndex, 0, myArraySize(globalAttenuationTable) - 1);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
+    }
+
+    if (ImGui::CollapsingHeader("Spot light"))
+    {
+        ImGui::PushID(id++);
+        ImGui::SliderFloat3("Position", glm::value_ptr(drawingInfo->spotLight.position), -10.f, 10.f);
+        ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->spotLight.direction), -10.f, 10.f);
+        ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->spotLight.ambient), 0.f, 1.f);
+        ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->spotLight.diffuse), 0.f, 1.f);
+        ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->spotLight.specular), 0.f, 1.f);
+        ImGui::SliderFloat("Inner cutoff", &drawingInfo->spotLight.innerCutoff, 0.f, PI / 2.f);
+        ImGui::SliderFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
+        ImGui::PopID();
+    }
+
+    ImGui::End();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    if (!SwapBuffers(hdc))
+    {
+        if (MessageBoxW(window, L"Failed to swap buffers", L"OpenGL error", MB_OK) == S_OK)
+        {
+            *running = false;
+        }
+    }
 }
 

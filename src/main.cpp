@@ -1,5 +1,18 @@
 #include "common.h"
 
+typedef bool (*InitializeImGuiInModule_t)(HWND window);
+InitializeImGuiInModule_t InitializeImGuiInModule;
+
+typedef ImGuiIO * (*GetImGuiIO_t)();
+GetImGuiIO_t GetImGuiIO;
+
+typedef LRESULT (*ImGui_WndProcHandler_t)(
+  HWND hWnd,
+  UINT msg,
+  WPARAM wParam,
+  LPARAM lParam);
+ImGui_WndProcHandler_t ImGui_WndProcHandler;
+
 typedef bool (*SetShaderUniformSampler_t)(
             u32 shaderProgram,
             const char *uniformName,
@@ -122,23 +135,21 @@ internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
 internal void Win32ProcessMessages(
     HWND window,
     bool *running,
     DrawingInfo *drawingInfo,
     glm::vec3 *movement,
-    CameraInfo *cameraInfo,
-    ImGuiIO *imGuiIO)
+    CameraInfo *cameraInfo)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
     {        
-        if (ImGui_ImplWin32_WndProcHandler(window, message.message, message.wParam, message.lParam))
+        if (ImGui_WndProcHandler(window, message.message, message.wParam, message.lParam))
         {
             break;
         }
+        ImGuiIO *imGuiIO = GetImGuiIO();
         if (imGuiIO->WantCaptureKeyboard || imGuiIO->WantTextInput)
         {
             TranslateMessage(&message);
@@ -722,7 +733,7 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     return result;
 }
 
-void LoadRenderingCode()
+void LoadRenderingCode(HWND window)
 {
     HMODULE loglLib = GetModuleHandleW(L"logl_runtime.dll");
     if (loglLib != NULL)
@@ -733,6 +744,11 @@ void LoadRenderingCode()
     loglLib = LoadLibraryW(L"logl_runtime.dll");
     myAssert(loglLib != NULL);
     
+    InitializeImGuiInModule = (InitializeImGuiInModule_t)GetProcAddress(loglLib, "InitializeImGuiInModule");
+    InitializeImGuiInModule(window);
+    GetImGuiIO = (GetImGuiIO_t)GetProcAddress(loglLib, "GetImGuiIO");
+    ImGui_WndProcHandler = (ImGui_WndProcHandler_t)GetProcAddress(loglLib, "ImGui_WndProcHandler");
+        
     DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
     
     LoadDrawingInfo = (LoadDrawingInfo_t)GetProcAddress(loglLib, "LoadDrawingInfo");
@@ -745,7 +761,7 @@ void LoadRenderingCode()
     ProvideCameraVectors = (ProvideCameraVectors_t)GetProcAddress(loglLib, "ProvideCameraVectors");
 }
 
-void CheckForNewDLL(FILETIME *lastFileTime)
+void CheckForNewDLL(HWND window, FILETIME *lastFileTime)
 {
     HANDLE renderingDLL = CreateFileW(L"logl.dll", GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
     FILETIME fileTime = {};
@@ -753,7 +769,7 @@ void CheckForNewDLL(FILETIME *lastFileTime)
     CloseHandle(renderingDLL);
     if (CompareFileTime(lastFileTime, &fileTime) != 0)
     {
-        LoadRenderingCode();
+        LoadRenderingCode(window);
     }
     *lastFileTime = fileTime;
 }
@@ -878,6 +894,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
 
         glEnable(GL_DEPTH_TEST);
+        glEnable(GL_STENCIL_TEST);
 #ifndef NDEBUG
         // glDebugMessageCallback(&DebugCallback, NULL);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
@@ -929,7 +946,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         
         CameraInfo *cameraInfo = &appState.cameraInfo;
         
-        LoadRenderingCode();
+        LoadRenderingCode(window);
         
         if (!LoadDrawingInfo(drawingInfo, cameraInfo))
         {
@@ -972,13 +989,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         SetShaderUniformSampler(objectShaderProgram, "material.diffuse", 0);
         SetShaderUniformSampler(objectShaderProgram, "material.specular", 1);
         
-        IMGUI_CHECKVERSION();
-        ImGui::CreateContext();
-        ImGuiIO& io = ImGui::GetIO(); (void)io;
-        ImGui::StyleColorsDark();
-        ImGui_ImplWin32_Init(window);
-        ImGui_ImplOpenGL3_Init("#version 330");
-        
         glm::vec3 movementPerFrame = {};
         
         f32 targetFrameTime = 1000.f / 60;
@@ -999,7 +1009,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             dllAccumulator += deltaTime;
             if (dllAccumulator >= 50.f)
             {
-                CheckForNewDLL(&lastFileTime);
+                CheckForNewDLL(window, &lastFileTime);
                 dllAccumulator = 0.f;
             }
             
@@ -1010,12 +1020,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 &appState.running,
                 drawingInfo,
                 &movementPerFrame,
-                cameraInfo,
-                &io);
-            
-            ImGui_ImplOpenGL3_NewFrame();
-            ImGui_ImplWin32_NewFrame();
-            ImGui::NewFrame();
+                cameraInfo);
             
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
@@ -1041,80 +1046,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // OutputDebugStringW(frameTimeString);
         
             cameraInfo->pos += movementPerFrame * deltaTime;
-            DebugPrintA("movement: %f %f %f\n", movementPerFrame.x, movementPerFrame.x, movementPerFrame.z);
             DrawWindow(window, hdc, &appState.running, drawingInfo, cameraInfo);
             movementPerFrame = glm::vec3(0.f);
-            
-            HGLRC currentContext = wglGetCurrentContext();
-            myAssert(currentContext != NULL);
-            
-            u32 id = 0;
-            ImGui::Begin("Debug Window");
-    
-            char depthTestFuncStr[16];
-            PrintDepthTestFunc(drawingInfo->depthTestFunc, depthTestFuncStr, sizeof(depthTestFuncStr));
-            ImGui::Text("Depth-test function: %s", depthTestFuncStr);
-    
-            ImGui::Separator();
-    
-            ImGui::SliderFloat4("Clear color", drawingInfo->clearColor, 0.f, 1.f);
-    
-            if (ImGui::CollapsingHeader("Directional light"))
-            {
-                ImGui::PushID(id++);
-                ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->dirLight.direction), -10.f, 10.f);
-                ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->dirLight.ambient), 0.f, 1.f);
-                ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->dirLight.diffuse), 0.f, 1.f);
-                ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular), 0.f, 1.f);
-                ImGui::PopID();
-            }
-    
-            if (ImGui::CollapsingHeader("Point lights"))
-            {
-                PointLight *lights = drawingInfo->pointLights;
-                for (u32 index = 0; index < NUM_POINTLIGHTS; index++)
-                {
-                    ImGui::PushID(id++);
-                    char treeName[32];
-                    sprintf_s(treeName, "Light #%i", index);
-                    if (ImGui::TreeNode(treeName))
-                    {
-                        ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -150.f, 150.f);
-                        ImGui::SliderFloat3("Ambient", glm::value_ptr(lights[index].ambient), 0.f, 1.f);
-                        ImGui::SliderFloat3("Diffuse", glm::value_ptr(lights[index].diffuse), 0.f, 1.f);
-                        ImGui::SliderFloat3("Specular", glm::value_ptr(lights[index].specular), 0.f, 1.f);
-                        ImGui::SliderInt("Attenuation", &lights[index].attIndex, 0, myArraySize(globalAttenuationTable) - 1);
-                        ImGui::TreePop();
-                    }
-                    ImGui::PopID();
-                }
-            }
-    
-            if (ImGui::CollapsingHeader("Spot light"))
-            {
-                ImGui::PushID(id++);
-                ImGui::SliderFloat3("Position", glm::value_ptr(drawingInfo->spotLight.position), -10.f, 10.f);
-                ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->spotLight.direction), -10.f, 10.f);
-                ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->spotLight.ambient), 0.f, 1.f);
-                ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->spotLight.diffuse), 0.f, 1.f);
-                ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->spotLight.specular), 0.f, 1.f);
-                ImGui::SliderFloat("Inner cutoff", &drawingInfo->spotLight.innerCutoff, 0.f, PI / 2.f);
-                ImGui::SliderFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
-                ImGui::PopID();
-            }
-    
-            ImGui::End();
-    
-            ImGui::Render();
-            ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-            if (!SwapBuffers(hdc))
-            {
-                if (MessageBoxW(window, L"Failed to swap buffers", L"OpenGL error", MB_OK) == S_OK)
-                {
-                    appState.running = false;
-                }
-            }
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
         }
