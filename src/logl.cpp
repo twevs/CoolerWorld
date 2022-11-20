@@ -141,25 +141,19 @@ internal void SetShaderUniformMat4(u32 shaderProgram, const char *uniformName, g
 }
 
 extern "C" __declspec(dllexport)
-void SaveDrawingInfo(DrawingInfo *info, CameraInfo *cameraInfo)
+void SaveDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInfo)
 {
     FILE *file;
     fopen_s(&file, "save.bin", "wb");
     
-    fwrite(&cameraInfo->pos, sizeof(cameraInfo->pos), 1, file);
-    fwrite(&cameraInfo->pitch, sizeof(cameraInfo->pitch), 1, file);
-    fwrite(&cameraInfo->yaw, sizeof(cameraInfo->yaw), 1, file);
-    fwrite(&info->wireframeMode, sizeof(info->wireframeMode), 1, file);
-    fwrite(&info->clearColor, sizeof(info->clearColor), 1, file);
-    fwrite(&info->dirLight, sizeof(DirLight), 1, file);
-    fwrite(&info->pointLights, sizeof(PointLight), NUM_POINTLIGHTS, file);
-    fwrite(&info->spotLight, sizeof(SpotLight), 1, file);
+    fwrite(info, sizeof(PersistentDrawingInfo), 1, file);
+    fwrite(cameraInfo, sizeof(CameraInfo), 1, file);
     
     fclose(file);
 }
 
 extern "C" __declspec(dllexport)
-bool LoadDrawingInfo(DrawingInfo *info, CameraInfo *cameraInfo)
+bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInfo)
 {
     FILE *file;
     errno_t opened = fopen_s(&file, "save.bin", "rb");
@@ -168,15 +162,8 @@ bool LoadDrawingInfo(DrawingInfo *info, CameraInfo *cameraInfo)
         return false;
     }
     
-    fread(&cameraInfo->pos, sizeof(cameraInfo->pos), 1, file);
-    fread(&cameraInfo->pitch, sizeof(cameraInfo->pitch), 1, file);
-    fread(&cameraInfo->yaw, sizeof(cameraInfo->yaw), 1, file);
-    fread(&info->wireframeMode, sizeof(info->wireframeMode), 1, file);
-    glPolygonMode(GL_FRONT_AND_BACK, info->wireframeMode ? GL_LINE : GL_FILL);
-    fread(&info->clearColor, sizeof(info->clearColor), 1, file);
-    fread(&info->dirLight, sizeof(DirLight), 1, file);
-    fread(&info->pointLights, sizeof(PointLight), NUM_POINTLIGHTS, file);
-    fread(&info->spotLight, sizeof(SpotLight), 1, file);
+    fread(info, sizeof(PersistentDrawingInfo), 1, file);
+    fread(cameraInfo, sizeof(CameraInfo), 1, file);
     
     fclose(file);
     
@@ -223,19 +210,20 @@ void DrawWindow(
   HWND window,
   HDC hdc,
   bool *running,
-  DrawingInfo *drawingInfo,
+  TransientDrawingInfo *transientInfo,
+  PersistentDrawingInfo *persistentInfo,
   CameraInfo *cameraInfo)
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
   
-    if (!drawingInfo->initialized)
+    if (!persistentInfo->initialized)
     {
         return;
     }
     
-    float *cc = drawingInfo->clearColor;
+    float *cc = persistentInfo->clearColor;
     glClearColor(cc[0], cc[1], cc[2], cc[3]);
     glStencilMask(0xff);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
@@ -268,57 +256,60 @@ void DrawWindow(
   
     // Point lights.
     {
-        u32 shaderProgram = drawingInfo->lightShaderProgram;
+        u32 shaderProgram = transientInfo->lightShaderProgram;
         glUseProgram(shaderProgram);
         
         SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
         SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
         
-        glBindVertexArray(drawingInfo->lightVao);
+        glBindVertexArray(transientInfo->cubeVao);
         
         for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
         {
-            PointLight *curLight = &drawingInfo->pointLights[lightIndex];
+            PointLight *curLight = &persistentInfo->pointLights[lightIndex];
             // Model matrix: transforms vertices from local to world space.
             glm::mat4 modelMatrix = glm::mat4(1.f);
             modelMatrix = glm::translate(modelMatrix, curLight->position);
             
             glEnable(GL_STENCIL_TEST);
             glStencilMask(0xff);
-            glStencilFunc(GL_EQUAL, 0, 0xff);
-            glStencilOp(GL_KEEP, GL_KEEP, GL_INCR);
+            glStencilFunc(GL_ALWAYS, 1, 0xff);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
             
-            SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", curLight->diffuse);
+            SetShaderUniformVec3(transientInfo->lightShaderProgram, "lightColor", curLight->diffuse);
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
             glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
             
             glStencilMask(0x00);
+            glDisable(GL_DEPTH_TEST);
+            glStencilFunc(GL_NOTEQUAL, 1, 0xff);
             
             glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
-            SetShaderUniformVec3(drawingInfo->lightShaderProgram, "lightColor", stencilColor);
+            SetShaderUniformVec3(transientInfo->lightShaderProgram, "lightColor", stencilColor);
             glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.1f));
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
             glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
             
             glDisable(GL_STENCIL_TEST);
+            glEnable(GL_DEPTH_TEST);
         }
     }
     
-    // Object.
+    // Objects.
     {
-        u32 shaderProgram = drawingInfo->objectShaderProgram;
+        u32 shaderProgram = transientInfo->objectShaderProgram;
         glUseProgram(shaderProgram);
         
         SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
         
-        SetShaderUniformVec3(shaderProgram, "dirLight.direction", drawingInfo->dirLight.direction);
-        SetShaderUniformVec3(shaderProgram, "dirLight.ambient", drawingInfo->dirLight.ambient);
-        SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", drawingInfo->dirLight.diffuse);
-        SetShaderUniformVec3(shaderProgram, "dirLight.specular", drawingInfo->dirLight.specular);
+        SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
+        SetShaderUniformVec3(shaderProgram, "dirLight.ambient", persistentInfo->dirLight.ambient);
+        SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
+        SetShaderUniformVec3(shaderProgram, "dirLight.specular", persistentInfo->dirLight.specular);
         
         for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
         {
-            PointLight *lights = drawingInfo->pointLights;
+            PointLight *lights = persistentInfo->pointLights;
             PointLight light = lights[lightIndex];
             
             char uniformString[32];
@@ -340,23 +331,40 @@ void DrawWindow(
         
         SetShaderUniformVec3(shaderProgram, "spotLight.position", cameraInfo->pos);
         SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector(cameraInfo));
-        SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(drawingInfo->spotLight.innerCutoff));
-        SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(drawingInfo->spotLight.outerCutoff));
-        SetShaderUniformVec3(shaderProgram, "spotLight.ambient", drawingInfo->spotLight.ambient);
-        SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", drawingInfo->spotLight.diffuse);
-        SetShaderUniformVec3(shaderProgram, "spotLight.specular", drawingInfo->spotLight.specular);
+        SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
+        SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
+        SetShaderUniformVec3(shaderProgram, "spotLight.ambient", persistentInfo->spotLight.ambient);
+        SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
+        SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
         
         SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
         
-        Model *model = &drawingInfo->backpack;
+        // Grass.
+        {
+            glBindVertexArray(transientInfo->cubeVao);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, transientInfo->grassTexture);
+        
+            for (u32 i = 0; i < NUM_GRASS; i++)
+            {
+                glm::mat4 model = glm::mat4(1.f);
+                model = glm::translate(model, persistentInfo->grassPos[i]);
+                SetShaderUniformMat4(shaderProgram, "modelMatrix", &model);
+                SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+                SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+            }
+        }
+        
+        Model *model = &transientInfo->backpack;
         for (u32 i = 0; i < model->meshCount; i++)
         {
-            shaderProgram = drawingInfo->objectShaderProgram;
+            shaderProgram = transientInfo->objectShaderProgram;
             glUseProgram(shaderProgram);
             
             glBindVertexArray(model->vaos[i]);
     
-            Mesh *mesh = &drawingInfo->backpack.meshes[i];
+            Mesh *mesh = &transientInfo->backpack.meshes[i];
             if (mesh->numTextures > 0)
             {
                 glActiveTexture(GL_TEXTURE0);
@@ -387,7 +395,7 @@ void DrawWindow(
             
             glStencilMask(0x00);
             
-            shaderProgram = drawingInfo->outlineShaderProgram;
+            shaderProgram = transientInfo->outlineShaderProgram;
             glUseProgram(shaderProgram);
             
             glDisable(GL_DEPTH_TEST);
@@ -455,21 +463,21 @@ void DrawWindow(
 
     ImGui::Separator();
 
-    ImGui::SliderFloat4("Clear color", drawingInfo->clearColor, 0.f, 1.f);
+    ImGui::SliderFloat4("Clear color", persistentInfo->clearColor, 0.f, 1.f);
 
     if (ImGui::CollapsingHeader("Directional light"))
     {
         ImGui::PushID(id++);
-        ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->dirLight.direction), -10.f, 10.f);
-        ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->dirLight.ambient), 0.f, 1.f);
-        ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->dirLight.diffuse), 0.f, 1.f);
-        ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->dirLight.specular), 0.f, 1.f);
+        ImGui::SliderFloat3("Direction", glm::value_ptr(persistentInfo->dirLight.direction), -10.f, 10.f);
+        ImGui::SliderFloat3("Ambient", glm::value_ptr(persistentInfo->dirLight.ambient), 0.f, 1.f);
+        ImGui::SliderFloat3("Diffuse", glm::value_ptr(persistentInfo->dirLight.diffuse), 0.f, 1.f);
+        ImGui::SliderFloat3("Specular", glm::value_ptr(persistentInfo->dirLight.specular), 0.f, 1.f);
         ImGui::PopID();
     }
 
     if (ImGui::CollapsingHeader("Point lights"))
     {
-        PointLight *lights = drawingInfo->pointLights;
+        PointLight *lights = persistentInfo->pointLights;
         for (u32 index = 0; index < NUM_POINTLIGHTS; index++)
         {
             ImGui::PushID(id++);
@@ -492,13 +500,13 @@ void DrawWindow(
     if (ImGui::CollapsingHeader("Spot light"))
     {
         ImGui::PushID(id++);
-        ImGui::SliderFloat3("Position", glm::value_ptr(drawingInfo->spotLight.position), -10.f, 10.f);
-        ImGui::SliderFloat3("Direction", glm::value_ptr(drawingInfo->spotLight.direction), -10.f, 10.f);
-        ImGui::SliderFloat3("Ambient", glm::value_ptr(drawingInfo->spotLight.ambient), 0.f, 1.f);
-        ImGui::SliderFloat3("Diffuse", glm::value_ptr(drawingInfo->spotLight.diffuse), 0.f, 1.f);
-        ImGui::SliderFloat3("Specular", glm::value_ptr(drawingInfo->spotLight.specular), 0.f, 1.f);
-        ImGui::SliderFloat("Inner cutoff", &drawingInfo->spotLight.innerCutoff, 0.f, PI / 2.f);
-        ImGui::SliderFloat("Outer cutoff", &drawingInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
+        ImGui::SliderFloat3("Position", glm::value_ptr(persistentInfo->spotLight.position), -10.f, 10.f);
+        ImGui::SliderFloat3("Direction", glm::value_ptr(persistentInfo->spotLight.direction), -10.f, 10.f);
+        ImGui::SliderFloat3("Ambient", glm::value_ptr(persistentInfo->spotLight.ambient), 0.f, 1.f);
+        ImGui::SliderFloat3("Diffuse", glm::value_ptr(persistentInfo->spotLight.diffuse), 0.f, 1.f);
+        ImGui::SliderFloat3("Specular", glm::value_ptr(persistentInfo->spotLight.specular), 0.f, 1.f);
+        ImGui::SliderFloat("Inner cutoff", &persistentInfo->spotLight.innerCutoff, 0.f, PI / 2.f);
+        ImGui::SliderFloat("Outer cutoff", &persistentInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
         ImGui::PopID();
     }
 

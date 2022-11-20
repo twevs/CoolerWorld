@@ -20,12 +20,12 @@ typedef bool (*SetShaderUniformSampler_t)(
 SetShaderUniformSampler_t SetShaderUniformSampler;
 
 typedef bool (*LoadDrawingInfo_t)(
-            DrawingInfo *drawingInfo,
+            PersistentDrawingInfo *drawingInfo,
             CameraInfo *cameraInfo);
 LoadDrawingInfo_t LoadDrawingInfo;
 
 typedef bool (*SaveDrawingInfo_t)(
-            DrawingInfo *drawingInfo,
+            PersistentDrawingInfo *drawingInfo,
             CameraInfo *cameraInfo);
 SaveDrawingInfo_t SaveDrawingInfo;
 
@@ -37,7 +37,8 @@ typedef void (*DrawWindow_t)(
             HWND window,
             HDC hdc,
             bool *running,
-            DrawingInfo *drawingInfo,
+            TransientDrawingInfo *transientInfo,
+            PersistentDrawingInfo *drawingInfo,
             CameraInfo *cameraInfo);
 DrawWindow_t DrawWindow;
 
@@ -138,7 +139,7 @@ internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
 internal void Win32ProcessMessages(
     HWND window,
     bool *running,
-    DrawingInfo *drawingInfo,
+    PersistentDrawingInfo *drawingInfo,
     glm::vec3 *movement,
     CameraInfo *cameraInfo)
 {
@@ -912,6 +913,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         // Shader initialization.
         
+        u64 arenaSize = 100 * 1024 * 1024;
+        globalArena = *AllocArena(arenaSize);
+        
         u32 objectShaderProgram;
         if (!CreateShaderProgram(&objectShaderProgram, "vertex_shader.vs", "fragment_shader.fs"))
         {
@@ -949,18 +953,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         vaoInfo.indices = rectIndices;
         vaoInfo.indicesSize = sizeof(rectIndices);
         
-        u32 lightVao = CreateVAO(&vaoInfo);
+        u32 cubeVao = CreateVAO(&vaoInfo);
         
-        DrawingInfo *drawingInfo = &appState.drawingInfo;
-        drawingInfo->objectShaderProgram = objectShaderProgram;
-        drawingInfo->lightShaderProgram = lightShaderProgram;
-        drawingInfo->outlineShaderProgram = outlineShaderProgram;
-        drawingInfo->lightVao = lightVao;
-        
-        CameraInfo *cameraInfo = &appState.cameraInfo;
+        TransientDrawingInfo* transientInfo = &appState.transientInfo;
+        transientInfo->objectShaderProgram = objectShaderProgram;
+        transientInfo->lightShaderProgram = lightShaderProgram;
+        transientInfo->outlineShaderProgram = outlineShaderProgram;
+        transientInfo->cubeVao = cubeVao;
+        transientInfo->backpack = LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts));
+        transientInfo->grassTexture = CreateTextureFromImage("grass.png");
         
         LoadRenderingCode(window);
         
+        PersistentDrawingInfo *drawingInfo = &appState.persistentInfo;
+        CameraInfo *cameraInfo = &appState.cameraInfo;
         if (!LoadDrawingInfo(drawingInfo, cameraInfo))
         {
             PointLight *pointLights = drawingInfo->pointLights;
@@ -981,14 +987,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
             }
             
+            for (u32 grassIndex = 0; grassIndex < NUM_GRASS; grassIndex++)
+            {
+                f32 x = (f32)(rand() % 10);
+                x = (rand() > RAND_MAX / 2) ? x : -x;
+                f32 y = (f32)(rand() % 10);
+                y = (rand() > RAND_MAX / 2) ? y : -y;
+                f32 z = (f32)(rand() % 10);
+                z = (rand() > RAND_MAX / 2) ? z : -z;
+                drawingInfo->grassPos[grassIndex] = { x, y, z };
+            }
+            
             drawingInfo->dirLight.direction =
                 glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
         }
-        
-        u64 arenaSize = 100 * 1024 * 1024;
-        globalArena = *AllocArena(arenaSize);
-        
-        drawingInfo->backpack = LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts));
         
         drawingInfo->initialized = true;
         
@@ -1059,14 +1071,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // OutputDebugStringW(frameTimeString);
         
             cameraInfo->pos += movementPerFrame * deltaTime;
-            DrawWindow(window, hdc, &appState.running, drawingInfo, cameraInfo);
+            DrawWindow(window, hdc, &appState.running, transientInfo, drawingInfo, cameraInfo);
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
         }
     }
     
-    SaveDrawingInfo(&appState.drawingInfo, &appState.cameraInfo);
+    SaveDrawingInfo(&appState.persistentInfo, &appState.cameraInfo);
 
     return 0;
 }
