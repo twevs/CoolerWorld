@@ -181,6 +181,7 @@ struct TransientDrawingInfo
     u32 objectShaderProgram;
     u32 lightShaderProgram;
     u32 outlineShaderProgram;
+    u32 alphaShaderProgram;
     u32 cubeVao;
     Model backpack;
     u32 grassTexture;
@@ -191,7 +192,6 @@ struct PersistentDrawingInfo
     bool initialized;
     bool wireframeMode = false;
     
-    // Transient data.
     float clearColor[4] = { .1f, .1f, .1f, 1.f };
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];

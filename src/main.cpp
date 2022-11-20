@@ -933,6 +933,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         {
             return -1;
         }
+        
+        u32 alphaShaderProgram;
+        if (!CreateShaderProgram(&alphaShaderProgram, "vertex_shader.vs", "alpha.fs"))
+        {
+            return -1;
+        }
 
         s32 elemCounts[] = { 3, 3, 2 };
 
@@ -959,6 +965,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         transientInfo->objectShaderProgram = objectShaderProgram;
         transientInfo->lightShaderProgram = lightShaderProgram;
         transientInfo->outlineShaderProgram = outlineShaderProgram;
+        transientInfo->alphaShaderProgram = alphaShaderProgram;
         transientInfo->cubeVao = cubeVao;
         transientInfo->backpack = LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts));
         transientInfo->grassTexture = CreateTextureFromImage("grass.png");
@@ -1013,6 +1020,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         glUseProgram(objectShaderProgram);
         SetShaderUniformSampler(objectShaderProgram, "material.diffuse", 0);
         SetShaderUniformSampler(objectShaderProgram, "material.specular", 1);
+        
+        glUseProgram(alphaShaderProgram);
+        SetShaderUniformSampler(alphaShaderProgram, "tex", 0);
         
         glm::vec3 movementPerFrame = {};
         

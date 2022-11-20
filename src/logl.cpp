@@ -341,6 +341,8 @@ void DrawWindow(
         
         // Grass.
         {
+            glUseProgram(transientInfo->alphaShaderProgram);
+            
             glBindVertexArray(transientInfo->cubeVao);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, transientInfo->grassTexture);
