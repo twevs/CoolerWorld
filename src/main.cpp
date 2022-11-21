@@ -514,7 +514,7 @@ internal bool CreateShaderProgram(u32 *programID, const char *vertexShaderFilena
     return true;
 }
 
-internal u32 CreateTextureFromImage(const char *filename)
+internal u32 CreateTextureFromImage(const char *filename, GLenum wrapMode = GL_REPEAT)
 {
     s32 width;
     s32 height;
@@ -527,14 +527,14 @@ internal u32 CreateTextureFromImage(const char *filename)
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
     bool alpha = strstr(filename, "png") != NULL;
     GLenum pixelFormat = alpha ? GL_RGBA : GL_RGB;
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
+    glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
     glGenerateMipmap(GL_TEXTURE_2D);
 
     stbi_image_free(textureData);
@@ -934,8 +934,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             return -1;
         }
         
-        u32 alphaShaderProgram;
-        if (!CreateShaderProgram(&alphaShaderProgram, "vertex_shader.vs", "alpha.fs"))
+        u32 textureShaderProgram;
+        if (!CreateShaderProgram(&textureShaderProgram, "vertex_shader.vs", "texture.fs"))
         {
             return -1;
         }
@@ -961,14 +961,39 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         
         u32 cubeVao = CreateVAO(&vaoInfo);
         
+        f32 grassVertices[] =
+        {
+            .5f, .5f, 0.f,   0.f, 0.f, 1.f, 1.f, 1.f,
+            .5f, -.5f, 0.f,  0.f, 0.f, 1.f, 1.f, 0.f,
+            -.5f, -.5f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+            -.5f, .5f, 0.f,  0.f, 0.f, 1.f, 0.f, 1.f
+        };
+        
+        u32 grassIndices[] =
+        {
+            0, 1, 3,
+            1, 2, 3
+        };
+        
+        vaoInfo.vertices = grassVertices;
+        vaoInfo.verticesSize = sizeof(grassVertices);
+        vaoInfo.elemCounts = elemCounts;
+        vaoInfo.elementCountsSize = myArraySize(elemCounts);
+        vaoInfo.indices = grassIndices;
+        vaoInfo.indicesSize = sizeof(grassIndices);
+        
+        u32 quadVao = CreateVAO(&vaoInfo);
+        
         TransientDrawingInfo* transientInfo = &appState.transientInfo;
         transientInfo->objectShaderProgram = objectShaderProgram;
         transientInfo->lightShaderProgram = lightShaderProgram;
         transientInfo->outlineShaderProgram = outlineShaderProgram;
-        transientInfo->alphaShaderProgram = alphaShaderProgram;
+        transientInfo->textureShaderProgram = textureShaderProgram;
         transientInfo->cubeVao = cubeVao;
+        transientInfo->quadVao = quadVao;
         transientInfo->backpack = LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts));
-        transientInfo->grassTexture = CreateTextureFromImage("grass.png");
+        transientInfo->grassTexture = CreateTextureFromImage("grass.png", GL_CLAMP_TO_EDGE);
+        transientInfo->windowTexture = CreateTextureFromImage("window.png", GL_CLAMP_TO_EDGE);
         
         LoadRenderingCode(window);
         
@@ -994,7 +1019,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
             }
             
-            for (u32 grassIndex = 0; grassIndex < NUM_GRASS; grassIndex++)
+            for (u32 windowIndex = 0; windowIndex < NUM_OBJECTS; windowIndex++)
             {
                 f32 x = (f32)(rand() % 10);
                 x = (rand() > RAND_MAX / 2) ? x : -x;
@@ -1002,7 +1027,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 y = (rand() > RAND_MAX / 2) ? y : -y;
                 f32 z = (f32)(rand() % 10);
                 z = (rand() > RAND_MAX / 2) ? z : -z;
-                drawingInfo->grassPos[grassIndex] = { x, y, z };
+                drawingInfo->windowPos[windowIndex] = { x, y, z };
             }
             
             drawingInfo->dirLight.direction =
@@ -1021,8 +1046,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         SetShaderUniformSampler(objectShaderProgram, "material.diffuse", 0);
         SetShaderUniformSampler(objectShaderProgram, "material.specular", 1);
         
-        glUseProgram(alphaShaderProgram);
-        SetShaderUniformSampler(alphaShaderProgram, "tex", 0);
+        glUseProgram(textureShaderProgram);
+        SetShaderUniformSampler(textureShaderProgram, "tex", 0);
         
         glm::vec3 movementPerFrame = {};
         

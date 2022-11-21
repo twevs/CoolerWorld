@@ -253,6 +253,8 @@ void DrawWindow(
         cameraInfo->aspectRatio, 
         .1f, 
         farPlaneDistance);
+    
+    // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
   
     // Point lights.
     {
@@ -339,25 +341,6 @@ void DrawWindow(
         
         SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
         
-        // Grass.
-        {
-            glUseProgram(transientInfo->alphaShaderProgram);
-            
-            glBindVertexArray(transientInfo->cubeVao);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, transientInfo->grassTexture);
-        
-            for (u32 i = 0; i < NUM_GRASS; i++)
-            {
-                glm::mat4 model = glm::mat4(1.f);
-                model = glm::translate(model, persistentInfo->grassPos[i]);
-                SetShaderUniformMat4(shaderProgram, "modelMatrix", &model);
-                SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-                SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-            }
-        }
-        
         Model *model = &transientInfo->backpack;
         for (u32 i = 0; i < model->meshCount; i++)
         {
@@ -384,10 +367,10 @@ void DrawWindow(
         
             glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
-            glEnable(GL_STENCIL_TEST);
-            glStencilMask(0xff);
-            glStencilFunc(GL_ALWAYS, 1, 0xff);
-            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+            // glEnable(GL_STENCIL_TEST);
+            // glStencilMask(0xff);
+            // glStencilFunc(GL_ALWAYS, 1, 0xff);
+            // glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
             
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
             SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
@@ -395,25 +378,51 @@ void DrawWindow(
             SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
             glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
             
-            glStencilMask(0x00);
+            // glStencilMask(0x00);
             
-            shaderProgram = transientInfo->outlineShaderProgram;
+            // shaderProgram = transientInfo->outlineShaderProgram;
+            // glUseProgram(shaderProgram);
+            
+            // glDisable(GL_DEPTH_TEST);
+            // glStencilFunc(GL_NOTEQUAL, 1, 0xff);
+            
+            // glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
+            // SetShaderUniformVec4(shaderProgram, "color", stencilColor);
+            // glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.02f));
+            // SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
+            // SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+            // SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+            // SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+            // glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+            
+            // glDisable(GL_STENCIL_TEST);
+            // glEnable(GL_DEPTH_TEST);
+        }
+        
+        // Windows.
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            
+            shaderProgram = transientInfo->textureShaderProgram;
             glUseProgram(shaderProgram);
             
-            glDisable(GL_DEPTH_TEST);
-            glStencilFunc(GL_NOTEQUAL, 1, 0xff);
+            glBindVertexArray(transientInfo->quadVao);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
+        
+            for (u32 i = 0; i < NUM_OBJECTS; i++)
+            {
+                glm::mat4 modelMatrix = glm::mat4(1.f);
+                modelMatrix = glm::translate(modelMatrix, persistentInfo->windowPos[i]);
+                modelMatrix = glm::rotate(modelMatrix, cameraInfo->yaw, glm::vec3(0.f, 1.f, 0.f));
+                SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+                SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+                SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+                glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+            }
             
-            glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
-            SetShaderUniformVec4(shaderProgram, "color", stencilColor);
-            glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.02f));
-            SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
-            SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-            SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-            SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-            glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
-            
-            glDisable(GL_STENCIL_TEST);
-            glEnable(GL_DEPTH_TEST);
+            glDisable(GL_BLEND);
         }
     }
     
@@ -429,31 +438,17 @@ void DrawWindow(
         cameraInfo->pitch = 0.f;
     }
     
-    ImGui::Text("Stencil testing: %s", glIsEnabled(GL_STENCIL_TEST) ? "enabled" : "disabled");
+    ImGui::Text("Blending: %s", glIsEnabled(GL_BLEND) ? "enabled" : "disabled");
     ImGui::SameLine();
-    if (ImGui::Button("Toggle stencil testing"))
+    if (ImGui::Button("Toggle blending"))
     {
-        if (glIsEnabled(GL_STENCIL_TEST))
+        if (glIsEnabled(GL_BLEND))
         {
-            glDisable(GL_STENCIL_TEST);
+            glDisable(GL_BLEND);
         }
         else
         {
-            glEnable(GL_STENCIL_TEST);
-        }
-    }
-    
-    ImGui::Text("Depth testing: %s", glIsEnabled(GL_DEPTH_TEST) ? "enabled" : "disabled");
-    ImGui::SameLine();
-    if (ImGui::Button("Toggle depth testing"))
-    {
-        if (glIsEnabled(GL_DEPTH_TEST))
-        {
-            glDisable(GL_DEPTH_TEST);
-        }
-        else
-        {
-            glEnable(GL_DEPTH_TEST);
+            glEnable(GL_BLEND);
         }
     }
     
@@ -487,8 +482,7 @@ void DrawWindow(
             sprintf_s(treeName, "Light #%i", index);
             if (ImGui::TreeNode(treeName))
             {
-                ImGui::InputFloat3("Position", glm::value_ptr(lights[index].position));
-                // ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -150.f, 150.f);
+                ImGui::SliderFloat3("Position", glm::value_ptr(lights[index].position), -10.f, 10.f);
                 ImGui::SliderFloat3("Ambient", glm::value_ptr(lights[index].ambient), 0.f, 1.f);
                 ImGui::SliderFloat3("Diffuse", glm::value_ptr(lights[index].diffuse), 0.f, 1.f);
                 ImGui::SliderFloat3("Specular", glm::value_ptr(lights[index].specular), 0.f, 1.f);
@@ -510,6 +504,23 @@ void DrawWindow(
         ImGui::SliderFloat("Inner cutoff", &persistentInfo->spotLight.innerCutoff, 0.f, PI / 2.f);
         ImGui::SliderFloat("Outer cutoff", &persistentInfo->spotLight.outerCutoff, 0.f, PI / 2.f);
         ImGui::PopID();
+    }
+    
+    if (ImGui::CollapsingHeader("Windows"))
+    {
+        glm::vec3 *windows = persistentInfo->windowPos;
+        for (u32 index = 0; index < NUM_OBJECTS; index++)
+        {
+            ImGui::PushID(id++);
+            char treeName[32];
+            sprintf_s(treeName, "Window #%i", index);
+            if (ImGui::TreeNode(treeName))
+            {
+                ImGui::SliderFloat3("Position", glm::value_ptr(windows[index]), -10.f, 10.f);
+                ImGui::TreePop();
+            }
+            ImGui::PopID();
+        }
     }
 
     ImGui::End();

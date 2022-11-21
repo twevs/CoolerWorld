@@ -71,7 +71,7 @@ typedef double f64;
 
 #define PI 3.1415926535f
 #define NUM_POINTLIGHTS 4
-#define NUM_GRASS 5
+#define NUM_OBJECTS 5
 
 struct DirLight
 {
@@ -181,10 +181,12 @@ struct TransientDrawingInfo
     u32 objectShaderProgram;
     u32 lightShaderProgram;
     u32 outlineShaderProgram;
-    u32 alphaShaderProgram;
+    u32 textureShaderProgram;
     u32 cubeVao;
+    u32 quadVao;
     Model backpack;
     u32 grassTexture;
+    u32 windowTexture;
 };
 
 struct PersistentDrawingInfo
@@ -196,7 +198,7 @@ struct PersistentDrawingInfo
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;
-    glm::vec3 grassPos[NUM_GRASS];
+    glm::vec3 windowPos[NUM_OBJECTS];
 };
 
 struct CameraInfo
