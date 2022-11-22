@@ -224,6 +224,35 @@ void DrawWindow(
         return;
     }
     
+    u32 fbo;
+    glGenFramebuffers(1, &fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    
+    u32 texture;
+    glGenTextures(1, &texture);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    
+    RECT clientRect;
+    GetClientRect(window, &clientRect);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, clientRect.right, clientRect.bottom, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texture, 0);
+    
+    u32 rbo;
+    glGenRenderbuffers(1, &rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, clientRect.right, clientRect.bottom);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
+    
+    auto fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    myAssert(fbStatus == GL_FRAMEBUFFER_COMPLETE);
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+        
     float *cc = persistentInfo->clearColor;
     glClearColor(cc[0], cc[1], cc[2], cc[3]);
     glStencilMask(0xff);
@@ -571,6 +600,34 @@ void DrawWindow(
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(1.f, 1.f, 1.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    
+    // Textured quad.
+    {
+        u32 shaderProgram = transientInfo->textureShaderProgram;
+        glUseProgram(shaderProgram);
+        
+        glDisable(GL_DEPTH_TEST);
+        
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, texture);
+    
+        glm::mat4 identity = glm::mat4(1.f);
+        SetShaderUniformMat4(shaderProgram, "viewMatrix", &identity);
+        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &identity);
+    
+        glBindVertexArray(transientInfo->quadVao);
+    
+        // Model matrix: transforms vertices from local to world space.
+        glm::mat4 modelMatrix = glm::mat4(1.f);
+        modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+    
+        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    }
 
     if (!SwapBuffers(hdc))
     {

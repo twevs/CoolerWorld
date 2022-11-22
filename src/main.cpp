@@ -878,10 +878,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         
         f32 quadVertices[] =
         {
-            .5f, .5f, 0.f,   0.f, 0.f, 1.f, 1.f, 1.f,
-            .5f, -.5f, 0.f,  0.f, 0.f, 1.f, 1.f, 0.f,
-            -.5f, -.5f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
-            -.5f, .5f, 0.f,  0.f, 0.f, 1.f, 0.f, 1.f
+            1.f, 1.f, 0.f,   0.f, 0.f, 1.f, 1.f, 1.f,
+            1.f, -1.f, 0.f,  0.f, 0.f, 1.f, 1.f, 0.f,
+            -1.f, -1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+            -1.f, 1.f, 0.f,  0.f, 0.f, 1.f, 0.f, 1.f
         };
         
         u32 quadIndices[] =
