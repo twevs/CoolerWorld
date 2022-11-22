@@ -1,4 +1,7 @@
 #include "common.h"
+#include "arena.h"
+
+global_variable Arena globalArena;
 
 typedef bool (*InitializeImGuiInModule_t)(HWND window);
 InitializeImGuiInModule_t InitializeImGuiInModule;
@@ -50,79 +53,10 @@ PrintDepthTestFunc_t PrintDepthTestFunc;
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 
-u64 fnv1a(u8 *data, size_t len)
-{
-    u64 hash = 14695981039346656037;
-    u64 fnvPrime = 1099511628211;
-
-    BYTE *currentByte = data;
-    BYTE *end = data + len;
-    while (currentByte < end)
-    {
-        hash ^= *currentByte;
-        hash *= fnvPrime;
-        ++currentByte;
-    }
-
-    return hash;
-}
-
-struct Arena
-{
-    void *memory;
-    u64 stackPointer;
-    u64 size;
-};
-
-global_variable Arena globalArena;
-
-internal Arena *AllocArena(u64 size)
-{
-    void *mem = VirtualAlloc(NULL, sizeof(Arena) + size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    Arena *newArena = (Arena *)mem;
-    newArena->memory = (u8 *)mem + sizeof(Arena);
-    newArena->size = size;
-    return newArena;
-}
-
-internal void FreeArena(Arena *arena)
-{
-    VirtualFree(arena, arena->size, MEM_RELEASE);
-}
-
-internal void *ArenaPush(Arena *arena, u64 size)
-{
-    void *mem = (void *)((u8 *)arena->memory + arena->stackPointer);
-    arena->stackPointer += size;
-    myAssert(arena->stackPointer <= arena->size);
-    return mem;
-}
-
-internal void ArenaPop(Arena *arena, u64 size)
-{
-    arena->stackPointer -= size;
-    myAssert(arena->stackPointer >= 0);
-}
-
-internal void ArenaClear(Arena *arena)
-{
-    arena->stackPointer = 0;
-}
-
 PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
 
 LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
-
-internal void DebugPrintA(const char *formatString, ...)
-{
-    CHAR debugString[1024];
-    va_list args;
-    va_start(args, formatString);
-    vsprintf_s(debugString, formatString, args);
-    va_end(args);
-    OutputDebugStringA(debugString);
-}
 
 internal void ResizeGLViewport(HWND window)
 {
@@ -327,25 +261,6 @@ internal void Win32ProcessMessages(
             DispatchMessage(&message);
         }
     }
-}
-
-internal u64 Win32GetWallClock()
-{
-    LARGE_INTEGER wallClock;
-    QueryPerformanceCounter(&wallClock);
-    return wallClock.QuadPart;
-}
-
-internal f32 Win32GetWallClockPeriod()
-{
-    LARGE_INTEGER perfCounterFrequency;
-    QueryPerformanceFrequency(&perfCounterFrequency);
-    return 1000.f / perfCounterFrequency.QuadPart;
-}
-
-internal float Win32GetTime()
-{
-    return Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f;
 }
 
 internal int InitializeOpenGLExtensions(HINSTANCE hInstance)
@@ -961,7 +876,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         
         u32 cubeVao = CreateVAO(&vaoInfo);
         
-        f32 grassVertices[] =
+        f32 quadVertices[] =
         {
             .5f, .5f, 0.f,   0.f, 0.f, 1.f, 1.f, 1.f,
             .5f, -.5f, 0.f,  0.f, 0.f, 1.f, 1.f, 0.f,
@@ -969,18 +884,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             -.5f, .5f, 0.f,  0.f, 0.f, 1.f, 0.f, 1.f
         };
         
-        u32 grassIndices[] =
+        u32 quadIndices[] =
         {
             0, 1, 3,
             1, 2, 3
         };
         
-        vaoInfo.vertices = grassVertices;
-        vaoInfo.verticesSize = sizeof(grassVertices);
+        vaoInfo.vertices = quadVertices;
+        vaoInfo.verticesSize = sizeof(quadVertices);
         vaoInfo.elemCounts = elemCounts;
         vaoInfo.elementCountsSize = myArraySize(elemCounts);
-        vaoInfo.indices = grassIndices;
-        vaoInfo.indicesSize = sizeof(grassIndices);
+        vaoInfo.indices = quadIndices;
+        vaoInfo.indicesSize = sizeof(quadIndices);
         
         u32 quadVao = CreateVAO(&vaoInfo);
         

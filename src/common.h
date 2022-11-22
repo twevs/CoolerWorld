@@ -1,3 +1,5 @@
+#pragma once
+
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <wingdi.h>
@@ -227,3 +229,33 @@ struct Vec3
   f32 y;
   f32 z;
 };
+
+internal u64 Win32GetWallClock()
+{
+    LARGE_INTEGER wallClock;
+    QueryPerformanceCounter(&wallClock);
+    return wallClock.QuadPart;
+}
+
+internal f32 Win32GetWallClockPeriod()
+{
+    LARGE_INTEGER perfCounterFrequency;
+    QueryPerformanceFrequency(&perfCounterFrequency);
+    return 1000.f / perfCounterFrequency.QuadPart;
+}
+
+internal float Win32GetTime()
+{
+    return Win32GetWallClock() * Win32GetWallClockPeriod() / 1000.f;
+}
+
+internal void DebugPrintA(const char *formatString, ...)
+{
+    CHAR debugString[1024];
+    va_list args;
+    va_start(args, formatString);
+    vsprintf_s(debugString, formatString, args);
+    va_end(args);
+    OutputDebugStringA(debugString);
+}
+

@@ -1,4 +1,5 @@
 #include "common.h"
+#include "skiplist.h"
 
 global_variable ImGuiContext *imGuiContext;
 global_variable ImGuiIO *imGuiIO;
@@ -399,6 +400,38 @@ void DrawWindow(
             // glEnable(GL_DEPTH_TEST);
         }
         
+        // Textured cubes.
+        {
+            shaderProgram = transientInfo->textureShaderProgram;
+            glUseProgram(shaderProgram);
+            
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
+        
+            SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+            SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+        
+            glBindVertexArray(transientInfo->cubeVao);
+        
+            glEnable(GL_CULL_FACE);
+            for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+            {
+                PointLight *curLight = &persistentInfo->pointLights[lightIndex];
+                glm::vec3 position = curLight->position;
+                position.x += 2.f;
+                position.y += 2.f;
+                
+                // Model matrix: transforms vertices from local to world space.
+                glm::mat4 modelMatrix = glm::mat4(1.f);
+                modelMatrix = glm::translate(modelMatrix, position);
+            
+                SetShaderUniformVec3(transientInfo->lightShaderProgram, "lightColor", curLight->diffuse);
+                SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+            }
+            glDisable(GL_CULL_FACE);
+        }
+        
         // Windows.
         {
             glEnable(GL_BLEND);
@@ -410,17 +443,28 @@ void DrawWindow(
             glBindVertexArray(transientInfo->quadVao);
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
+            
+            Arena *localArena = AllocArena(1024);
+            SkipList list = CreateNewList(localArena);
+            for (u32 i = 0; i < NUM_OBJECTS; i++)
+            {
+                f32 dist = glm::distance(cameraInfo->pos, persistentInfo->windowPos[i]);
+                Insert(&list, dist, persistentInfo->windowPos[i], localArena);
+            }
         
             for (u32 i = 0; i < NUM_OBJECTS; i++)
             {
                 glm::mat4 modelMatrix = glm::mat4(1.f);
-                modelMatrix = glm::translate(modelMatrix, persistentInfo->windowPos[i]);
+                glm::vec3 pos = GetValue(&list, i);
+                modelMatrix = glm::translate(modelMatrix, pos);
                 modelMatrix = glm::rotate(modelMatrix, cameraInfo->yaw, glm::vec3(0.f, 1.f, 0.f));
                 SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
                 SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
                 SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
                 glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
             }
+            
+            FreeArena(localArena);
             
             glDisable(GL_BLEND);
         }
