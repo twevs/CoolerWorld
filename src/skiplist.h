@@ -56,10 +56,9 @@ SkipListNode *CreateNode(s32 level, f32 key, glm::vec3 value, Arena *arena)
   return result;
 }
 
-void Insert(SkipList *list, f32 key, glm::vec3 value, Arena *arena)
+void Insert(SkipList *list, f32 key, glm::vec3 value, Arena *arena, Arena *tempArena)
 {
-  local_persist Arena *localArena = AllocArena(1024);
-  SkipListNode **update = (SkipListNode **)localArena->memory;
+  SkipListNode **update = (SkipListNode **)tempArena->memory;
   
   SkipListNode *x = list->header;
   for (s32 i = list->level - 1; i >= 0; i--)
@@ -68,7 +67,7 @@ void Insert(SkipList *list, f32 key, glm::vec3 value, Arena *arena)
     {
       x = x->forwardPtrs[i];
     }
-    update[i] = *(SkipListNode **)ArenaPush(localArena, sizeof(SkipListNode *));
+    update[i] = *(SkipListNode **)ArenaPush(tempArena, sizeof(SkipListNode *));
     update[i] = x;
   }
   x = x->forwardPtrs[0];
@@ -94,7 +93,6 @@ void Insert(SkipList *list, f32 key, glm::vec3 value, Arena *arena)
       update[i]->forwardPtrs[i] = x;
     }
   }
-  ArenaClear(localArena);
 }
 
 glm::vec3 Search(SkipList *list, f32 key)

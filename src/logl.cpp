@@ -1,8 +1,6 @@
 #include "common.h"
 #include "skiplist.h"
 
-global_variable Arena globalArena;
-
 global_variable ImGuiContext *imGuiContext;
 global_variable ImGuiIO *imGuiIO;
 
@@ -82,10 +80,8 @@ internal bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shader
                               FILE_ATTRIBUTE_NORMAL, // dwFlagsAndAttributes,
                               0                      // hTemplateFile
     );
-    DebugPrintA("Create file handle\n");
     u32 fileSize = GetFileSize(file, 0);
     char *fileBuffer = (char *)VirtualAlloc(0, fileSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    DebugPrintA("Create file buffer\n");
     DWORD bytesRead;
     ReadFile(file, fileBuffer, fileSize, &bytesRead, 0);
     myAssert(fileSize == bytesRead);
@@ -93,7 +89,6 @@ internal bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shader
     *shaderID = glCreateShader(shaderType);
     glShaderSource(*shaderID, 1, &fileBuffer, NULL);
     VirtualFree(fileBuffer, fileSize, MEM_RELEASE);
-    DebugPrintA("Close file buffer\n");
     glCompileShader(*shaderID);
 
     int success;
@@ -102,12 +97,11 @@ internal bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shader
     if (!success)
     {
         glGetShaderInfoLog(*shaderID, 512, NULL, infoLog);
-        DebugPrintA("Shader compilation failed: %s\n", infoLog);
+        DebugPrintA("Shader compilation failed for %s: %s\n", shaderFilename, infoLog);
         return false;
     }
 
     CloseHandle(file);
-    DebugPrintA("Close file handle\n");
     return true;
 }
 
@@ -160,6 +154,36 @@ internal FILETIME GetFileTime(const char *filename)
     return fileTime;
 }
 
+internal void SetShaderUniformSampler(u32 shaderProgram, const char *uniformName, u32 slot)
+{
+    glUniform1i(glGetUniformLocation(shaderProgram, uniformName), slot);
+}
+
+internal void SetShaderUniformFloat(u32 shaderProgram, const char *uniformName, float value)
+{
+    glUniform1f(glGetUniformLocation(shaderProgram, uniformName), value);
+}
+
+internal void SetShaderUniformVec3(u32 shaderProgram, const char *uniformName, glm::vec3 vector)
+{
+    glUniform3fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
+}
+
+internal void SetShaderUniformVec4(u32 shaderProgram, const char *uniformName, glm::vec4 vector)
+{
+    glUniform4fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
+}
+
+internal void SetShaderUniformMat3(u32 shaderProgram, const char *uniformName, glm::mat3* matrix)
+{
+    glUniformMatrix3fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
+}
+
+internal void SetShaderUniformMat4(u32 shaderProgram, const char *uniformName, glm::mat4* matrix)
+{
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
+}
+
 internal bool CreateShaderPrograms(TransientDrawingInfo *info)
 {
     ShaderProgram objectShader = {};
@@ -170,6 +194,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     if (!CreateShaderProgram(&objectShader))
     {
         return false;
+    }
+    if (glIsProgram(info->objectShader.id))
+    {
+        glDeleteProgram(info->objectShader.id);
     }
     info->objectShader = objectShader;
 
@@ -182,6 +210,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
+    if (glIsProgram(info->lightShader.id))
+    {
+        glDeleteProgram(info->lightShader.id);
+    }
     info->lightShader = lightShader;
 
     ShaderProgram outlineShader = {};
@@ -192,6 +224,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     if (!CreateShaderProgram(&outlineShader))
     {
         return false;
+    }
+    if (glIsProgram(info->outlineShader.id))
+    {
+        glDeleteProgram(info->outlineShader.id);
     }
     info->outlineShader = outlineShader;
 
@@ -204,7 +240,33 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
+    if (glIsProgram(info->textureShader.id))
+    {
+        glDeleteProgram(info->textureShader.id);
+    }
     info->textureShader = textureShader;
+    
+    ShaderProgram postProcessShader = {};
+    strcpy(postProcessShader.vertexShaderFilename, "vertex_shader.vs");
+    strcpy(postProcessShader.fragmentShaderFilename, "postprocess.fs");
+    postProcessShader.vertexShaderTime = GetFileTime("vertex_shader.vs");
+    postProcessShader.fragmentShaderTime = GetFileTime("postprocess.fs");
+    if (!CreateShaderProgram(&postProcessShader))
+    {
+        return false;
+    }
+    if (glIsProgram(info->postProcessShader.id))
+    {
+        glDeleteProgram(info->postProcessShader.id);
+    }
+    info->postProcessShader = postProcessShader;
+    
+    glUseProgram(objectShader.id);
+    SetShaderUniformSampler(objectShader.id, "material.diffuse", 0);
+    SetShaderUniformSampler(objectShader.id, "material.specular", 1);
+
+    glUseProgram(textureShader.id);
+    SetShaderUniformSampler(textureShader.id, "tex", 0);
     
     return true;
 }
@@ -302,13 +364,18 @@ internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureT
     }
 }
 
-internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures)
+internal Mesh ProcessMesh(
+    aiMesh *mesh,
+    const aiScene *scene,
+    Arena *texturesArena,
+    LoadedTextures *loadedTextures,
+    Arena *meshDataArena)
 {
     Mesh result = {};
     
     result.verticesSize = mesh->mNumVertices * sizeof(Vertex);
-    result.vertices = (Vertex *)ArenaPush(&globalArena, result.verticesSize);
-    myAssert(((u8 *)result.vertices + result.verticesSize) == ((u8 *)globalArena.memory + globalArena.stackPointer));
+    result.vertices = (Vertex *)ArenaPush(meshDataArena, result.verticesSize);
+    myAssert(((u8 *)result.vertices + result.verticesSize) == ((u8 *)meshDataArena->memory + meshDataArena->stackPointer));
     
     for (u32 i = 0; i < mesh->mNumVertices; i++)
     {
@@ -333,7 +400,7 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
     {
         aiFace face = mesh->mFaces[i];
         
-        u32 *faceIndices = (u32 *)ArenaPush(&globalArena, sizeof(u32) * face.mNumIndices);
+        u32 *faceIndices = (u32 *)ArenaPush(meshDataArena, sizeof(u32) * face.mNumIndices);
         for (u32 j = 0; j < face.mNumIndices; j++)
         {
             faceIndices[j] = face.mIndices[j];
@@ -341,7 +408,7 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         }
     }
     result.indicesSize = indicesCount * sizeof(u32);
-    myAssert(((u8 *)result.indices + result.indicesSize) == ((u8 *)globalArena.memory + globalArena.stackPointer));
+    myAssert(((u8 *)result.indices + result.indicesSize) == ((u8 *)meshDataArena->memory + meshDataArena->stackPointer));
     
     if (mesh->mMaterialIndex >= 0)
     {
@@ -352,7 +419,7 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         u32 numTextures = numDiffuse + numSpecular;
         
         u64 texturesSize = sizeof(Texture) * numTextures;
-        result.textures = (Texture *)ArenaPush(&globalArena, texturesSize);
+        result.textures = (Texture *)ArenaPush(meshDataArena, texturesSize);
         
         LoadTextures(&result, numDiffuse, material, aiTextureType_DIFFUSE, texturesArena, loadedTextures);
         LoadTextures(&result, numSpecular, material, aiTextureType_SPECULAR, texturesArena, loadedTextures);
@@ -361,18 +428,32 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
     return result;
 }
 
-internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount, Arena *texturesArena, LoadedTextures *loadedTextures)
+internal void ProcessNode(
+    aiNode *node,
+    const aiScene *scene,
+    Mesh *meshes,
+    u32 *meshCount,
+    Arena *texturesArena,
+    LoadedTextures *loadedTextures,
+    Arena *meshDataArena)
 {
     for (u32 i = 0; i < node->mNumMeshes; i++)
     {
         aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
-        meshes[*meshCount] = ProcessMesh(mesh, scene, texturesArena, loadedTextures);
+        meshes[*meshCount] = ProcessMesh(mesh, scene, texturesArena, loadedTextures, meshDataArena);
         *meshCount += 1;
     }
     
     for (u32 i = 0; i < node->mNumChildren; i++)
     {
-        ProcessNode(node->mChildren[i], scene, meshes, meshCount, texturesArena, loadedTextures);
+        ProcessNode(
+            node->mChildren[i],
+            scene,
+            meshes,
+            meshCount,
+            texturesArena,
+            loadedTextures,
+            meshDataArena);
     }
 }
 
@@ -423,7 +504,12 @@ internal u32 CreateVAO(VaoInformation *vaoInfo)
     return vao;
 }
 
-internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSize)
+internal Model LoadModel(
+    const char *filename,
+    s32 *elemCounts,
+    u32 elemCountsSize,
+    Arena *texturesArena,
+    Arena *meshDataArena)
 {
     Model result;
     
@@ -431,15 +517,14 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     char path[] = "backpack.obj";
     const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
     myAssert(scene);
-    Mesh meshes[2048];
+    Mesh *meshes = (Mesh *)ArenaPush(meshDataArena, 100 * sizeof(Mesh));
     u32 meshCount = 0;
 
     LoadedTextures loadedTextures = {};
-    local_persist Arena *texturesArena = AllocArena(1024);
     loadedTextures.textures = (Texture *)texturesArena->memory;
-    ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures);
+    ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures, meshDataArena);
 
-    u32 meshVAOs[2048];
+    u32 *meshVAOs = (u32 *)ArenaPush(meshDataArena, 100 * sizeof(u32));
     for (u32 i = 0; i < meshCount; i++)
     {
         Mesh *mesh = &meshes[i];
@@ -478,48 +563,16 @@ bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInfo)
     return true;
 }
 
-void SetShaderUniformSampler(u32 shaderProgram, const char *uniformName, u32 slot)
-{
-    glUniform1i(glGetUniformLocation(shaderProgram, uniformName), slot);
-}
-
-internal void SetShaderUniformFloat(u32 shaderProgram, const char *uniformName, float value)
-{
-    glUniform1f(glGetUniformLocation(shaderProgram, uniformName), value);
-}
-
-internal void SetShaderUniformVec3(u32 shaderProgram, const char *uniformName, glm::vec3 vector)
-{
-    glUniform3fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
-}
-
-internal void SetShaderUniformVec4(u32 shaderProgram, const char *uniformName, glm::vec4 vector)
-{
-    glUniform4fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
-}
-
-internal void SetShaderUniformMat3(u32 shaderProgram, const char *uniformName, glm::mat3* matrix)
-{
-    glUniformMatrix3fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
-}
-
-internal void SetShaderUniformMat4(u32 shaderProgram, const char *uniformName, glm::mat4* matrix)
-{
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
-}
-
 extern "C" __declspec(dllexport)
 bool InitializeDrawingInfo(
     HWND window,
     TransientDrawingInfo *transientInfo,
     PersistentDrawingInfo *drawingInfo,
-    CameraInfo *cameraInfo)
+    CameraInfo *cameraInfo,
+    Arena *texturesArena,
+    Arena *meshDataArena)
 {
     u64 arenaSize = 100 * 1024 * 1024;
-    if (globalArena.size == 0)
-    {
-        globalArena = *AllocArena(arenaSize);
-    }
         
     if (!CreateShaderPrograms(transientInfo))
     {
@@ -572,7 +625,12 @@ bool InitializeDrawingInfo(
 
     transientInfo->cubeVao = cubeVao;
     transientInfo->quadVao = quadVao;
-    transientInfo->backpack = LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts));
+    transientInfo->backpack = LoadModel(
+        "backpack.obj",
+        elemCounts,
+        myArraySize(elemCounts),
+        texturesArena,
+        meshDataArena);
     transientInfo->grassTexture = CreateTextureFromImage("grass.png", GL_CLAMP_TO_EDGE);
     transientInfo->windowTexture = CreateTextureFromImage("window.png", GL_CLAMP_TO_EDGE);
 
@@ -641,15 +699,6 @@ bool InitializeDrawingInfo(
     f32 width = (f32)clientRect.right;
     f32 height = (f32)clientRect.bottom;
     cameraInfo->aspectRatio = width / height;
-
-    ShaderProgram *objectShader = &transientInfo->objectShader;
-    glUseProgram(objectShader->id);
-    SetShaderUniformSampler(objectShader->id, "material->diffuse", 0);
-    SetShaderUniformSampler(objectShader->id, "material->specular", 1);
-
-    ShaderProgram *textureShader = &transientInfo->textureShader;
-    glUseProgram(textureShader->id);
-    SetShaderUniformSampler(textureShader->id, "tex", 0);
     
     return true;
 }
@@ -754,6 +803,8 @@ internal bool HasNewVersion(const char *filename, FILETIME *lastFileTime)
     return returnVal;
 }
 
+// TODO: develop a better way to do this that doesn't involve adding another 4 lines
+// every time I add another shader program.
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
     if (
@@ -773,6 +824,10 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
                         &info->textureShader.vertexShaderTime)
         || HasNewVersion(info->textureShader.fragmentShaderFilename,
                         &info->textureShader.fragmentShaderTime)
+        || HasNewVersion(info->postProcessShader.vertexShaderFilename,
+                        &info->postProcessShader.vertexShaderTime)
+        || HasNewVersion(info->postProcessShader.fragmentShaderFilename,
+                        &info->postProcessShader.fragmentShaderTime)
     )
     {
         CreateShaderPrograms(info);
@@ -786,7 +841,9 @@ void DrawWindow(
   bool *running,
   TransientDrawingInfo *transientInfo,
   PersistentDrawingInfo *persistentInfo,
-  CameraInfo *cameraInfo)
+  CameraInfo *cameraInfo,
+  Arena *listArena,
+  Arena *tempArena)
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -1021,12 +1078,11 @@ void DrawWindow(
             glActiveTexture(GL_TEXTURE0);
             glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
             
-            local_persist Arena *localArena = AllocArena(1024);
-            local_persist SkipList list = CreateNewList(localArena);
+            SkipList list = CreateNewList(listArena);
             for (u32 i = 0; i < NUM_OBJECTS; i++)
             {
                 f32 dist = glm::distance(cameraInfo->pos, persistentInfo->windowPos[i]);
-                Insert(&list, dist, persistentInfo->windowPos[i], localArena);
+                Insert(&list, dist, persistentInfo->windowPos[i], listArena, tempArena);
             }
         
             for (u32 i = 0; i < NUM_OBJECTS; i++)
@@ -1040,8 +1096,9 @@ void DrawWindow(
                 SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
                 glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
             }
-            
-            ArenaClear(localArena);
+            ArenaClear(listArena);
+            memset(listArena->memory, 0, listArena->size);
+            ArenaClear(tempArena);
             
             glDisable(GL_BLEND);
         }
@@ -1155,7 +1212,7 @@ void DrawWindow(
     
     // Textured quad.
     {
-        u32 shaderProgram = transientInfo->textureShader.id;
+        u32 shaderProgram = transientInfo->postProcessShader.id;
         glUseProgram(shaderProgram);
         
         glDisable(GL_DEPTH_TEST);

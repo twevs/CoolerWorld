@@ -18,7 +18,9 @@ typedef bool (*InitializeDrawingInfo_t)(
     HWND window,
     TransientDrawingInfo *transientInfo,
     PersistentDrawingInfo *drawingInfo,
-    CameraInfo *cameraInfo)
+    CameraInfo *cameraInfo,
+    Arena *texturesArena,
+    Arena *meshDataArena)
 ;
 InitializeDrawingInfo_t InitializeDrawingInfo;
 
@@ -37,7 +39,9 @@ typedef void (*DrawWindow_t)(
             bool *running,
             TransientDrawingInfo *transientInfo,
             PersistentDrawingInfo *drawingInfo,
-            CameraInfo *cameraInfo);
+            CameraInfo *cameraInfo,
+            Arena *listArena,
+            Arena *tempArena);
 DrawWindow_t DrawWindow;
 
 typedef void (*PrintDepthTestFunc_t)(
@@ -527,7 +531,18 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         TransientDrawingInfo* transientInfo = &appState.transientInfo;
         PersistentDrawingInfo *drawingInfo = &appState.persistentInfo;
         CameraInfo *cameraInfo = &appState.cameraInfo;
-        if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo))
+        Arena *texturesArena = AllocArena(1024);
+        Arena *meshesArena = AllocArena(100 * sizeof(Mesh));
+        Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
+        Arena *listArena = AllocArena(2048);
+        Arena *tempArena = AllocArena(1024);
+        if (!InitializeDrawingInfo(
+            window,
+            transientInfo,
+            drawingInfo,
+            cameraInfo,
+            texturesArena,
+            meshDataArena))
         {
             return -1;
         }
@@ -589,7 +604,15 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // OutputDebugStringW(frameTimeString);
         
             cameraInfo->pos += movementPerFrame * deltaTime;
-            DrawWindow(window, hdc, &appState.running, transientInfo, drawingInfo, cameraInfo);
+            DrawWindow(
+                window,
+                hdc,
+                &appState.running,
+                transientInfo,
+                drawingInfo,
+                cameraInfo,
+                listArena,
+                tempArena);
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);

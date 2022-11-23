@@ -193,6 +193,7 @@ struct TransientDrawingInfo
     ShaderProgram lightShader;
     ShaderProgram outlineShader;
     ShaderProgram textureShader;
+    ShaderProgram postProcessShader;
     u32 cubeVao;
     u32 quadVao;
     Model backpack;
