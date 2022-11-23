@@ -58,7 +58,7 @@ SkipListNode *CreateNode(s32 level, f32 key, glm::vec3 value, Arena *arena)
 
 void Insert(SkipList *list, f32 key, glm::vec3 value, Arena *arena)
 {
-  Arena *localArena = AllocArena(1024);
+  local_persist Arena *localArena = AllocArena(1024);
   SkipListNode **update = (SkipListNode **)localArena->memory;
   
   SkipListNode *x = list->header;
@@ -94,7 +94,7 @@ void Insert(SkipList *list, f32 key, glm::vec3 value, Arena *arena)
       update[i]->forwardPtrs[i] = x;
     }
   }
-  FreeArena(localArena);
+  ArenaClear(localArena);
 }
 
 glm::vec3 Search(SkipList *list, f32 key)

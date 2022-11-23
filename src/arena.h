@@ -28,7 +28,9 @@ struct Arena
 
 internal Arena *AllocArena(u64 size)
 {
-    void *mem = VirtualAlloc(NULL, sizeof(Arena) + size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    size_t allocated = sizeof(Arena) + size;
+    void *mem = VirtualAlloc(NULL, allocated, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    DebugPrintA("AllocArena(), %zu allocated\n", allocated);
     Arena *newArena = (Arena *)mem;
     newArena->memory = (u8 *)mem + sizeof(Arena);
     newArena->size = size;
@@ -37,7 +39,9 @@ internal Arena *AllocArena(u64 size)
 
 internal void FreeArena(Arena *arena)
 {
-    VirtualFree(arena, arena->size, MEM_RELEASE);
+    size_t deallocated = sizeof(Arena) + arena->size;
+    VirtualFree(arena, deallocated, MEM_RELEASE);
+    DebugPrintA("FreeArena(), %zu deallocated\n", deallocated);
 }
 
 internal void *ArenaPush(Arena *arena, u64 size)

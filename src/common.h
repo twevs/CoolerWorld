@@ -178,17 +178,28 @@ struct VaoInformation
     u32 indicesSize;
 };
 
+struct ShaderProgram
+{
+    u32 id;
+    char vertexShaderFilename[64];
+    FILETIME vertexShaderTime;
+    char fragmentShaderFilename[64];
+    FILETIME fragmentShaderTime;
+};
+
 struct TransientDrawingInfo
 {
-    u32 objectShaderProgram;
-    u32 lightShaderProgram;
-    u32 outlineShaderProgram;
-    u32 textureShaderProgram;
+    ShaderProgram objectShader;
+    ShaderProgram lightShader;
+    ShaderProgram outlineShader;
+    ShaderProgram textureShader;
     u32 cubeVao;
     u32 quadVao;
     Model backpack;
     u32 grassTexture;
     u32 windowTexture;
+    u32 fbo;
+    u32 renderQuad;
 };
 
 struct PersistentDrawingInfo
@@ -258,4 +269,3 @@ internal void DebugPrintA(const char *formatString, ...)
     va_end(args);
     OutputDebugStringA(debugString);
 }
-

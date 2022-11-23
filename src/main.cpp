@@ -1,8 +1,6 @@
 #include "common.h"
 #include "arena.h"
 
-global_variable Arena globalArena;
-
 typedef bool (*InitializeImGuiInModule_t)(HWND window);
 InitializeImGuiInModule_t InitializeImGuiInModule;
 
@@ -16,16 +14,13 @@ typedef LRESULT (*ImGui_WndProcHandler_t)(
   LPARAM lParam);
 ImGui_WndProcHandler_t ImGui_WndProcHandler;
 
-typedef bool (*SetShaderUniformSampler_t)(
-            u32 shaderProgram,
-            const char *uniformName,
-            u32 slot);
-SetShaderUniformSampler_t SetShaderUniformSampler;
-
-typedef bool (*LoadDrawingInfo_t)(
-            PersistentDrawingInfo *drawingInfo,
-            CameraInfo *cameraInfo);
-LoadDrawingInfo_t LoadDrawingInfo;
+typedef bool (*InitializeDrawingInfo_t)(
+    HWND window,
+    TransientDrawingInfo *transientInfo,
+    PersistentDrawingInfo *drawingInfo,
+    CameraInfo *cameraInfo)
+;
+InitializeDrawingInfo_t InitializeDrawingInfo;
 
 typedef bool (*SaveDrawingInfo_t)(
             PersistentDrawingInfo *drawingInfo,
@@ -359,304 +354,6 @@ internal int InitializeOpenGLExtensions(HINSTANCE hInstance)
     return 0;
 }
 
-internal bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shaderFilename)
-{
-
-    HANDLE file = CreateFileA(shaderFilename,        // lpFileName,
-                              GENERIC_READ,          // dwDesiredAccess,
-                              FILE_SHARE_READ,       // dwShareMode,
-                              0,                     // lpSecurityAttributes,
-                              OPEN_EXISTING,         // dwCreationDisposition,
-                              FILE_ATTRIBUTE_NORMAL, // dwFlagsAndAttributes,
-                              0                      // hTemplateFile
-    );
-    u32 fileSize = GetFileSize(file, 0);
-    char *fileBuffer = (char *)VirtualAlloc(0, fileSize, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
-    DWORD bytesRead;
-    ReadFile(file, fileBuffer, fileSize, &bytesRead, 0);
-    myAssert(fileSize == bytesRead);
-
-    *shaderID = glCreateShader(shaderType);
-    glShaderSource(*shaderID, 1, &fileBuffer, NULL);
-    VirtualFree(fileBuffer, fileSize, MEM_RELEASE);
-    glCompileShader(*shaderID);
-
-    int success;
-    char infoLog[512];
-    glGetShaderiv(*shaderID, GL_COMPILE_STATUS, &success);
-    if (!success)
-    {
-        glGetShaderInfoLog(*shaderID, 512, NULL, infoLog);
-        DebugPrintA("Shader compilation failed: %s\n", infoLog);
-        return false;
-    }
-
-    return true;
-}
-
-internal bool CreateShaderProgram(u32 *programID, const char *vertexShaderFilename, const char *fragmentShaderFilename)
-{
-    u32 vertexShaderID;
-    if (!CompileShader(&vertexShaderID, GL_VERTEX_SHADER, vertexShaderFilename))
-    {
-        return false;
-    }
-
-    u32 fragmentShaderID;
-    if (!CompileShader(&fragmentShaderID, GL_FRAGMENT_SHADER, fragmentShaderFilename))
-    {
-        return false;
-    }
-
-    *programID = glCreateProgram();
-    glAttachShader(*programID, vertexShaderID);
-    glAttachShader(*programID, fragmentShaderID);
-    glLinkProgram(*programID);
-
-    int success;
-    char infoLog[512];
-    glGetProgramiv(*programID, GL_LINK_STATUS, &success);
-    if (!success)
-    {
-        glGetProgramInfoLog(*programID, 512, NULL, infoLog);
-        DebugPrintA("Shader program creation failed: %s\n", infoLog);
-        return false;
-    }
-
-    glDeleteShader(vertexShaderID);
-    glDeleteShader(fragmentShaderID);
-
-    return true;
-}
-
-internal u32 CreateTextureFromImage(const char *filename, GLenum wrapMode = GL_REPEAT)
-{
-    s32 width;
-    s32 height;
-    s32 numChannels;
-    stbi_set_flip_vertically_on_load_thread(true);
-    uchar *textureData = stbi_load(filename, &width, &height, &numChannels, 0);
-    myAssert(textureData);
-
-    u32 texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
-
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-    bool alpha = strstr(filename, "png") != NULL;
-    GLenum pixelFormat = alpha ? GL_RGBA : GL_RGB;
-    glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
-    glGenerateMipmap(GL_TEXTURE_2D);
-
-    stbi_image_free(textureData);
-
-    return texture;
-}
-
-struct LoadedTextures
-{
-    Texture *textures;
-    u32 numTextures;
-};
-
-internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type, Arena *texturesArena, LoadedTextures *loadedTextures)
-{
-    for (u32 i = 0; i < num; i++)
-    {
-        aiString path;
-        material->GetTexture(type, i, &path);
-        u64 hash = fnv1a((u8 *)path.C_Str(), strlen(path.C_Str()));
-        bool skip = false;
-        for (u32 j = 0; j < loadedTextures->numTextures; j++)
-        {
-            if (loadedTextures->textures[j].hash == hash)
-            {
-                mesh->textures[mesh->numTextures].id = loadedTextures->textures[j].id;
-                mesh->textures[mesh->numTextures].type = loadedTextures->textures[j].type;
-                mesh->textures[mesh->numTextures].hash = hash;
-                skip = true;
-                break;
-            }
-        }
-        if (!skip)
-        {
-            Texture *texture = (Texture *)ArenaPush(texturesArena, sizeof(Texture));
-            texture->id = CreateTextureFromImage(path.C_Str());
-            texture->type = (type == aiTextureType_DIFFUSE) ? TextureType::Diffuse : TextureType::Specular;
-            texture->hash = hash;
-            mesh->textures[mesh->numTextures].id = texture->id;
-            mesh->textures[mesh->numTextures].type = texture->type;
-            mesh->textures[mesh->numTextures].hash = texture->hash;
-            loadedTextures->textures[loadedTextures->numTextures++] = *texture;
-        }
-        mesh->numTextures++;
-    }
-}
-
-internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures)
-{
-    Mesh result = {};
-    
-    result.verticesSize = mesh->mNumVertices * sizeof(Vertex);
-    result.vertices = (Vertex *)ArenaPush(&globalArena, result.verticesSize);
-    myAssert(((u8 *)result.vertices + result.verticesSize) == ((u8 *)globalArena.memory + globalArena.stackPointer));
-    
-    for (u32 i = 0; i < mesh->mNumVertices; i++)
-    {
-        result.vertices[i].position.x = mesh->mVertices[i].x;
-        result.vertices[i].position.y = mesh->mVertices[i].y;
-        result.vertices[i].position.z = mesh->mVertices[i].z;
-        
-        result.vertices[i].normal.x = mesh->mNormals[i].x;
-        result.vertices[i].normal.y = mesh->mNormals[i].y;
-        result.vertices[i].normal.z = mesh->mNormals[i].z;
-        
-        if (mesh->mTextureCoords[0])
-        {
-            result.vertices[i].texCoords.x = mesh->mTextureCoords[0][i].x;
-            result.vertices[i].texCoords.y = mesh->mTextureCoords[0][i].y;
-        }
-    }
-    
-    result.indices = (u32 *)((u8 *)result.vertices + result.verticesSize);
-    u32 indicesCount = 0;
-    for (u32 i = 0; i < mesh->mNumFaces; i++)
-    {
-        aiFace face = mesh->mFaces[i];
-        
-        u32 *faceIndices = (u32 *)ArenaPush(&globalArena, sizeof(u32) * face.mNumIndices);
-        for (u32 j = 0; j < face.mNumIndices; j++)
-        {
-            faceIndices[j] = face.mIndices[j];
-            indicesCount++;
-        }
-    }
-    result.indicesSize = indicesCount * sizeof(u32);
-    myAssert(((u8 *)result.indices + result.indicesSize) == ((u8 *)globalArena.memory + globalArena.stackPointer));
-    
-    if (mesh->mMaterialIndex >= 0)
-    {
-        aiMaterial *material = scene->mMaterials[mesh->mMaterialIndex];
-        
-        u32 numDiffuse = material->GetTextureCount(aiTextureType_DIFFUSE);
-        u32 numSpecular = material->GetTextureCount(aiTextureType_SPECULAR);
-        u32 numTextures = numDiffuse + numSpecular;
-        
-        u64 texturesSize = sizeof(Texture) * numTextures;
-        result.textures = (Texture *)ArenaPush(&globalArena, texturesSize);
-        
-        LoadTextures(&result, numDiffuse, material, aiTextureType_DIFFUSE, texturesArena, loadedTextures);
-        LoadTextures(&result, numSpecular, material, aiTextureType_SPECULAR, texturesArena, loadedTextures);
-    }
-    
-    return result;
-}
-
-internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount, Arena *texturesArena, LoadedTextures *loadedTextures)
-{
-    for (u32 i = 0; i < node->mNumMeshes; i++)
-    {
-        aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
-        meshes[*meshCount] = ProcessMesh(mesh, scene, texturesArena, loadedTextures);
-        *meshCount += 1;
-    }
-    
-    for (u32 i = 0; i < node->mNumChildren; i++)
-    {
-        ProcessNode(node->mChildren[i], scene, meshes, meshCount, texturesArena, loadedTextures);
-    }
-}
-
-internal u32 CreateVAO(VaoInformation *vaoInfo)
-{
-    u32 vao;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
-
-    // Create and bind VBO.
-    u32 vbo;
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-    // Assume VAO and VBO already bound by this point.
-    glBufferData(GL_ARRAY_BUFFER, vaoInfo->verticesSize, vaoInfo->vertices, GL_STATIC_DRAW);
-
-    u32 ebo;
-    glGenBuffers(1, &ebo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, vaoInfo->indicesSize, vaoInfo->indices, GL_STATIC_DRAW);
-    
-    u32 total = 0;
-    for (u32 elemCount = 0; elemCount < vaoInfo->elementCountsSize; elemCount++)
-    {
-        total += vaoInfo->elemCounts[elemCount];
-    }
-
-    u32 accumulator = 0;
-    for (u32 index = 0; index < vaoInfo->elementCountsSize; index++)
-    {
-        u32 elemCount = vaoInfo->elemCounts[index];
-        
-        glVertexAttribPointer(
-            index,
-            elemCount,
-            GL_FLOAT,
-            GL_FALSE,
-            total * sizeof(float),
-            (void *)(accumulator * sizeof(float)));
-        
-        accumulator += elemCount;
-        
-        glEnableVertexAttribArray(index);
-    }
-    
-    return vao;
-}
-
-internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSize)
-{
-    Model result;
-    
-    Assimp::Importer importer;
-    char path[] = "backpack.obj";
-    const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
-    myAssert(scene);
-    Mesh meshes[2048];
-    u32 meshCount = 0;
-
-    Arena *texturesArena = AllocArena(1024);
-    LoadedTextures loadedTextures = {};
-    loadedTextures.textures = (Texture *)texturesArena->memory;
-    ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures);
-    FreeArena(texturesArena);
-
-    u32 meshVAOs[2048];
-    for (u32 i = 0; i < meshCount; i++)
-    {
-        Mesh *mesh = &meshes[i];
-    
-        VaoInformation meshVaoInfo;
-        meshVaoInfo.vertices = (f32 *)mesh->vertices;
-        meshVaoInfo.verticesSize = mesh->verticesSize;
-        meshVaoInfo.elemCounts = elemCounts;
-        meshVaoInfo.elementCountsSize = elemCountsSize;
-        meshVaoInfo.indices = mesh->indices;
-        meshVaoInfo.indicesSize = mesh->indicesSize;
-
-        meshVAOs[i] = CreateVAO(&meshVaoInfo);
-    }
-    result.meshes = meshes;
-    result.meshCount = meshCount;
-    result.vaos = meshVAOs;
-    
-    return result;
-}
-
 void LoadRenderingCode(HWND window)
 {
     HMODULE loglLib = GetModuleHandleW(L"logl_runtime.dll");
@@ -674,11 +371,8 @@ void LoadRenderingCode(HWND window)
     ImGui_WndProcHandler = (ImGui_WndProcHandler_t)GetProcAddress(loglLib, "ImGui_WndProcHandler");
         
     DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
-    
-    LoadDrawingInfo = (LoadDrawingInfo_t)GetProcAddress(loglLib, "LoadDrawingInfo");
+    InitializeDrawingInfo = (InitializeDrawingInfo_t)GetProcAddress(loglLib, "InitializeDrawingInfo");
     SaveDrawingInfo = (SaveDrawingInfo_t)GetProcAddress(loglLib, "SaveDrawingInfo");
-    
-    SetShaderUniformSampler = (SetShaderUniformSampler_t)GetProcAddress(loglLib, "SetShaderUniformSampler");
     
     PrintDepthTestFunc = (PrintDepthTestFunc_t)GetProcAddress(loglLib, "PrintDepthTestFunc");
     
@@ -828,142 +522,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         // Shader initialization.
         
-        u64 arenaSize = 100 * 1024 * 1024;
-        globalArena = *AllocArena(arenaSize);
-        
-        u32 objectShaderProgram;
-        if (!CreateShaderProgram(&objectShaderProgram, "vertex_shader.vs", "fragment_shader.fs"))
-        {
-            return -1;
-        }
-        
-        u32 lightShaderProgram;
-        if (!CreateShaderProgram(&lightShaderProgram, "vertex_shader.vs", "light_fragment_shader.fs"))
-        {
-            return -1;
-        }
-        
-        u32 outlineShaderProgram;
-        if (!CreateShaderProgram(&outlineShaderProgram, "vertex_shader.vs", "outline.fs"))
-        {
-            return -1;
-        }
-        
-        u32 textureShaderProgram;
-        if (!CreateShaderProgram(&textureShaderProgram, "vertex_shader.vs", "texture.fs"))
-        {
-            return -1;
-        }
-
-        s32 elemCounts[] = { 3, 3, 2 };
-
-        FILE *rectFile;
-        fopen_s(&rectFile, "rect.bin", "rb");
-        // 4 vertices per face * 6 faces * (vec3 pos + vec3 normal + vec2 texCoords).
-        f32 rectVertices[192];
-        u32 rectIndices[36];
-        fread(rectVertices, sizeof(f32), myArraySize(rectVertices), rectFile);
-        fread(rectIndices, sizeof(u32), myArraySize(rectIndices), rectFile);
-        fclose(rectFile);
-        
-        VaoInformation vaoInfo = {};
-        vaoInfo.vertices = rectVertices;
-        vaoInfo.verticesSize = sizeof(rectVertices);
-        vaoInfo.elemCounts = elemCounts;
-        vaoInfo.elementCountsSize = myArraySize(elemCounts);
-        vaoInfo.indices = rectIndices;
-        vaoInfo.indicesSize = sizeof(rectIndices);
-        
-        u32 cubeVao = CreateVAO(&vaoInfo);
-        
-        f32 quadVertices[] =
-        {
-            1.f, 1.f, 0.f,   0.f, 0.f, 1.f, 1.f, 1.f,
-            1.f, -1.f, 0.f,  0.f, 0.f, 1.f, 1.f, 0.f,
-            -1.f, -1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
-            -1.f, 1.f, 0.f,  0.f, 0.f, 1.f, 0.f, 1.f
-        };
-        
-        u32 quadIndices[] =
-        {
-            0, 1, 3,
-            1, 2, 3
-        };
-        
-        vaoInfo.vertices = quadVertices;
-        vaoInfo.verticesSize = sizeof(quadVertices);
-        vaoInfo.elemCounts = elemCounts;
-        vaoInfo.elementCountsSize = myArraySize(elemCounts);
-        vaoInfo.indices = quadIndices;
-        vaoInfo.indicesSize = sizeof(quadIndices);
-        
-        u32 quadVao = CreateVAO(&vaoInfo);
-        
-        TransientDrawingInfo* transientInfo = &appState.transientInfo;
-        transientInfo->objectShaderProgram = objectShaderProgram;
-        transientInfo->lightShaderProgram = lightShaderProgram;
-        transientInfo->outlineShaderProgram = outlineShaderProgram;
-        transientInfo->textureShaderProgram = textureShaderProgram;
-        transientInfo->cubeVao = cubeVao;
-        transientInfo->quadVao = quadVao;
-        transientInfo->backpack = LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts));
-        transientInfo->grassTexture = CreateTextureFromImage("grass.png", GL_CLAMP_TO_EDGE);
-        transientInfo->windowTexture = CreateTextureFromImage("window.png", GL_CLAMP_TO_EDGE);
-        
         LoadRenderingCode(window);
-        
+
+        TransientDrawingInfo* transientInfo = &appState.transientInfo;
         PersistentDrawingInfo *drawingInfo = &appState.persistentInfo;
         CameraInfo *cameraInfo = &appState.cameraInfo;
-        if (!LoadDrawingInfo(drawingInfo, cameraInfo))
+        if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo))
         {
-            PointLight *pointLights = drawingInfo->pointLights;
-            
-            srand((u32)Win32GetWallClock());
-            for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-            {
-                f32 x = (f32)(rand() % 10);
-                x = (rand() > RAND_MAX / 2) ? x : -x;
-                f32 y = (f32)(rand() % 10);
-                y = (rand() > RAND_MAX / 2) ? y : -y;
-                f32 z = (f32)(rand() % 10);
-                z = (rand() > RAND_MAX / 2) ? z : -z;
-                pointLights[lightIndex].position = { x, y, z };
-            
-                u32 attIndex = rand() % myArraySize(globalAttenuationTable);
-                // NOTE: constant-range point lights makes for easier visualization of light effects.
-                pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
-            }
-            
-            for (u32 windowIndex = 0; windowIndex < NUM_OBJECTS; windowIndex++)
-            {
-                f32 x = (f32)(rand() % 10);
-                x = (rand() > RAND_MAX / 2) ? x : -x;
-                f32 y = (f32)(rand() % 10);
-                y = (rand() > RAND_MAX / 2) ? y : -y;
-                f32 z = (f32)(rand() % 10);
-                z = (rand() > RAND_MAX / 2) ? z : -z;
-                drawingInfo->windowPos[windowIndex] = { x, y, z };
-            }
-            
-            drawingInfo->dirLight.direction =
-                glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
+            return -1;
         }
-        
-        drawingInfo->initialized = true;
-        
-        RECT clientRect;
-        GetClientRect(window, &clientRect);
-        f32 width = (f32)clientRect.right;
-        f32 height = (f32)clientRect.bottom;
-        cameraInfo->aspectRatio = width / height;
-        
-        glUseProgram(objectShaderProgram);
-        SetShaderUniformSampler(objectShaderProgram, "material.diffuse", 0);
-        SetShaderUniformSampler(objectShaderProgram, "material.specular", 1);
-        
-        glUseProgram(textureShaderProgram);
-        SetShaderUniformSampler(textureShaderProgram, "tex", 0);
-        
+                
         glm::vec3 movementPerFrame = {};
         
         f32 targetFrameTime = 1000.f / 60;
