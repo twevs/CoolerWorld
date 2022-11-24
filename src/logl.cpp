@@ -563,6 +563,31 @@ bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInfo)
     return true;
 }
 
+GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture)
+{
+    glGenFramebuffers(1, fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+
+    glGenTextures(1, quadTexture);
+    glBindTexture(GL_TEXTURE_2D, *quadTexture);
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glBindTexture(GL_TEXTURE_2D, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *quadTexture, 0);
+
+    u32 rbo;
+    glGenRenderbuffers(1, &rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
+
+    return glCheckFramebufferStatus(GL_FRAMEBUFFER);
+}
+
 extern "C" __declspec(dllexport)
 bool InitializeDrawingInfo(
     HWND window,
@@ -621,10 +646,34 @@ bool InitializeDrawingInfo(
     vaoInfo.indices = quadIndices;
     vaoInfo.indicesSize = sizeof(quadIndices);
 
-    u32 quadVao = CreateVAO(&vaoInfo);
+    u32 mainQuadVao = CreateVAO(&vaoInfo);
+    
+    f32 rearViewQuadVertices[] =
+    {
+        .5f, 1.f, 0.f,   0.f, 0.f, 1.f, 1.f, 1.f,
+        .5f, .7f, 0.f,  0.f, 0.f, 1.f, 1.f, 0.f,
+        -.5f, .7f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f,
+        -.5f, 1.f, 0.f,  0.f, 0.f, 1.f, 0.f, 1.f
+    };
+
+    u32 rearViewQuadIndices[] =
+    {
+        0, 1, 3,
+        1, 2, 3
+    };
+
+    vaoInfo.vertices = rearViewQuadVertices;
+    vaoInfo.verticesSize = sizeof(rearViewQuadVertices);
+    vaoInfo.elemCounts = elemCounts;
+    vaoInfo.elementCountsSize = myArraySize(elemCounts);
+    vaoInfo.indices = rearViewQuadIndices;
+    vaoInfo.indicesSize = sizeof(rearViewQuadIndices);
+
+    u32 rearViewQuadVao = CreateVAO(&vaoInfo);
 
     transientInfo->cubeVao = cubeVao;
-    transientInfo->quadVao = quadVao;
+    transientInfo->mainQuadVao = mainQuadVao;
+    transientInfo->rearViewQuadVao = rearViewQuadVao;
     transientInfo->backpack = LoadModel(
         "backpack.obj",
         elemCounts,
@@ -669,36 +718,20 @@ bool InitializeDrawingInfo(
             glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
     }
     
-    glGenFramebuffers(1, &transientInfo->fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->fbo);
-    
-    glGenTextures(1, &transientInfo->renderQuad);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->renderQuad);
-    
     RECT clientRect;
     GetClientRect(window, &clientRect);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, clientRect.right, clientRect.bottom, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+    s32 width = clientRect.right;
+    s32 height = clientRect.bottom;
     
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, transientInfo->renderQuad, 0);
+    GLenum mainFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->mainFBO, &transientInfo->mainQuad);
+    myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     
-    u32 rbo;
-    glGenRenderbuffers(1, &rbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, clientRect.right, clientRect.bottom);
-    glBindRenderbuffer(GL_RENDERBUFFER, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
-    
-    auto fbStatus = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-    myAssert(fbStatus == GL_FRAMEBUFFER_COMPLETE);
+    GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO, &transientInfo->rearViewQuad);
+    myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     
     drawingInfo->initialized = true;
 
-    f32 width = (f32)clientRect.right;
-    f32 height = (f32)clientRect.bottom;
-    cameraInfo->aspectRatio = width / height;
+    cameraInfo->aspectRatio = (f32)width / (f32)height;
     
     return true;
 }
@@ -834,276 +867,260 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
     }
 }
 
-extern "C" __declspec(dllexport)
-void DrawWindow(
-  HWND window,
-  HDC hdc,
-  bool *running,
-  TransientDrawingInfo *transientInfo,
-  PersistentDrawingInfo *persistentInfo,
-  CameraInfo *cameraInfo,
-  Arena *listArena,
-  Arena *tempArena)
+void DrawScene(
+    CameraInfo *cameraInfo,
+    TransientDrawingInfo *transientInfo,
+    PersistentDrawingInfo *persistentInfo,
+    u32 fbo,
+    u32 quadTexture,
+    Arena *listArena,
+    Arena *tempArena)
 {
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplWin32_NewFrame();
-    ImGui::NewFrame();
-  
-    if (!persistentInfo->initialized)
-    {
-        return;
-    }
-    
-    CheckForNewShaders(transientInfo);
-    
-    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->fbo);
-        
-    float *cc = persistentInfo->clearColor;
-    glClearColor(cc[0], cc[1], cc[2], cc[3]);
-    glStencilMask(0xff);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    glStencilMask(0x00);
-  
-    // The camera target should always be camera pos + local forward vector.
-    // We want to be able to rotate the camera, however.
-    // How do we obtain the forward vector? Translate world forward vec by camera world rotation matrix.
-    glm::vec3 cameraForwardVec = glm::normalize(GetCameraForwardVector(cameraInfo));
-    
-    glm::vec3 cameraTarget = cameraInfo->pos + cameraForwardVec;
-        
-    // The camera direction vector points from the camera target to the camera itself, maintaining
-    // the OpenGL convention of the Z-axis being positive towards the viewer.
-    glm::vec3 cameraDirection = glm::normalize(cameraInfo->pos - cameraTarget);
-    
-    glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
-    glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
-    glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
-    
-    float farPlaneDistance = 100.f;
-    glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
-    
-    // Projection matrix: transforms vertices from view space to clip space.
-    glm::mat4 projectionMatrix = glm::perspective(
-        glm::radians(cameraInfo->fov), 
-        cameraInfo->aspectRatio, 
-        .1f, 
-        farPlaneDistance);
-    
-    // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
-  
-    // Point lights.
-    {
-        u32 shaderProgram = transientInfo->lightShader.id;
-        glUseProgram(shaderProgram);
-        
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        
-        glBindVertexArray(transientInfo->cubeVao);
-        
-        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-        {
-            PointLight *curLight = &persistentInfo->pointLights[lightIndex];
-            // Model matrix: transforms vertices from local to world space.
-            glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, curLight->position);
-            
-            glEnable(GL_STENCIL_TEST);
-            glStencilMask(0xff);
-            glStencilFunc(GL_ALWAYS, 1, 0xff);
-            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-            
-            SetShaderUniformVec3(shaderProgram, "lightColor", curLight->diffuse);
-            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-            
-            glStencilMask(0x00);
-            glDisable(GL_DEPTH_TEST);
-            glStencilFunc(GL_NOTEQUAL, 1, 0xff);
-            
-            glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
-            SetShaderUniformVec3(shaderProgram, "lightColor", stencilColor);
-            glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.1f));
-            SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-            
-            glDisable(GL_STENCIL_TEST);
-            glEnable(GL_DEPTH_TEST);
-        }
-    }
-    
-    // Objects.
-    {
-        u32 shaderProgram = transientInfo->objectShader.id;
-        glUseProgram(shaderProgram);
-        
-        SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
-        
-        SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
-        SetShaderUniformVec3(shaderProgram, "dirLight.ambient", persistentInfo->dirLight.ambient);
-        SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
-        SetShaderUniformVec3(shaderProgram, "dirLight.specular", persistentInfo->dirLight.specular);
-        
-        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-        {
-            PointLight *lights = persistentInfo->pointLights;
-            PointLight light = lights[lightIndex];
-            
-            char uniformString[32];
-            sprintf_s(uniformString, "pointLights[%i].position", lightIndex);
-            SetShaderUniformVec3(shaderProgram, uniformString, light.position);
-            sprintf_s(uniformString, "pointLights[%i].ambient", lightIndex);
-            SetShaderUniformVec3(shaderProgram, uniformString, light.ambient);
-            sprintf_s(uniformString, "pointLights[%i].diffuse", lightIndex);
-            SetShaderUniformVec3(shaderProgram, uniformString, light.diffuse);
-            sprintf_s(uniformString, "pointLights[%i].specular", lightIndex);
-            SetShaderUniformVec3(shaderProgram, uniformString, light.specular);
-            
-            Attenuation *att = &globalAttenuationTable[light.attIndex];
-            sprintf_s(uniformString, "pointLights[%i].linear", lightIndex);
-            SetShaderUniformFloat(shaderProgram, uniformString, att->linear);
-            sprintf_s(uniformString, "pointLights[%i].quadratic", lightIndex);
-            SetShaderUniformFloat(shaderProgram, uniformString, att->quadratic);
-        }
-        
-        SetShaderUniformVec3(shaderProgram, "spotLight.position", cameraInfo->pos);
-        SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector(cameraInfo));
-        SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
-        SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
-        SetShaderUniformVec3(shaderProgram, "spotLight.ambient", persistentInfo->spotLight.ambient);
-        SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
-        SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
-        
-        SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
-        
-        Model *model = &transientInfo->backpack;
-        for (u32 i = 0; i < model->meshCount; i++)
-        {
-            shaderProgram = transientInfo->objectShader.id;
-            glUseProgram(shaderProgram);
-            
-            glBindVertexArray(model->vaos[i]);
-    
-            Mesh *mesh = &transientInfo->backpack.meshes[i];
-            if (mesh->numTextures > 0)
-            {
-                glActiveTexture(GL_TEXTURE0);
-                glBindTexture(GL_TEXTURE_2D, mesh->textures[0].id);
-            }
-            if (mesh->numTextures > 1)
-            {
-                glActiveTexture(GL_TEXTURE1);
-                glBindTexture(GL_TEXTURE_2D, mesh->textures[1].id);
-            }
-            
-            // Model matrix: transforms vertices from local to world space.
-            glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
-        
-            glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+  glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+  float *cc = persistentInfo->clearColor;
+  glClearColor(cc[0], cc[1], cc[2], cc[3]);
+  glStencilMask(0xff);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+  glStencilMask(0x00);
 
-            // glEnable(GL_STENCIL_TEST);
-            // glStencilMask(0xff);
-            // glStencilFunc(GL_ALWAYS, 1, 0xff);
-            // glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-            
-            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-            SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-            SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-            SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-            glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
-            
-            // glStencilMask(0x00);
-            
-            // shaderProgram = transientInfo->outlineShaderProgram;
-            // glUseProgram(shaderProgram);
-            
-            // glDisable(GL_DEPTH_TEST);
-            // glStencilFunc(GL_NOTEQUAL, 1, 0xff);
-            
-            // glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
-            // SetShaderUniformVec4(shaderProgram, "color", stencilColor);
-            // glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.02f));
-            // SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
-            // SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-            // SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-            // SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-            // glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
-            
-            // glDisable(GL_STENCIL_TEST);
-            // glEnable(GL_DEPTH_TEST);
-        }
-        
-        // Textured cubes.
-        {
-            shaderProgram = transientInfo->textureShader.id;
-            glUseProgram(shaderProgram);
-            
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
-        
-            SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-            SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        
-            glBindVertexArray(transientInfo->cubeVao);
-        
-            glEnable(GL_CULL_FACE);
-            for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-            {
-                PointLight *curLight = &persistentInfo->pointLights[lightIndex];
-                glm::vec3 position = curLight->position;
-                position.x += 2.f;
-                position.y += 2.f;
-                
-                // Model matrix: transforms vertices from local to world space.
-                glm::mat4 modelMatrix = glm::mat4(1.f);
-                modelMatrix = glm::translate(modelMatrix, position);
-            
-                SetShaderUniformVec3(shaderProgram, "lightColor", curLight->diffuse);
-                SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-                glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-            }
-            glDisable(GL_CULL_FACE);
-        }
-        
-        // Windows.
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            
-            shaderProgram = transientInfo->textureShader.id;
-            glUseProgram(shaderProgram);
-            
-            glBindVertexArray(transientInfo->quadVao);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
-            
-            SkipList list = CreateNewList(listArena);
-            for (u32 i = 0; i < NUM_OBJECTS; i++)
-            {
-                f32 dist = glm::distance(cameraInfo->pos, persistentInfo->windowPos[i]);
-                Insert(&list, dist, persistentInfo->windowPos[i], listArena, tempArena);
-            }
-        
-            for (u32 i = 0; i < NUM_OBJECTS; i++)
-            {
-                glm::mat4 modelMatrix = glm::mat4(1.f);
-                glm::vec3 pos = persistentInfo->windowPos[i]; // GetValue(&list, i);
-                modelMatrix = glm::translate(modelMatrix, pos);
-                modelMatrix = glm::rotate(modelMatrix, cameraInfo->yaw, glm::vec3(0.f, 1.f, 0.f));
-                SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-                SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-                SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-                glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-            }
-            ArenaClear(listArena);
-            memset(listArena->memory, 0, listArena->size);
-            ArenaClear(tempArena);
-            
-            glDisable(GL_BLEND);
-        }
-    }
-    
+  glm::vec3 cameraForwardVec = glm::normalize(GetCameraForwardVector(cameraInfo));
+  glm::vec3 cameraTarget = cameraInfo->pos + cameraForwardVec;
+  
+  glm::vec3 cameraDirection = glm::normalize(cameraInfo->pos - cameraTarget);
+  
+  glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
+  glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
+  glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
+  
+  float farPlaneDistance = 100.f;
+  
+  glm::mat4 mainViewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
+  
+  // Projection matrix: transforms vertices from view space to clip space.
+  glm::mat4 projectionMatrix = glm::perspective(
+      glm::radians(cameraInfo->fov), 
+      cameraInfo->aspectRatio, 
+      .1f, 
+      farPlaneDistance);
+  
+  // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
+
+  // Point lights.
+  {
+      u32 shaderProgram = transientInfo->lightShader.id;
+      glUseProgram(shaderProgram);
+      
+      SetShaderUniformMat4(shaderProgram, "viewMatrix", &mainViewMatrix);
+      SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+      
+      glBindVertexArray(transientInfo->cubeVao);
+      
+      for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+      {
+          PointLight *curLight = &persistentInfo->pointLights[lightIndex];
+          // Model matrix: transforms vertices from local to world space.
+          glm::mat4 modelMatrix = glm::mat4(1.f);
+          modelMatrix = glm::translate(modelMatrix, curLight->position);
+          
+          glEnable(GL_STENCIL_TEST);
+          glStencilMask(0xff);
+          glStencilFunc(GL_ALWAYS, 1, 0xff);
+          glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+          
+          SetShaderUniformVec3(shaderProgram, "lightColor", curLight->diffuse);
+          SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+          glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+          
+          glStencilMask(0x00);
+          glDisable(GL_DEPTH_TEST);
+          glStencilFunc(GL_NOTEQUAL, 1, 0xff);
+          
+          glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
+          SetShaderUniformVec3(shaderProgram, "lightColor", stencilColor);
+          glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.1f));
+          SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);            
+          glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+          
+          glDisable(GL_STENCIL_TEST);
+          glEnable(GL_DEPTH_TEST);
+      }
+  }
+  
+  // Objects.
+  {
+      u32 shaderProgram = transientInfo->objectShader.id;
+      glUseProgram(shaderProgram);
+      
+      SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
+      
+      SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
+      SetShaderUniformVec3(shaderProgram, "dirLight.ambient", persistentInfo->dirLight.ambient);
+      SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
+      SetShaderUniformVec3(shaderProgram, "dirLight.specular", persistentInfo->dirLight.specular);
+      
+      for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+      {
+          PointLight *lights = persistentInfo->pointLights;
+          PointLight light = lights[lightIndex];
+          
+          char uniformString[32];
+          sprintf_s(uniformString, "pointLights[%i].position", lightIndex);
+          SetShaderUniformVec3(shaderProgram, uniformString, light.position);
+          sprintf_s(uniformString, "pointLights[%i].ambient", lightIndex);
+          SetShaderUniformVec3(shaderProgram, uniformString, light.ambient);
+          sprintf_s(uniformString, "pointLights[%i].diffuse", lightIndex);
+          SetShaderUniformVec3(shaderProgram, uniformString, light.diffuse);
+          sprintf_s(uniformString, "pointLights[%i].specular", lightIndex);
+          SetShaderUniformVec3(shaderProgram, uniformString, light.specular);
+          
+          Attenuation *att = &globalAttenuationTable[light.attIndex];
+          sprintf_s(uniformString, "pointLights[%i].linear", lightIndex);
+          SetShaderUniformFloat(shaderProgram, uniformString, att->linear);
+          sprintf_s(uniformString, "pointLights[%i].quadratic", lightIndex);
+          SetShaderUniformFloat(shaderProgram, uniformString, att->quadratic);
+      }
+      
+      SetShaderUniformVec3(shaderProgram, "spotLight.position", cameraInfo->pos);
+      SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector(cameraInfo));
+      SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
+      SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
+      SetShaderUniformVec3(shaderProgram, "spotLight.ambient", persistentInfo->spotLight.ambient);
+      SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
+      SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
+      
+      SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
+      
+      Model *model = &transientInfo->backpack;
+      for (u32 i = 0; i < model->meshCount; i++)
+      {
+          shaderProgram = transientInfo->objectShader.id;
+          glUseProgram(shaderProgram);
+          
+          glBindVertexArray(model->vaos[i]);
+  
+          Mesh *mesh = &transientInfo->backpack.meshes[i];
+          if (mesh->numTextures > 0)
+          {
+              glActiveTexture(GL_TEXTURE0);
+              glBindTexture(GL_TEXTURE_2D, mesh->textures[0].id);
+          }
+          if (mesh->numTextures > 1)
+          {
+              glActiveTexture(GL_TEXTURE1);
+              glBindTexture(GL_TEXTURE_2D, mesh->textures[1].id);
+          }
+          
+          // Model matrix: transforms vertices from local to world space.
+          glm::mat4 modelMatrix = glm::mat4(1.f);
+          modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+      
+          glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+
+          // glEnable(GL_STENCIL_TEST);
+          // glStencilMask(0xff);
+          // glStencilFunc(GL_ALWAYS, 1, 0xff);
+          // glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+          
+          SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+          SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+          SetShaderUniformMat4(shaderProgram, "viewMatrix", &mainViewMatrix);
+          SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+          glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+          
+          // glStencilMask(0x00);
+          
+          // shaderProgram = transientInfo->outlineShaderProgram;
+          // glUseProgram(shaderProgram);
+          
+          // glDisable(GL_DEPTH_TEST);
+          // glStencilFunc(GL_NOTEQUAL, 1, 0xff);
+          
+          // glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
+          // SetShaderUniformVec4(shaderProgram, "color", stencilColor);
+          // glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.02f));
+          // SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
+          // SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+          // SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+          // SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+          // glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+          
+          // glDisable(GL_STENCIL_TEST);
+          // glEnable(GL_DEPTH_TEST);
+      }
+      
+      // Textured cubes.
+      {
+          shaderProgram = transientInfo->textureShader.id;
+          glUseProgram(shaderProgram);
+          
+          glActiveTexture(GL_TEXTURE0);
+          glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
+      
+          SetShaderUniformMat4(shaderProgram, "viewMatrix", &mainViewMatrix);
+          SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+      
+          glBindVertexArray(transientInfo->cubeVao);
+      
+          glEnable(GL_CULL_FACE);
+          for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+          {
+              PointLight *curLight = &persistentInfo->pointLights[lightIndex];
+              glm::vec3 position = curLight->position;
+              position.x += 2.f;
+              position.y += 2.f;
+              
+              // Model matrix: transforms vertices from local to world space.
+              glm::mat4 modelMatrix = glm::mat4(1.f);
+              modelMatrix = glm::translate(modelMatrix, position);
+          
+              SetShaderUniformVec3(shaderProgram, "lightColor", curLight->diffuse);
+              SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+              glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+          }
+          glDisable(GL_CULL_FACE);
+      }
+      
+      // Windows.
+      {
+          glEnable(GL_BLEND);
+          glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+          
+          shaderProgram = transientInfo->textureShader.id;
+          glUseProgram(shaderProgram);
+          
+          glBindVertexArray(transientInfo->mainQuadVao);
+          glActiveTexture(GL_TEXTURE0);
+          glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
+          
+          SkipList list = CreateNewList(listArena);
+          for (u32 i = 0; i < NUM_OBJECTS; i++)
+          {
+              f32 dist = glm::distance(cameraInfo->pos, persistentInfo->windowPos[i]);
+              Insert(&list, dist, persistentInfo->windowPos[i], listArena, tempArena);
+          }
+      
+          for (u32 i = 0; i < NUM_OBJECTS; i++)
+          {
+              glm::mat4 modelMatrix = glm::mat4(1.f);
+              glm::vec3 pos = persistentInfo->windowPos[i]; // GetValue(&list, i);
+              modelMatrix = glm::translate(modelMatrix, pos);
+              modelMatrix = glm::rotate(modelMatrix, cameraInfo->yaw, glm::vec3(0.f, 1.f, 0.f));
+              SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+              SetShaderUniformMat4(shaderProgram, "viewMatrix", &mainViewMatrix);
+              SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+              glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+          }
+          ArenaClear(listArena);
+          memset(listArena->memory, 0, listArena->size);
+          ArenaClear(tempArena);
+          
+          glDisable(GL_BLEND);
+      }
+  }
+}
+
+void DrawDebugWindow(CameraInfo *cameraInfo, PersistentDrawingInfo* persistentInfo)
+{
     u32 id = 0;
     ImGui::Begin("Debug Window");
 
@@ -1205,12 +1222,57 @@ void DrawWindow(
 
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+extern "C" __declspec(dllexport)
+void DrawWindow(
+  HWND window,
+  HDC hdc,
+  bool *running,
+  TransientDrawingInfo *transientInfo,
+  PersistentDrawingInfo *persistentInfo,
+  CameraInfo *cameraInfo,
+  Arena *listArena,
+  Arena *tempArena)
+{
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplWin32_NewFrame();
+    ImGui::NewFrame();
+  
+    if (!persistentInfo->initialized)
+    {
+        return;
+    }
+    
+    CheckForNewShaders(transientInfo);
+    
+    DrawScene(
+        cameraInfo,
+        transientInfo,
+        persistentInfo,
+        transientInfo->mainFBO,
+        transientInfo->mainQuad,
+        listArena,
+        tempArena);
+    
+    CameraInfo rearViewCamera = *cameraInfo;
+    rearViewCamera.yaw += PI;
+    rearViewCamera.pitch *= -1.f;
+    
+    DrawScene(
+        &rearViewCamera,
+        transientInfo,
+        persistentInfo,
+        transientInfo->rearViewFBO,
+        transientInfo->rearViewQuad,
+        listArena,
+        tempArena);
     
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(1.f, 1.f, 1.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
     
-    // Textured quad.
+    // Main quad.
     {
         u32 shaderProgram = transientInfo->postProcessShader.id;
         glUseProgram(shaderProgram);
@@ -1218,13 +1280,37 @@ void DrawWindow(
         glDisable(GL_DEPTH_TEST);
         
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, transientInfo->renderQuad);
+        glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuad);
     
         glm::mat4 identity = glm::mat4(1.f);
         SetShaderUniformMat4(shaderProgram, "viewMatrix", &identity);
         SetShaderUniformMat4(shaderProgram, "projectionMatrix", &identity);
     
-        glBindVertexArray(transientInfo->quadVao);
+        glBindVertexArray(transientInfo->mainQuadVao);
+    
+        // Model matrix: transforms vertices from local to world space.
+        glm::mat4 modelMatrix = glm::mat4(1.f);
+        modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+    
+        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    }
+    
+    // Rear-view quad.
+    {
+        u32 shaderProgram = transientInfo->postProcessShader.id;
+        glUseProgram(shaderProgram);
+        
+        glDisable(GL_DEPTH_TEST);
+        
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
+    
+        glm::mat4 identity = glm::mat4(1.f);
+        SetShaderUniformMat4(shaderProgram, "viewMatrix", &identity);
+        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &identity);
+    
+        glBindVertexArray(transientInfo->rearViewQuadVao);
     
         // Model matrix: transforms vertices from local to world space.
         glm::mat4 modelMatrix = glm::mat4(1.f);
@@ -1234,6 +1320,8 @@ void DrawWindow(
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
     }
 
+    DrawDebugWindow(cameraInfo, persistentInfo);
+    
     if (!SwapBuffers(hdc))
     {
         if (MessageBoxW(window, L"Failed to swap buffers", L"OpenGL error", MB_OK) == S_OK)

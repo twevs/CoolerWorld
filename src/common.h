@@ -194,13 +194,20 @@ struct TransientDrawingInfo
     ShaderProgram outlineShader;
     ShaderProgram textureShader;
     ShaderProgram postProcessShader;
+    
     u32 cubeVao;
-    u32 quadVao;
+    
     Model backpack;
     u32 grassTexture;
     u32 windowTexture;
-    u32 fbo;
-    u32 renderQuad;
+    
+    u32 mainQuadVao;
+    u32 mainFBO;
+    u32 mainQuad;
+    
+    u32 rearViewQuadVao;
+    u32 rearViewFBO;
+    u32 rearViewQuad;
 };
 
 struct PersistentDrawingInfo
