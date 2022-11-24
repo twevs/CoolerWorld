@@ -261,12 +261,30 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     }
     info->postProcessShader = postProcessShader;
     
+    ShaderProgram skyboxShader = {};
+    strcpy(skyboxShader.vertexShaderFilename, "cubemap.vs");
+    strcpy(skyboxShader.fragmentShaderFilename, "cubemap.fs");
+    skyboxShader.vertexShaderTime = GetFileTime("cubemap.vs");
+    skyboxShader.fragmentShaderTime = GetFileTime("cubemap.fs");
+    if (!CreateShaderProgram(&skyboxShader))
+    {
+        return false;
+    }
+    if (glIsProgram(info->skyboxShader.id))
+    {
+        glDeleteProgram(info->skyboxShader.id);
+    }
+    info->skyboxShader = skyboxShader;
+    
     glUseProgram(objectShader.id);
     SetShaderUniformSampler(objectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(objectShader.id, "material.specular", 1);
 
     glUseProgram(textureShader.id);
     SetShaderUniformSampler(textureShader.id, "tex", 0);
+    
+    glUseProgram(skyboxShader.id);
+    SetShaderUniformSampler(skyboxShader.id, "skybox", 0);
     
     return true;
 }
@@ -729,6 +747,38 @@ bool InitializeDrawingInfo(
     GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO, &transientInfo->rearViewQuad);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     
+    u32 skyboxTexture;
+    glGenTextures(1, &skyboxTexture);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
+    
+    const char *skyboxImages[] =
+    {
+        "skybox/right.jpg",
+        "skybox/left.jpg",
+        "skybox/top.jpg",
+        "skybox/bottom.jpg",
+        "skybox/front.jpg",
+        "skybox/back.jpg"
+    };
+    for (u32 i = 0; i < 6; i++)
+    {
+        s32 imageWidth;
+        s32 imageHeight;
+        s32 numChannels;
+        stbi_set_flip_vertically_on_load_thread(false);
+        u8 *data = stbi_load(skyboxImages[i], &imageWidth, &imageHeight, &numChannels, 0);
+        glTexImage2D(
+            GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
+            0, GL_RGB, imageWidth, imageHeight, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    
+    transientInfo->skyboxTexture = skyboxTexture;
+    
     drawingInfo->initialized = true;
 
     cameraInfo->aspectRatio = (f32)width / (f32)height;
@@ -861,6 +911,10 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
                         &info->postProcessShader.vertexShaderTime)
         || HasNewVersion(info->postProcessShader.fragmentShaderFilename,
                         &info->postProcessShader.fragmentShaderTime)
+        || HasNewVersion(info->skyboxShader.vertexShaderFilename,
+                        &info->skyboxShader.vertexShaderTime)
+        || HasNewVersion(info->skyboxShader.fragmentShaderFilename,
+                        &info->skyboxShader.fragmentShaderTime)
     )
     {
         CreateShaderPrograms(info);
@@ -877,6 +931,7 @@ void DrawScene(
     Arena *tempArena)
 {
   glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    
   float *cc = persistentInfo->clearColor;
   glClearColor(cc[0], cc[1], cc[2], cc[3]);
   glStencilMask(0xff);
@@ -904,6 +959,26 @@ void DrawScene(
       farPlaneDistance);
   
   // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
+    
+  // Skybox.
+  {
+      glDepthMask(GL_FALSE);
+        
+      u32 shaderProgram = transientInfo->skyboxShader.id;
+      glUseProgram(shaderProgram);
+      
+      glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(mainViewMatrix));
+      SetShaderUniformMat4(shaderProgram, "viewMatrix", &skyboxViewMatrix);
+      SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+      
+      glBindVertexArray(transientInfo->cubeVao);
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+      
+      glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        
+      glDepthMask(GL_TRUE);
+  }
 
   // Point lights.
   {

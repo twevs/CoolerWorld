@@ -194,12 +194,14 @@ struct TransientDrawingInfo
     ShaderProgram outlineShader;
     ShaderProgram textureShader;
     ShaderProgram postProcessShader;
+    ShaderProgram skyboxShader;
     
     u32 cubeVao;
     
     Model backpack;
     u32 grassTexture;
     u32 windowTexture;
+    u32 skyboxTexture;
     
     u32 mainQuadVao;
     u32 mainFBO;
