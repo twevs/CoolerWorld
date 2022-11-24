@@ -585,11 +585,11 @@ extern "C"
 #define STBI_NO_ZLIB
 #endif
 
+#include <limits.h>
 #include <stdarg.h>
 #include <stddef.h> // ptrdiff_t on osx
 #include <stdlib.h>
 #include <string.h>
-#include <limits.h>
 
 #if !defined(STBI_NO_LINEAR) || !defined(STBI_NO_HDR)
 #include <math.h> // ldexp, pow

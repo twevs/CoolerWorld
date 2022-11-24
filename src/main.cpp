@@ -1,53 +1,32 @@
-#include "common.h"
 #include "arena.h"
+#include "common.h"
 
 typedef bool (*InitializeImGuiInModule_t)(HWND window);
 InitializeImGuiInModule_t InitializeImGuiInModule;
 
-typedef ImGuiIO * (*GetImGuiIO_t)();
+typedef ImGuiIO *(*GetImGuiIO_t)();
 GetImGuiIO_t GetImGuiIO;
 
-typedef LRESULT (*ImGui_WndProcHandler_t)(
-  HWND hWnd,
-  UINT msg,
-  WPARAM wParam,
-  LPARAM lParam);
+typedef LRESULT (*ImGui_WndProcHandler_t)(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 ImGui_WndProcHandler_t ImGui_WndProcHandler;
 
-typedef bool (*InitializeDrawingInfo_t)(
-    HWND window,
-    TransientDrawingInfo *transientInfo,
-    PersistentDrawingInfo *drawingInfo,
-    CameraInfo *cameraInfo,
-    Arena *texturesArena,
-    Arena *meshDataArena)
-;
+typedef bool (*InitializeDrawingInfo_t)(HWND window, TransientDrawingInfo *transientInfo,
+                                        PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo,
+                                        Arena *texturesArena, Arena *meshDataArena);
 InitializeDrawingInfo_t InitializeDrawingInfo;
 
-typedef bool (*SaveDrawingInfo_t)(
-            PersistentDrawingInfo *drawingInfo,
-            CameraInfo *cameraInfo);
+typedef bool (*SaveDrawingInfo_t)(PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo);
 SaveDrawingInfo_t SaveDrawingInfo;
 
-typedef void (*ProvideCameraVectors_t)(
-        CameraInfo *cameraInfo);
+typedef void (*ProvideCameraVectors_t)(CameraInfo *cameraInfo);
 ProvideCameraVectors_t ProvideCameraVectors;
 
-typedef void (*DrawWindow_t)(
-            HWND window,
-            HDC hdc,
-            bool *running,
-            TransientDrawingInfo *transientInfo,
-            PersistentDrawingInfo *drawingInfo,
-            CameraInfo *cameraInfo,
-            Arena *listArena,
-            Arena *tempArena);
+typedef void (*DrawWindow_t)(HWND window, HDC hdc, bool *running, TransientDrawingInfo *transientInfo,
+                             PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo, Arena *listArena,
+                             Arena *tempArena);
 DrawWindow_t DrawWindow;
 
-typedef void (*PrintDepthTestFunc_t)(
-    u32 val,
-    char *outputBuffer,
-    u32 bufSize);
+typedef void (*PrintDepthTestFunc_t)(u32 val, char *outputBuffer, u32 bufSize);
 PrintDepthTestFunc_t PrintDepthTestFunc;
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
@@ -69,16 +48,12 @@ internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
-internal void Win32ProcessMessages(
-    HWND window,
-    bool *running,
-    PersistentDrawingInfo *drawingInfo,
-    glm::vec3 *movement,
-    CameraInfo *cameraInfo)
+internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawingInfo *drawingInfo, glm::vec3 *movement,
+                                   CameraInfo *cameraInfo)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
-    {        
+    {
         if (ImGui_WndProcHandler(window, message.message, message.wParam, message.lParam))
         {
             break;
@@ -92,17 +67,17 @@ internal void Win32ProcessMessages(
         }
         local_persist bool capturing = false;
         local_persist f32 speed = .1f;
-        
+
         POINT windowOrigin = {};
         ClientToScreen(window, &windowOrigin);
         s16 originX = (s16)windowOrigin.x;
         s16 originY = (s16)windowOrigin.y;
-        
+
         RECT clientRect;
         GetClientRect(window, &clientRect);
         s16 centreX = originX + (s16)clientRect.right / 2;
         s16 centreY = originY + (s16)clientRect.bottom / 2;
-        
+
         switch (message.message)
         {
         case WM_QUIT:
@@ -129,11 +104,8 @@ internal void Win32ProcessMessages(
                 s16 xCoord = originX + GET_X_LPARAM(message.lParam);
                 s16 yCoord = originY + GET_Y_LPARAM(message.lParam);
                 cameraInfo->yaw -= (xCoord - centreX) / 100.f;
-                cameraInfo->pitch = clampf(cameraInfo->pitch - (yCoord - centreY) / 100.f,
-                         -PI/2,
-                         PI/2,
-                         .01f);
-                    
+                cameraInfo->pitch = clampf(cameraInfo->pitch - (yCoord - centreY) / 100.f, -PI / 2, PI / 2, .01f);
+
                 SetCursorPos(centreX, centreY);
             }
             break;
@@ -162,7 +134,7 @@ internal void Win32ProcessMessages(
             float deltaX = (GetKeyState('D') < 0) ? .1f : (GetKeyState('A') < 0) ? -.1f : 0.f;
             *movement += cameraInfo->forwardVector * deltaZ * speed;
             *movement += cameraInfo->rightVector * deltaX * speed;
-                
+
             // Other keys.
             bool altPressed = (message.lParam >> 29) & 1;
             u32 vkCode = (u32)message.wParam;
@@ -215,22 +187,20 @@ internal void Win32ProcessMessages(
                 drawingInfo->wireframeMode = !drawingInfo->wireframeMode;
                 glPolygonMode(GL_FRONT_AND_BACK, drawingInfo->wireframeMode ? GL_LINE : GL_FILL);
                 break;
-            case 'U':
-                {
-                    s32 depthFunc;
-                    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
-                    depthFunc = max(depthFunc - 1, 0x200);
-                    glDepthFunc(depthFunc);
-                    break;
-                }
-            case 'I':
-                {
-                    s32 depthFunc;
-                    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
-                    depthFunc = min(depthFunc + 1, 0x207);
-                    glDepthFunc(depthFunc);
-                    break;
-                }
+            case 'U': {
+                s32 depthFunc;
+                glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+                depthFunc = max(depthFunc - 1, 0x200);
+                glDepthFunc(depthFunc);
+                break;
+            }
+            case 'I': {
+                s32 depthFunc;
+                glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
+                depthFunc = min(depthFunc + 1, 0x207);
+                glDepthFunc(depthFunc);
+                break;
+            }
             case 'O':
                 break;
             case 'J':
@@ -239,15 +209,14 @@ internal void Win32ProcessMessages(
                 break;
             case 'L':
                 break;
-            case 'F':
-                {
-                    local_persist bool flashLightOn = true;
-                    flashLightOn = !flashLightOn;
-                    drawingInfo->spotLight.ambient = flashLightOn ? glm::vec3(.1f) : glm::vec3(0.f);
-                    drawingInfo->spotLight.diffuse = flashLightOn ? glm::vec3(.5f) : glm::vec3(0.f);
-                    drawingInfo->spotLight.specular = flashLightOn ? glm::vec3(1.f) : glm::vec3(0.f);
-                    break;
-                }
+            case 'F': {
+                local_persist bool flashLightOn = true;
+                flashLightOn = !flashLightOn;
+                drawingInfo->spotLight.ambient = flashLightOn ? glm::vec3(.1f) : glm::vec3(0.f);
+                drawingInfo->spotLight.diffuse = flashLightOn ? glm::vec3(.5f) : glm::vec3(0.f);
+                drawingInfo->spotLight.specular = flashLightOn ? glm::vec3(1.f) : glm::vec3(0.f);
+                break;
+            }
             case 'G':
                 break;
             case 'H':
@@ -277,7 +246,7 @@ internal int InitializeOpenGLExtensions(HINSTANCE hInstance)
         return -1;
     }
 
-    HWND dummyWindow = CreateWindowW(dummyWindowClassName,                   // lpClassName,
+    HWND dummyWindow = CreateWindowW(dummyWindowClassName,              // lpClassName,
                                      L"Dummy OpenGL Extensions Window", // lpWindowName,
                                      0,                                 // dwStyle,
                                      CW_USEDEFAULT,                     // x,
@@ -368,18 +337,18 @@ void LoadRenderingCode(HWND window)
     CopyFileW(L"logl.dll", L"logl_runtime.dll", FALSE);
     loglLib = LoadLibraryW(L"logl_runtime.dll");
     myAssert(loglLib != NULL);
-    
+
     InitializeImGuiInModule = (InitializeImGuiInModule_t)GetProcAddress(loglLib, "InitializeImGuiInModule");
     InitializeImGuiInModule(window);
     GetImGuiIO = (GetImGuiIO_t)GetProcAddress(loglLib, "GetImGuiIO");
     ImGui_WndProcHandler = (ImGui_WndProcHandler_t)GetProcAddress(loglLib, "ImGui_WndProcHandler");
-        
+
     DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
     InitializeDrawingInfo = (InitializeDrawingInfo_t)GetProcAddress(loglLib, "InitializeDrawingInfo");
     SaveDrawingInfo = (SaveDrawingInfo_t)GetProcAddress(loglLib, "SaveDrawingInfo");
-    
+
     PrintDepthTestFunc = (PrintDepthTestFunc_t)GetProcAddress(loglLib, "PrintDepthTestFunc");
-    
+
     ProvideCameraVectors = (ProvideCameraVectors_t)GetProcAddress(loglLib, "ProvideCameraVectors");
 }
 
@@ -414,7 +383,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     windowClass.lpszClassName = windowClassName;
 
     RegisterClassW(&windowClass);
-    
+
     ApplicationState appState = {};
 
     HWND window = CreateWindowW(windowClassName,     // lpClassName,
@@ -501,7 +470,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                                L"current rendering context.");
             return -1;
         }
-        
+
         wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
         if (!wglSwapIntervalEXT(1))
         {
@@ -525,10 +494,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         // MessageBoxA(NULL, (char *)glGetString(GL_VERSION), "OpenGL version", MB_OK);
 
         // Shader initialization.
-        
+
         LoadRenderingCode(window);
 
-        TransientDrawingInfo* transientInfo = &appState.transientInfo;
+        TransientDrawingInfo *transientInfo = &appState.transientInfo;
         PersistentDrawingInfo *drawingInfo = &appState.persistentInfo;
         CameraInfo *cameraInfo = &appState.cameraInfo;
         Arena *texturesArena = AllocArena(1024);
@@ -536,50 +505,39 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
         Arena *listArena = AllocArena(2048);
         Arena *tempArena = AllocArena(1024);
-        if (!InitializeDrawingInfo(
-            window,
-            transientInfo,
-            drawingInfo,
-            cameraInfo,
-            texturesArena,
-            meshDataArena))
+        if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo, texturesArena, meshDataArena))
         {
             return -1;
         }
-                
+
         glm::vec3 movementPerFrame = {};
-        
+
         f32 targetFrameTime = 1000.f / 60;
         f32 deltaTime = targetFrameTime;
 
         u64 lastFrameCount = Win32GetWallClock();
-        
+
         HANDLE renderingDLL = CreateFileW(L"logl.dll", GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
         FILETIME lastFileTime = {};
         GetFileTime(renderingDLL, 0, 0, &lastFileTime);
         CloseHandle(renderingDLL);
-        
+
         f32 dllAccumulator = 0.f;
-        
+
         appState.running = true;
         while (appState.running)
-        {    
+        {
             dllAccumulator += deltaTime;
             if (dllAccumulator >= 50.f)
             {
                 CheckForNewDLL(window, &lastFileTime);
                 dllAccumulator = 0.f;
             }
-            
+
             ProvideCameraVectors(cameraInfo);
-            
-            Win32ProcessMessages(
-                window,
-                &appState.running,
-                drawingInfo,
-                &movementPerFrame,
-                cameraInfo);
-            
+
+            Win32ProcessMessages(window, &appState.running, drawingInfo, &movementPerFrame, cameraInfo);
+
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
             lastFrameCount = currentFrameCount;
@@ -598,27 +556,19 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // TODO: investigate whether it's worth keeping this around as a framerate cap mechanism.
             // Won't it produce screen-tearing since it won't necessarily be synchronized with the
             // v-blank? How many users actually disable v-sync anyway?
-        
+
             // WCHAR frameTimeString[32];
             // swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
             // OutputDebugStringW(frameTimeString);
-        
+
             cameraInfo->pos += movementPerFrame * deltaTime;
-            DrawWindow(
-                window,
-                hdc,
-                &appState.running,
-                transientInfo,
-                drawingInfo,
-                cameraInfo,
-                listArena,
-                tempArena);
+            DrawWindow(window, hdc, &appState.running, transientInfo, drawingInfo, cameraInfo, listArena, tempArena);
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
         }
     }
-    
+
     SaveDrawingInfo(&appState.persistentInfo, &appState.cameraInfo);
 
     return 0;
@@ -627,7 +577,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     local_persist ApplicationState *appState = NULL;
-    
+
     switch (uMsg)
     {
     case WM_CREATE: {

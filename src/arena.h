@@ -62,4 +62,3 @@ internal void ArenaClear(Arena *arena)
 {
     arena->stackPointer = 0;
 }
-

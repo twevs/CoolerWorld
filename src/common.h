@@ -2,12 +2,12 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
-#include <wingdi.h>
-#include <winuser.h>
-#include <windowsx.h>
+#include <math.h> // sinf().
 #include <stdint.h>
 #include <stdio.h>
-#include <math.h> // sinf().
+#include <windowsx.h>
+#include <wingdi.h>
+#include <winuser.h>
 
 #include <GL/glew.h>
 #include "wglext.h"
@@ -20,16 +20,16 @@
 #include "stb_image.h"
 
 #include "imgui/imgui.cpp"
-#include "imgui/imgui_impl_win32.cpp"
-#include "imgui/imgui_impl_opengl3.h"
 #include "imgui/imgui_demo.cpp"
 #include "imgui/imgui_draw.cpp"
+#include "imgui/imgui_impl_opengl3.h"
+#include "imgui/imgui_impl_win32.cpp"
 #include "imgui/imgui_tables.cpp"
 #include "imgui/imgui_widgets.cpp"
 
 #include "assimp/Importer.hpp"
-#include <assimp/scene.h>
 #include <assimp/postprocess.h>
+#include <assimp/scene.h>
 
 #define global_variable static
 #define internal static
@@ -45,17 +45,13 @@
 #define myAssert(x)
 #endif
 
-#define myArraySize(arr) \
-    (sizeof((arr)) / sizeof((arr[0])))
+#define myArraySize(arr) (sizeof((arr)) / sizeof((arr[0])))
 
-#define max(x, y) \
-    (((x) > (y)) ? (x) : (y))
+#define max(x, y) (((x) > (y)) ? (x) : (y))
 
-#define min(x, y) \
-    (((x) < (y)) ? (x) : (y))
+#define min(x, y) (((x) < (y)) ? (x) : (y))
 
-#define clamp(x, min, max) \
-    (((x) < (min)) ? (min) : ((x) > (max)) ? (max) : (x))
+#define clamp(x, min, max) (((x) < (min)) ? (min) : ((x) > (max)) ? (max) : (x))
 
 typedef unsigned char uchar;
 typedef uint8_t u8;
@@ -78,7 +74,7 @@ typedef double f64;
 struct DirLight
 {
     glm::vec3 direction;
-    
+
     glm::vec3 ambient = glm::vec3(.05f);
     glm::vec3 diffuse = glm::vec3(.5f);
     glm::vec3 specular = glm::vec3(1.f);
@@ -87,11 +83,11 @@ struct DirLight
 struct PointLight
 {
     glm::vec3 position;
-    
+
     glm::vec3 ambient = glm::vec3(.05f);
     glm::vec3 diffuse = glm::vec3(.5f);
     glm::vec3 specular = glm::vec3(1.f);
-    
+
     s32 attIndex = 4;
 };
 
@@ -102,31 +98,21 @@ struct Attenuation
     f32 quadratic = 1.8f;
 };
 
-Attenuation globalAttenuationTable[] =
-{
-    { 7   , .7f   , 1.8f    },
-    { 13  , .35f  , .44f    },
-    { 20  , .22f  , .20f    },
-    { 32  , .14f  , .07f    },
-    { 50  , .09f  , .032f   },
-    { 65  , .07f  , .017f   },
-    { 100 , .045f , .0075f  },
-    { 160 , .027f , .0028f  },
-    { 200 , .022f , .0019f  },
-    { 325 , .014f , .0007f  },
-    { 600 , .007f , .0002f  },
-    { 3250, .0014f, .00007f },
+Attenuation globalAttenuationTable[] = {
+    {7, .7f, 1.8f},       {13, .35f, .44f},     {20, .22f, .20f},     {32, .14f, .07f},
+    {50, .09f, .032f},    {65, .07f, .017f},    {100, .045f, .0075f}, {160, .027f, .0028f},
+    {200, .022f, .0019f}, {325, .014f, .0007f}, {600, .007f, .0002f}, {3250, .0014f, .00007f},
 };
 
 struct SpotLight
 {
     glm::vec3 position;
     glm::vec3 direction;
-    
+
     glm::vec3 ambient = glm::vec3(0.f);
     glm::vec3 diffuse = glm::vec3(.5f);
     glm::vec3 specular = glm::vec3(1.f);
-        
+
     float innerCutoff = PI / 11.f;
     float outerCutoff = PI / 9.f;
 };
@@ -196,18 +182,18 @@ struct TransientDrawingInfo
     ShaderProgram textureShader;
     ShaderProgram postProcessShader;
     ShaderProgram skyboxShader;
-    
+
     u32 cubeVao;
-    
+
     Model backpack;
     u32 grassTexture;
     u32 windowTexture;
     u32 skyboxTexture;
-    
+
     u32 mainQuadVao;
     u32 mainFBO;
     u32 mainQuad;
-    
+
     u32 rearViewQuadVao;
     u32 rearViewFBO;
     u32 rearViewQuad;
@@ -217,11 +203,12 @@ struct PersistentDrawingInfo
 {
     bool initialized;
     bool wireframeMode = false;
-    
-    float clearColor[4] = { .1f, .1f, .1f, 1.f };
+
+    float clearColor[4] = {.1f, .1f, .1f, 1.f};
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;
+    glm::vec3 texCubePos[NUM_OBJECTS];
     glm::vec3 windowPos[NUM_OBJECTS];
 };
 
@@ -232,7 +219,7 @@ struct CameraInfo
     f32 pitch;
     f32 aspectRatio;
     f32 fov = 45.f;
-  
+
     glm::vec3 forwardVector;
     glm::vec3 rightVector;
 };
@@ -247,9 +234,9 @@ struct ApplicationState
 
 struct Vec3
 {
-  f32 x;
-  f32 y;
-  f32 z;
+    f32 x;
+    f32 y;
+    f32 z;
 };
 
 internal u64 Win32GetWallClock()
