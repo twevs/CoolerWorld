@@ -246,6 +246,21 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     }
     info->textureShader = textureShader;
     
+    ShaderProgram glassShader = {};
+    strcpy(glassShader.vertexShaderFilename, "vertex_shader.vs");
+    strcpy(glassShader.fragmentShaderFilename, "glass.fs");
+    glassShader.vertexShaderTime = GetFileTime("vertex_shader.vs");
+    glassShader.fragmentShaderTime = GetFileTime("glass.fs");
+    if (!CreateShaderProgram(&glassShader))
+    {
+        return false;
+    }
+    if (glIsProgram(info->glassShader.id))
+    {
+        glDeleteProgram(info->glassShader.id);
+    }
+    info->glassShader = glassShader;
+    
     ShaderProgram postProcessShader = {};
     strcpy(postProcessShader.vertexShaderFilename, "vertex_shader.vs");
     strcpy(postProcessShader.fragmentShaderFilename, "postprocess.fs");
@@ -280,10 +295,14 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     SetShaderUniformSampler(objectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(objectShader.id, "material.specular", 1);
     SetShaderUniformSampler(objectShader.id, "skybox", 2);
-
+    
     glUseProgram(textureShader.id);
     SetShaderUniformSampler(textureShader.id, "tex", 0);
     
+    glUseProgram(glassShader.id);
+    SetShaderUniformSampler(glassShader.id, "tex", 0);
+    SetShaderUniformSampler(glassShader.id, "skybox", 1);
+
     glUseProgram(skyboxShader.id);
     SetShaderUniformSampler(skyboxShader.id, "skybox", 0);
     
@@ -295,7 +314,10 @@ internal bool ReloaderShaderPrograms(TransientDrawingInfo *info)
     myAssert(glIsProgram(info->objectShader.id));
     myAssert(glIsProgram(info->lightShader.id));
     myAssert(glIsProgram(info->outlineShader.id));
+    myAssert(glIsProgram(info->glassShader.id));
     myAssert(glIsProgram(info->textureShader.id));
+    myAssert(glIsProgram(info->postProcessShader.id));
+    myAssert(glIsProgram(info->skyboxShader.id));
     
     u32 shaders[2];
     s32 count;
@@ -910,6 +932,10 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
                         &info->textureShader.vertexShaderTime)
         || HasNewVersion(info->textureShader.fragmentShaderFilename,
                         &info->textureShader.fragmentShaderTime)
+        || HasNewVersion(info->glassShader.vertexShaderFilename,
+                        &info->glassShader.vertexShaderTime)
+        || HasNewVersion(info->glassShader.fragmentShaderFilename,
+                        &info->glassShader.fragmentShaderTime)
         || HasNewVersion(info->postProcessShader.vertexShaderFilename,
                         &info->postProcessShader.vertexShaderTime)
         || HasNewVersion(info->postProcessShader.fragmentShaderFilename,
@@ -1134,9 +1160,11 @@ void DrawScene(
               // Model matrix: transforms vertices from local to world space.
               glm::mat4 modelMatrix = glm::mat4(1.f);
               modelMatrix = glm::translate(modelMatrix, position);
+              glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
           
-              SetShaderUniformVec3(shaderProgram, "lightColor", curLight->diffuse);
               SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+              SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+              SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
               glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
           }
           glDisable(GL_CULL_FACE);
@@ -1147,12 +1175,14 @@ void DrawScene(
           glEnable(GL_BLEND);
           glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
           
-          shaderProgram = transientInfo->textureShader.id;
+          shaderProgram = transientInfo->glassShader.id;
           glUseProgram(shaderProgram);
           
           glBindVertexArray(transientInfo->mainQuadVao);
           glActiveTexture(GL_TEXTURE0);
           glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
+          glActiveTexture(GL_TEXTURE1);
+          glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
           
           SkipList list = CreateNewList(listArena);
           for (u32 i = 0; i < NUM_OBJECTS; i++)
@@ -1164,10 +1194,13 @@ void DrawScene(
           for (u32 i = 0; i < NUM_OBJECTS; i++)
           {
               glm::mat4 modelMatrix = glm::mat4(1.f);
-              glm::vec3 pos = persistentInfo->windowPos[i]; // GetValue(&list, i);
+              glm::vec3 pos = persistentInfo->windowPos[i];
               modelMatrix = glm::translate(modelMatrix, pos);
               modelMatrix = glm::rotate(modelMatrix, cameraInfo->yaw, glm::vec3(0.f, 1.f, 0.f));
+              glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+                
               SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+              SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
               SetShaderUniformMat4(shaderProgram, "viewMatrix", &mainViewMatrix);
               SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
               glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);

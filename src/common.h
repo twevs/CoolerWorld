@@ -192,6 +192,7 @@ struct TransientDrawingInfo
     ShaderProgram objectShader;
     ShaderProgram lightShader;
     ShaderProgram outlineShader;
+    ShaderProgram glassShader;
     ShaderProgram textureShader;
     ShaderProgram postProcessShader;
     ShaderProgram skyboxShader;
