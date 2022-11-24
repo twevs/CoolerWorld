@@ -61,6 +61,9 @@ vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir);
 
 uniform vec3 cameraPos;
 
+uniform samplerCube skybox;
+vec3 CalcEnvironment(vec3 normal, vec3 cameraDir);
+
 void main()
 {
     vec3 norm = normalize(normal);
@@ -68,8 +71,9 @@ void main()
     vec3 dirContribution = CalcDirLight(dirLight, norm, cameraDir);
     vec3 pointsContribution = CalcPointLights(pointLights, norm, cameraDir);
     vec3 spotContribution = CalcSpotLight(spotLight, norm, cameraDir);
+    vec3 envContribution = CalcEnvironment(norm, cameraDir);
     
-    vec3 result = dirContribution + pointsContribution + spotContribution;
+    vec3 result = dirContribution + pointsContribution + spotContribution + envContribution;
     
     fragColor = vec4(result, 1.f);
 }
@@ -142,4 +146,12 @@ vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir)
     vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
 
     return intensity * (diffuse + specular);
+}
+
+vec3 CalcEnvironment(vec3 normal, vec3 cameraDir)
+{
+    vec3 reflectionDir = reflect(-cameraDir, normal);
+    vec3 sample = vec3(texture(skybox, reflectionDir));
+    
+    return sample * .1f;
 }

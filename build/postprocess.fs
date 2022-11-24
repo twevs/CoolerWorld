@@ -137,5 +137,6 @@ void main()
 		color += (sampleTex[i] * unsharpMasking5Kernel[i]);
 	}
 	
-	fragColor = vec4(color, 1.f);
+	// fragColor = vec4(color, 1.f);
+	fragColor = texture(tex, texCoords);
 }

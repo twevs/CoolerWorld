@@ -279,6 +279,7 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     glUseProgram(objectShader.id);
     SetShaderUniformSampler(objectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(objectShader.id, "material.specular", 1);
+    SetShaderUniformSampler(objectShader.id, "skybox", 2);
 
     glUseProgram(textureShader.id);
     SetShaderUniformSampler(textureShader.id, "tex", 0);
@@ -760,12 +761,12 @@ bool InitializeDrawingInfo(
         "skybox/front.jpg",
         "skybox/back.jpg"
     };
+    stbi_set_flip_vertically_on_load_thread(false);
     for (u32 i = 0; i < 6; i++)
     {
         s32 imageWidth;
         s32 imageHeight;
         s32 numChannels;
-        stbi_set_flip_vertically_on_load_thread(false);
         u8 *data = stbi_load(skyboxImages[i], &imageWidth, &imageHeight, &numChannels, 0);
         glTexImage2D(
             GL_TEXTURE_CUBE_MAP_POSITIVE_X + i,
@@ -778,6 +779,8 @@ bool InitializeDrawingInfo(
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     
     transientInfo->skyboxTexture = skyboxTexture;
+    
+    glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
     
     drawingInfo->initialized = true;
 
@@ -960,26 +963,6 @@ void DrawScene(
   
   // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
     
-  // Skybox.
-  {
-      glDepthMask(GL_FALSE);
-        
-      u32 shaderProgram = transientInfo->skyboxShader.id;
-      glUseProgram(shaderProgram);
-      
-      glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(mainViewMatrix));
-      SetShaderUniformMat4(shaderProgram, "viewMatrix", &skyboxViewMatrix);
-      SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-      
-      glBindVertexArray(transientInfo->cubeVao);
-      glActiveTexture(GL_TEXTURE0);
-      glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
-      
-      glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-        
-      glDepthMask(GL_TRUE);
-  }
-
   // Point lights.
   {
       u32 shaderProgram = transientInfo->lightShader.id;
@@ -1084,6 +1067,10 @@ void DrawScene(
               glActiveTexture(GL_TEXTURE1);
               glBindTexture(GL_TEXTURE_2D, mesh->textures[1].id);
           }
+            
+          // Skybox contribution.
+          glActiveTexture(GL_TEXTURE2);
+          glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
           
           // Model matrix: transforms vertices from local to world space.
           glm::mat4 modelMatrix = glm::mat4(1.f);
@@ -1191,6 +1178,22 @@ void DrawScene(
           
           glDisable(GL_BLEND);
       }
+  }
+    
+  // Skybox.
+  {
+      u32 shaderProgram = transientInfo->skyboxShader.id;
+      glUseProgram(shaderProgram);
+      
+      glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(mainViewMatrix));
+      SetShaderUniformMat4(shaderProgram, "viewMatrix", &skyboxViewMatrix);
+      SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+      
+      glBindVertexArray(transientInfo->cubeVao);
+      glActiveTexture(GL_TEXTURE0);
+      glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+      
+      glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
   }
 }
 
