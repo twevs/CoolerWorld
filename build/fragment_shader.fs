@@ -153,5 +153,5 @@ vec3 CalcEnvironment(vec3 normal, vec3 cameraDir)
     vec3 reflectionDir = reflect(-cameraDir, normal);
     vec3 sample = vec3(texture(skybox, reflectionDir));
     
-    return sample * .1f;
+    return sample * .5f;
 }

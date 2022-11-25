@@ -686,6 +686,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         u8 *data = stbi_load(skyboxImages[i], &imageWidth, &imageHeight, &numChannels, 0);
         glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, imageWidth, imageHeight, 0, GL_RGB,
                      GL_UNSIGNED_BYTE, data);
+        stbi_image_free(data);
     }
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -838,6 +839,22 @@ struct RenderingMatrices
     glm::mat4 projectionMatrix;
 };
 
+void RenderObject(u32 vao, u32 numIndices, glm::vec3 position, u32 shaderProgram, f32 yRot = 0.f, float scale = 1.f)
+{
+    glBindVertexArray(vao);
+
+    // Model matrix: transforms vertices from local to world space.
+    glm::mat4 modelMatrix = glm::mat4(1.f);
+    modelMatrix = glm::translate(modelMatrix, position);
+    modelMatrix = glm::rotate(modelMatrix, yRot, glm::vec3(0.f, 1.f, 0.f));
+    modelMatrix = glm::scale(modelMatrix, glm::vec3(scale));
+    glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+
+    SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+    SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+    glDrawElements(GL_TRIANGLES, numIndices, GL_UNSIGNED_INT, 0);
+}
+
 void RenderWithLightShader(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                            RenderingMatrices *matrices)
 {
@@ -853,34 +870,167 @@ void RenderWithLightShader(TransientDrawingInfo *transientInfo, PersistentDrawin
     {
         PointLight *curLight = &persistentInfo->pointLights[lightIndex];
 
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, curLight->position);
-
         glEnable(GL_STENCIL_TEST);
         glStencilMask(0xff);
         glStencilFunc(GL_ALWAYS, 1, 0xff);
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
         SetShaderUniformVec3(shaderProgram, "lightColor", curLight->diffuse);
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        RenderObject(transientInfo->cubeVao, 36, curLight->position, shaderProgram);
 
         glStencilMask(0x00);
         glStencilFunc(GL_NOTEQUAL, 1, 0xff);
 
         glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
         SetShaderUniformVec3(shaderProgram, "lightColor", stencilColor);
-        glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.1f));
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        RenderObject(transientInfo->cubeVao, 36, curLight->position, shaderProgram, 0.f, 1.1f);
 
         glDisable(GL_STENCIL_TEST);
     }
 }
 
-void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                            PersistentDrawingInfo *persistentInfo, RenderingMatrices *matrices)
+void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
+               u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false);
+
+void RenderModel(Model *model, u32 shaderProgram, RenderingMatrices *matrices, u32 skyboxTexture)
 {
+    for (u32 i = 0; i < model->meshCount; i++)
+    {
+        glUseProgram(shaderProgram);
+
+        glBindVertexArray(model->vaos[i]);
+
+        Mesh *mesh = &model->meshes[i];
+        if (mesh->numTextures > 0)
+        {
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_2D, mesh->textures[0].id);
+        }
+        if (mesh->numTextures > 1)
+        {
+            glActiveTexture(GL_TEXTURE1);
+            glBindTexture(GL_TEXTURE_2D, mesh->textures[1].id);
+        }
+
+        // Skybox contribution.
+        glActiveTexture(GL_TEXTURE2);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
+
+        // Model matrix: transforms vertices from local to world space.
+        glm::mat4 modelMatrix = glm::mat4(1.f);
+        modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+
+        glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+
+        // glEnable(GL_STENCIL_TEST);
+        // glStencilMask(0xff);
+        // glStencilFunc(GL_ALWAYS, 1, 0xff);
+        // glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+
+        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+        SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+        SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
+        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
+        glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+
+        // glStencilMask(0x00);
+
+        // shaderProgram = transientInfo->outlineShaderProgram;
+        // glUseProgram(shaderProgram);
+
+        // glDisable(GL_DEPTH_TEST);
+        // glStencilFunc(GL_NOTEQUAL, 1, 0xff);
+
+        // glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
+        // SetShaderUniformVec4(shaderProgram, "color", stencilColor);
+        // glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.02f));
+        // SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
+        // SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+        // SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
+        // SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
+        // glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+
+        // glDisable(GL_STENCIL_TEST);
+        // glEnable(GL_DEPTH_TEST);
+    }
+}
+
+void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                            PersistentDrawingInfo *persistentInfo, RenderingMatrices *matrices,
+                            HWND window, Arena *listArena, Arena *tempArena, u32 outerFBO, bool dynamicEnvPass = false)
+{
+    local_persist EnvironmentMap dynamicEnvMap;
+    // Dynamic environment mapping.
+    {
+        s32 width = 1024;
+        s32 height = 1024;
+        
+        if (!dynamicEnvMap.initialized)
+        {            
+            for (u32 i = 0; i < 6; i++)
+            {
+                GLenum framebufferStatus =
+                    CreateFramebuffer(width, height, &dynamicEnvMap.FBOs[i], &dynamicEnvMap.quads[i]);
+                myAssert(framebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+            }
+            
+            glGenTextures(1, &dynamicEnvMap.skyboxTexture);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, dynamicEnvMap.skyboxTexture);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+            
+            dynamicEnvMap.initialized = true;
+        }
+        
+        if (!dynamicEnvPass)
+        {
+            float orientations[6][2] =
+            {
+                {PI, 0.f},
+                {0.f, 0.f},
+                {0.f, PI / 2},
+                {0.f, -PI / 2},
+                {PI / 2.f, 0.f},
+                {-PI / 2.f, 0.f},
+            };
+            
+            CameraInfo centralCamera = {};
+            centralCamera.aspectRatio = cameraInfo->aspectRatio;
+            centralCamera.fov = cameraInfo->fov;
+            
+            for (u32 i = 0; i < 6; i++)
+            {
+                centralCamera.yaw = orientations[i][0];
+                centralCamera.pitch = orientations[i][1];
+                centralCamera.forwardVector = GetCameraForwardVector(&centralCamera);
+                centralCamera.rightVector = GetCameraRightVector(&centralCamera);
+                DrawScene(&centralCamera, transientInfo, persistentInfo, dynamicEnvMap.FBOs[i], dynamicEnvMap.quads[i],
+                          window, listArena, tempArena, true);
+            }
+            
+            u8 *data = (u8 *)ArenaPush(tempArena, 1920 * 1080 * 4);
+            for (u32 i = 0; i < 6; i++)
+            {
+                glBindTexture(GL_TEXTURE_2D, dynamicEnvMap.quads[i]);
+                glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
+                
+                glBindTexture(GL_TEXTURE_CUBE_MAP, dynamicEnvMap.skyboxTexture);
+                glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB,
+                             GL_UNSIGNED_BYTE, data);
+            }
+            ArenaPop(tempArena, 1920 * 1080 * 4);
+        }
+        else
+        {
+            return;
+        }
+    }
+    
+    glBindFramebuffer(GL_FRAMEBUFFER, outerFBO);
+
     u32 shaderProgram = transientInfo->objectShader.id;
     glUseProgram(shaderProgram);
 
@@ -923,67 +1073,7 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
 
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
-    Model *model = &transientInfo->backpack;
-    for (u32 i = 0; i < model->meshCount; i++)
-    {
-        shaderProgram = transientInfo->objectShader.id;
-        glUseProgram(shaderProgram);
-
-        glBindVertexArray(model->vaos[i]);
-
-        Mesh *mesh = &transientInfo->backpack.meshes[i];
-        if (mesh->numTextures > 0)
-        {
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, mesh->textures[0].id);
-        }
-        if (mesh->numTextures > 1)
-        {
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, mesh->textures[1].id);
-        }
-
-        // Skybox contribution.
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
-
-        // Model matrix: transforms vertices from local to world space.
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
-
-        glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
-
-        // glEnable(GL_STENCIL_TEST);
-        // glStencilMask(0xff);
-        // glStencilFunc(GL_ALWAYS, 1, 0xff);
-        // glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-        SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
-        glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
-
-        // glStencilMask(0x00);
-
-        // shaderProgram = transientInfo->outlineShaderProgram;
-        // glUseProgram(shaderProgram);
-
-        // glDisable(GL_DEPTH_TEST);
-        // glStencilFunc(GL_NOTEQUAL, 1, 0xff);
-
-        // glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
-        // SetShaderUniformVec4(shaderProgram, "color", stencilColor);
-        // glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.02f));
-        // SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
-        // SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-        // SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-        // SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        // glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
-
-        // glDisable(GL_STENCIL_TEST);
-        // glEnable(GL_DEPTH_TEST);
-    }
+    RenderModel(&transientInfo->backpack, shaderProgram, matrices, dynamicEnvMap.skyboxTexture);
 }
 
 void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
@@ -998,23 +1088,14 @@ void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *trans
 
     SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
     SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
-
-    glBindVertexArray(transientInfo->cubeVao);
+    SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     glEnable(GL_CULL_FACE);
     for (u32 i = 0; i < NUM_OBJECTS; i++)
     {
         glm::vec3 position = persistentInfo->texCubePos[i];
-
-        // Model matrix: transforms vertices from local to world space.
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, position);
-        glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
-
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-        SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-        SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        
+        RenderObject(transientInfo->cubeVao, 36, position, shaderProgram);
     }
     glDisable(GL_CULL_FACE);
 }
@@ -1029,12 +1110,14 @@ void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transie
     u32 shaderProgram = transientInfo->glassShader.id;
     glUseProgram(shaderProgram);
 
-    glBindVertexArray(transientInfo->mainQuadVao);
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
 
+    SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
+    SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
+    
     SkipList list = CreateNewList(listArena);
     for (u32 i = 0; i < NUM_OBJECTS; i++)
     {
@@ -1044,17 +1127,9 @@ void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transie
 
     for (u32 i = 0; i < NUM_OBJECTS; i++)
     {
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        glm::vec3 pos = persistentInfo->windowPos[i];
-        modelMatrix = glm::translate(modelMatrix, pos);
-        modelMatrix = glm::rotate(modelMatrix, cameraInfo->yaw, glm::vec3(0.f, 1.f, 0.f));
-        glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
-
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-        SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        glm::vec3 pos = GetValue(&list, i);
+        
+        RenderObject(transientInfo->mainQuadVao, 6, pos, shaderProgram, cameraInfo->yaw);
     }
     ArenaClear(listArena);
     memset(listArena->memory, 0, listArena->size);
@@ -1064,7 +1139,7 @@ void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transie
 }
 
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
-               u32 fbo, u32 quadTexture, Arena *listArena, Arena *tempArena)
+               u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
@@ -1098,7 +1173,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     RenderWithLightShader(transientInfo, persistentInfo, &matrices);
 
     // Objects.
-    RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, &matrices);
+    RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, &matrices, window, listArena, tempArena, fbo, dynamicEnvPass);
 
     // Textured cubes.
     RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo, &matrices);
@@ -1245,8 +1320,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     CheckForNewShaders(transientInfo);
 
     // Main pass.
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, transientInfo->mainQuad, listArena,
-              tempArena);
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, transientInfo->mainQuad,
+              window, listArena, tempArena);
 
     CameraInfo rearViewCamera = *cameraInfo;
     rearViewCamera.yaw += PI;
@@ -1256,8 +1331,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     // Rear-view pass.
     DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, transientInfo->rearViewQuad,
-              listArena, tempArena);
-
+              window, listArena, tempArena);
+    
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(1.f, 1.f, 1.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);

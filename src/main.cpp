@@ -365,6 +365,13 @@ void CheckForNewDLL(HWND window, FILETIME *lastFileTime)
     *lastFileTime = fileTime;
 }
 
+void GLAPIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
+    const GLchar *message, const void *userParam)
+{
+    DebugPrintA(message);
+    myAssert(false);
+}
+
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
     if (InitializeOpenGLExtensions(hInstance) == -1)
@@ -485,7 +492,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
 
 #ifndef NDEBUG
-        // glDebugMessageCallback(&DebugCallback, NULL);
+        glDebugMessageCallback(&DebugCallback, NULL);
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 #endif
 
@@ -504,7 +511,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         Arena *meshesArena = AllocArena(100 * sizeof(Mesh));
         Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
         Arena *listArena = AllocArena(2048);
-        Arena *tempArena = AllocArena(1024);
+        Arena *tempArena = AllocArena(1920 * 1080 * 32);
         if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo, texturesArena, meshDataArena))
         {
             return -1;

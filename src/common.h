@@ -267,3 +267,13 @@ internal void DebugPrintA(const char *formatString, ...)
     va_end(args);
     OutputDebugStringA(debugString);
 }
+
+struct EnvironmentMap
+{
+    bool initialized;
+    
+    u32 FBOs[6];
+    u32 quads[6];
+    
+    u32 skyboxTexture;
+};
