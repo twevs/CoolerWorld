@@ -182,6 +182,8 @@ struct TransientDrawingInfo
     ShaderProgram textureShader;
     ShaderProgram postProcessShader;
     ShaderProgram skyboxShader;
+    
+    u32 matricesUBO;
 
     u32 cubeVao;
 

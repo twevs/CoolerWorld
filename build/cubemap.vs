@@ -1,11 +1,14 @@
-#version 330 core
+#version 450 core
 
 layout (location = 0) in vec3 aPos;
 
 out vec3 texCoords;
 
-uniform mat4 projectionMatrix;
-uniform mat4 viewMatrix;
+layout (std140, binding = 0) uniform Matrices
+{
+	mat4 viewMatrix;
+	mat4 projectionMatrix;
+};
 
 void main()
 {

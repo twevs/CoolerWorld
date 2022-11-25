@@ -1,4 +1,4 @@
-#version 330 core
+#version 450 core
 
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
@@ -8,10 +8,13 @@ out vec3 fragWorldPos;
 out vec3 normal;
 out vec2 texCoords;
 
+layout (std140, binding = 0) uniform Matrices
+{
+	mat4 viewMatrix;
+	mat4 projectionMatrix;
+};
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;
-uniform mat4 viewMatrix;
-uniform mat4 projectionMatrix;
 
 void main()
 {

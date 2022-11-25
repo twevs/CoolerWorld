@@ -13,7 +13,7 @@ extern "C" __declspec(dllexport) void InitializeImGuiInModule(HWND window)
     imGuiIO = &io;
     ImGui::StyleColorsDark();
     ImGui_ImplWin32_Init(window);
-    ImGui_ImplOpenGL3_Init("#version 330");
+    ImGui_ImplOpenGL3_Init("#version 450");
 }
 
 extern "C" __declspec(dllexport) ImGuiIO *GetImGuiIO()
@@ -701,6 +701,11 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     drawingInfo->initialized = true;
 
     cameraInfo->aspectRatio = (f32)width / (f32)height;
+    
+    glGenBuffers(1, &transientInfo->matricesUBO);
+    glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
+    glBufferData(GL_UNIFORM_BUFFER, 128, NULL, GL_STATIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
 
     return true;
 }
@@ -833,12 +838,6 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
     }
 }
 
-struct RenderingMatrices
-{
-    glm::mat4 viewMatrix;
-    glm::mat4 projectionMatrix;
-};
-
 void RenderObject(u32 vao, u32 numIndices, glm::vec3 position, u32 shaderProgram, f32 yRot = 0.f, float scale = 1.f)
 {
     glBindVertexArray(vao);
@@ -855,14 +854,10 @@ void RenderObject(u32 vao, u32 numIndices, glm::vec3 position, u32 shaderProgram
     glDrawElements(GL_TRIANGLES, numIndices, GL_UNSIGNED_INT, 0);
 }
 
-void RenderWithLightShader(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
-                           RenderingMatrices *matrices)
+void RenderWithLightShader(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo)
 {
     u32 shaderProgram = transientInfo->lightShader.id;
     glUseProgram(shaderProgram);
-
-    SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
-    SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
 
     glBindVertexArray(transientInfo->cubeVao);
 
@@ -892,7 +887,7 @@ void RenderWithLightShader(TransientDrawingInfo *transientInfo, PersistentDrawin
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false);
 
-void RenderModel(Model *model, u32 shaderProgram, RenderingMatrices *matrices, u32 skyboxTexture)
+void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture)
 {
     for (u32 i = 0; i < model->meshCount; i++)
     {
@@ -929,8 +924,6 @@ void RenderModel(Model *model, u32 shaderProgram, RenderingMatrices *matrices, u
 
         SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
         SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
         glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
 
         // glStencilMask(0x00);
@@ -956,8 +949,8 @@ void RenderModel(Model *model, u32 shaderProgram, RenderingMatrices *matrices, u
 }
 
 void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                            PersistentDrawingInfo *persistentInfo, RenderingMatrices *matrices,
-                            HWND window, Arena *listArena, Arena *tempArena, u32 outerFBO, bool dynamicEnvPass = false)
+                            PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
+                            Arena *tempArena, bool dynamicEnvPass = false)
 {
     local_persist EnvironmentMap dynamicEnvMap;
     // Dynamic environment mapping.
@@ -987,6 +980,13 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
         
         if (!dynamicEnvPass)
         {
+            s32 savedFBO;
+            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &savedFBO);
+            glm::mat4 savedViewMatrix;
+            glGetNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &savedViewMatrix);
+            glm::mat4 savedProjectionMatrix;
+            glGetNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &savedProjectionMatrix);
+        
             float orientations[6][2] =
             {
                 {PI, 0.f},
@@ -1022,6 +1022,10 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
                              GL_UNSIGNED_BYTE, data);
             }
             ArenaPop(tempArena, 1920 * 1080 * 4);
+            
+            glBindFramebuffer(GL_FRAMEBUFFER, savedFBO);
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &savedViewMatrix);
+            glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &savedProjectionMatrix);
         }
         else
         {
@@ -1029,8 +1033,6 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
         }
     }
     
-    glBindFramebuffer(GL_FRAMEBUFFER, outerFBO);
-
     u32 shaderProgram = transientInfo->objectShader.id;
     glUseProgram(shaderProgram);
 
@@ -1073,11 +1075,11 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
 
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
-    RenderModel(&transientInfo->backpack, shaderProgram, matrices, dynamicEnvMap.skyboxTexture);
+    RenderModel(&transientInfo->backpack, shaderProgram, dynamicEnvMap.skyboxTexture);
 }
 
 void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                             PersistentDrawingInfo *persistentInfo, RenderingMatrices *matrices)
+                             PersistentDrawingInfo *persistentInfo)
 
 {
     u32 shaderProgram = transientInfo->textureShader.id;
@@ -1086,8 +1088,6 @@ void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *trans
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, transientInfo->windowTexture);
 
-    SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
-    SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     glEnable(GL_CULL_FACE);
@@ -1101,7 +1101,7 @@ void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *trans
 }
 
 void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                           PersistentDrawingInfo *persistentInfo, RenderingMatrices *matrices, Arena *listArena,
+                           PersistentDrawingInfo *persistentInfo, Arena *listArena,
                            Arena *tempArena)
 {
     glEnable(GL_BLEND);
@@ -1115,9 +1115,6 @@ void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transie
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
 
-    SetShaderUniformMat4(shaderProgram, "viewMatrix", &matrices->viewMatrix);
-    SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices->projectionMatrix);
-    
     SkipList list = CreateNewList(listArena);
     for (u32 i = 0; i < NUM_OBJECTS; i++)
     {
@@ -1160,35 +1157,37 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
 
     float farPlaneDistance = 100.f;
 
-    RenderingMatrices matrices = {};
-    matrices.viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
+    glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 
     // Projection matrix: transforms vertices from view space to clip space.
-    matrices.projectionMatrix =
+    glm::mat4 projectionMatrix =
         glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, .1f, farPlaneDistance);
+    
+    glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
+    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
 
     // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
 
     // Point lights.
-    RenderWithLightShader(transientInfo, persistentInfo, &matrices);
+    RenderWithLightShader(transientInfo, persistentInfo);
 
     // Objects.
-    RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, &matrices, window, listArena, tempArena, fbo, dynamicEnvPass);
+    RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, dynamicEnvPass);
 
     // Textured cubes.
-    RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo, &matrices);
+    RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
 
     // Windows.
-    RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, &matrices, listArena, tempArena);
+    RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
 
     // Skybox.
     {
         u32 shaderProgram = transientInfo->skyboxShader.id;
         glUseProgram(shaderProgram);
 
-        glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(matrices.viewMatrix));
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &skyboxViewMatrix);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &matrices.projectionMatrix);
+        glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
 
         glBindVertexArray(transientInfo->cubeVao);
         glActiveTexture(GL_TEXTURE0);
@@ -1348,8 +1347,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuad);
 
         glm::mat4 identity = glm::mat4(1.f);
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &identity);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &identity);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
+        glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
 
         glBindVertexArray(transientInfo->mainQuadVao);
 
@@ -1374,8 +1373,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
 
         glm::mat4 identity = glm::mat4(1.f);
-        SetShaderUniformMat4(shaderProgram, "viewMatrix", &identity);
-        SetShaderUniformMat4(shaderProgram, "projectionMatrix", &identity);
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
+        glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
 
         glBindVertexArray(transientInfo->rearViewQuadVao);
 

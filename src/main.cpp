@@ -453,9 +453,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         SetPixelFormat(hdc, format, &pixelFormatDescriptor);
 
         int contextAttribs[] = {WGL_CONTEXT_MAJOR_VERSION_ARB,
-                                3,
+                                4,
                                 WGL_CONTEXT_MINOR_VERSION_ARB,
-                                3,
+                                5,
                                 WGL_CONTEXT_PROFILE_MASK_ARB,
                                 WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
 #ifndef NDEBUG
