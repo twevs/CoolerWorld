@@ -192,9 +192,9 @@ internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *ve
                                   const char *fragmentShaderFilename, const char *geometryShaderFilename = "")
 {
     ShaderProgram newShaderProgram = {};
-    strcpy(newShaderProgram.vertexShaderFilename, vertexShaderFilename);
-    strcpy(newShaderProgram.geometryShaderFilename, geometryShaderFilename);
-    strcpy(newShaderProgram.fragmentShaderFilename, fragmentShaderFilename);
+    strcpy_s(newShaderProgram.vertexShaderFilename, vertexShaderFilename);
+    strcpy_s(newShaderProgram.geometryShaderFilename, geometryShaderFilename);
+    strcpy_s(newShaderProgram.fragmentShaderFilename, fragmentShaderFilename);
     newShaderProgram.vertexShaderTime = GetFileTime(vertexShaderFilename);
     newShaderProgram.geometryShaderTime = GetFileTime(geometryShaderFilename);
     newShaderProgram.fragmentShaderTime = GetFileTime(fragmentShaderFilename);
@@ -242,7 +242,8 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->geometryShader, info->geometryShader.id, "ndc.vs", "color.fs", "house.gs"))
+    if (!CreateShaderProgram(&info->geometryShader, info->geometryShader.id, "vertex_shader_geometry.vs", "color.fs",
+                             "vis_normals.gs"))
     {
         return false;
     }
@@ -832,27 +833,20 @@ internal bool HasNewVersion(const char *filename, FILETIME *lastFileTime)
     return returnVal;
 }
 
-// TODO: develop a better way to do this that doesn't involve adding another 4 lines
-// every time I add another shader program.
+internal bool HasNewVersion(ShaderProgram *program)
+{
+    bool hasGeometryShader = (strlen(program->geometryShaderFilename) > 0);
+    return HasNewVersion(program->vertexShaderFilename, &program->vertexShaderTime) ||
+           (hasGeometryShader && HasNewVersion(program->geometryShaderFilename, &program->geometryShaderTime)) ||
+           HasNewVersion(program->fragmentShaderFilename, &program->fragmentShaderTime);
+}
+
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
-    if (HasNewVersion(info->objectShader.vertexShaderFilename, &info->objectShader.vertexShaderTime) ||
-        HasNewVersion(info->objectShader.fragmentShaderFilename, &info->objectShader.fragmentShaderTime) ||
-        HasNewVersion(info->lightShader.vertexShaderFilename, &info->lightShader.vertexShaderTime) ||
-        HasNewVersion(info->lightShader.fragmentShaderFilename, &info->lightShader.fragmentShaderTime) ||
-        HasNewVersion(info->outlineShader.vertexShaderFilename, &info->outlineShader.vertexShaderTime) ||
-        HasNewVersion(info->outlineShader.fragmentShaderFilename, &info->outlineShader.fragmentShaderTime) ||
-        HasNewVersion(info->textureShader.vertexShaderFilename, &info->textureShader.vertexShaderTime) ||
-        HasNewVersion(info->textureShader.fragmentShaderFilename, &info->textureShader.fragmentShaderTime) ||
-        HasNewVersion(info->glassShader.vertexShaderFilename, &info->glassShader.vertexShaderTime) ||
-        HasNewVersion(info->glassShader.fragmentShaderFilename, &info->glassShader.fragmentShaderTime) ||
-        HasNewVersion(info->postProcessShader.vertexShaderFilename, &info->postProcessShader.vertexShaderTime) ||
-        HasNewVersion(info->postProcessShader.fragmentShaderFilename, &info->postProcessShader.fragmentShaderTime) ||
-        HasNewVersion(info->skyboxShader.vertexShaderFilename, &info->skyboxShader.vertexShaderTime) ||
-        HasNewVersion(info->skyboxShader.fragmentShaderFilename, &info->skyboxShader.fragmentShaderTime) ||
-        HasNewVersion(info->geometryShader.vertexShaderFilename, &info->geometryShader.vertexShaderTime) ||
-        HasNewVersion(info->geometryShader.geometryShaderFilename, &info->geometryShader.geometryShaderTime) ||
-        HasNewVersion(info->geometryShader.fragmentShaderFilename, &info->geometryShader.fragmentShaderTime))
+    if (HasNewVersion(&info->objectShader) || HasNewVersion(&info->lightShader) ||
+        HasNewVersion(&info->outlineShader) || HasNewVersion(&info->textureShader) ||
+        HasNewVersion(&info->glassShader) || HasNewVersion(&info->postProcessShader) ||
+        HasNewVersion(&info->skyboxShader) || HasNewVersion(&info->geometryShader))
     {
         CreateShaderPrograms(info);
     }
@@ -907,7 +901,7 @@ void RenderWithLightShader(TransientDrawingInfo *transientInfo, PersistentDrawin
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false);
 
-void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture)
+void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0)
 {
     for (u32 i = 0; i < model->meshCount; i++)
     {
@@ -916,20 +910,17 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture)
         glBindVertexArray(model->vaos[i]);
 
         Mesh *mesh = &model->meshes[i];
-        if (mesh->numTextures > 0)
+        for (u32 textureSlot = 0; textureSlot < 2; textureSlot++)
         {
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, mesh->textures[0].id);
+            glActiveTexture(GL_TEXTURE0 + textureSlot);
+            glBindTexture(GL_TEXTURE_2D, mesh->textures[textureSlot].id);
         }
-        if (mesh->numTextures > 1)
+        if (skyboxTexture > 0)
         {
-            glActiveTexture(GL_TEXTURE1);
-            glBindTexture(GL_TEXTURE_2D, mesh->textures[1].id);
+            // Skybox contribution.
+            glActiveTexture(GL_TEXTURE2);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
         }
-
-        // Skybox contribution.
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
 
         // Model matrix: transforms vertices from local to world space.
         glm::mat4 modelMatrix = glm::mat4(1.f);
@@ -966,6 +957,20 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture)
         // glDisable(GL_STENCIL_TEST);
         // glEnable(GL_DEPTH_TEST);
     }
+}
+
+void FlipImage(u8 *data, s32 width, s32 height, u32 bytesPerPixel, Arena *tempArena)
+{
+    u32 stride = width * bytesPerPixel;
+    u8 *tmp = (u8 *)ArenaPush(tempArena, stride);
+    u8 *end = data + width * height * bytesPerPixel;
+    for (s32 i = 0; i < height / 2; i++)
+    {
+        memcpy_s(tmp, stride, data + i * stride, stride);
+        memcpy_s(data + i * stride, stride, end - (1 + i) * stride, stride);
+        memcpy_s(end - (1 + i) * stride, stride, tmp, stride);
+    }
+    ArenaPop(tempArena, stride);
 }
 
 void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
@@ -1008,7 +1013,7 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
             glGetNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &savedProjectionMatrix);
 
             float orientations[6][2] = {
-                {PI, 0.f}, {0.f, 0.f}, {0.f, PI / 2}, {0.f, -PI / 2}, {PI / 2.f, 0.f}, {-PI / 2.f, 0.f},
+                {-PI / 2.f, 0.f}, {PI / 2.f, 0.f}, {0.f, PI / 2}, {0.f, -PI / 2}, {PI, 0.f}, {0.f, 0.f},
             };
 
             CameraInfo centralCamera = {};
@@ -1030,7 +1035,7 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
             {
                 glBindTexture(GL_TEXTURE_2D, dynamicEnvMap.quads[i]);
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-
+                FlipImage(data, width, height, 3, tempArena);
                 glBindTexture(GL_TEXTURE_CUBE_MAP, dynamicEnvMap.skyboxTexture);
                 glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE,
                              data);
@@ -1090,6 +1095,14 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     RenderModel(&transientInfo->backpack, shaderProgram, dynamicEnvMap.skyboxTexture);
+}
+
+void RenderWithGeometryShader(TransientDrawingInfo *transientInfo)
+{
+    u32 shaderProgram = transientInfo->geometryShader.id;
+    glUseProgram(shaderProgram);
+
+    RenderModel(&transientInfo->backpack, shaderProgram);
 }
 
 void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
@@ -1187,6 +1200,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
 
     // Objects.
     RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, dynamicEnvPass);
+    RenderWithGeometryShader(transientInfo);
 
     // Textured cubes.
     RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);

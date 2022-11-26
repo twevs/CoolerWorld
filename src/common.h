@@ -19,13 +19,9 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#include "imgui/imgui.cpp"
-#include "imgui/imgui_demo.cpp"
-#include "imgui/imgui_draw.cpp"
+#include "imgui/imgui.h"
 #include "imgui/imgui_impl_opengl3.h"
-#include "imgui/imgui_impl_win32.cpp"
-#include "imgui/imgui_tables.cpp"
-#include "imgui/imgui_widgets.cpp"
+#include "imgui/imgui_impl_win32.h"
 
 #include "assimp/Importer.hpp"
 #include <assimp/postprocess.h>
