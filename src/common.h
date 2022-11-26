@@ -169,6 +169,8 @@ struct ShaderProgram
     u32 id;
     char vertexShaderFilename[64];
     FILETIME vertexShaderTime;
+    char geometryShaderFilename[64];
+    FILETIME geometryShaderTime;
     char fragmentShaderFilename[64];
     FILETIME fragmentShaderTime;
 };
@@ -182,7 +184,8 @@ struct TransientDrawingInfo
     ShaderProgram textureShader;
     ShaderProgram postProcessShader;
     ShaderProgram skyboxShader;
-    
+    ShaderProgram geometryShader;
+
     u32 matricesUBO;
 
     u32 cubeVao;
@@ -273,9 +276,9 @@ internal void DebugPrintA(const char *formatString, ...)
 struct EnvironmentMap
 {
     bool initialized;
-    
+
     u32 FBOs[6];
     u32 quads[6];
-    
+
     u32 skyboxTexture;
 };

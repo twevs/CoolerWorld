@@ -106,6 +106,13 @@ internal bool CreateShaderProgram(ShaderProgram *program)
         return false;
     }
 
+    bool hasGeometryShader = strlen(program->geometryShaderFilename) > 0;
+    u32 geometryShaderID = 0;
+    if (hasGeometryShader && !CompileShader(&geometryShaderID, GL_GEOMETRY_SHADER, program->geometryShaderFilename))
+    {
+        return false;
+    }
+
     u32 fragmentShaderID = 0;
     if (!CompileShader(&fragmentShaderID, GL_FRAGMENT_SHADER, program->fragmentShaderFilename))
     {
@@ -118,6 +125,10 @@ internal bool CreateShaderProgram(ShaderProgram *program)
         *programID = glCreateProgram();
     }
     glAttachShader(*programID, vertexShaderID);
+    if (hasGeometryShader)
+    {
+        glAttachShader(*programID, geometryShaderID);
+    }
     glAttachShader(*programID, fragmentShaderID);
     glLinkProgram(*programID);
 
@@ -178,12 +189,14 @@ internal void SetShaderUniformMat4(u32 shaderProgram, const char *uniformName, g
 }
 
 internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *vertexShaderFilename,
-                                  const char *fragmentShaderFilename)
+                                  const char *fragmentShaderFilename, const char *geometryShaderFilename = "")
 {
     ShaderProgram newShaderProgram = {};
     strcpy(newShaderProgram.vertexShaderFilename, vertexShaderFilename);
+    strcpy(newShaderProgram.geometryShaderFilename, geometryShaderFilename);
     strcpy(newShaderProgram.fragmentShaderFilename, fragmentShaderFilename);
     newShaderProgram.vertexShaderTime = GetFileTime(vertexShaderFilename);
+    newShaderProgram.geometryShaderTime = GetFileTime(geometryShaderFilename);
     newShaderProgram.fragmentShaderTime = GetFileTime(fragmentShaderFilename);
     if (!CreateShaderProgram(&newShaderProgram))
     {
@@ -193,7 +206,7 @@ internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *ve
     {
         glDeleteProgram(id);
     }
-    
+
     *program = newShaderProgram;
     return true;
 }
@@ -229,6 +242,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
+    if (!CreateShaderProgram(&info->geometryShader, info->geometryShader.id, "ndc.vs", "color.fs", "house.gs"))
+    {
+        return false;
+    }
 
     glUseProgram(info->objectShader.id);
     SetShaderUniformSampler(info->objectShader.id, "material.diffuse", 0);
@@ -248,7 +265,7 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     return true;
 }
 
-internal bool ReloaderShaderPrograms(TransientDrawingInfo *info)
+internal bool ReloadShaderPrograms(TransientDrawingInfo *info)
 {
     myAssert(glIsProgram(info->objectShader.id));
     myAssert(glIsProgram(info->lightShader.id));
@@ -701,7 +718,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     drawingInfo->initialized = true;
 
     cameraInfo->aspectRatio = (f32)width / (f32)height;
-    
+
     glGenBuffers(1, &transientInfo->matricesUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
     glBufferData(GL_UNIFORM_BUFFER, 128, NULL, GL_STATIC_DRAW);
@@ -832,7 +849,10 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
         HasNewVersion(info->postProcessShader.vertexShaderFilename, &info->postProcessShader.vertexShaderTime) ||
         HasNewVersion(info->postProcessShader.fragmentShaderFilename, &info->postProcessShader.fragmentShaderTime) ||
         HasNewVersion(info->skyboxShader.vertexShaderFilename, &info->skyboxShader.vertexShaderTime) ||
-        HasNewVersion(info->skyboxShader.fragmentShaderFilename, &info->skyboxShader.fragmentShaderTime))
+        HasNewVersion(info->skyboxShader.fragmentShaderFilename, &info->skyboxShader.fragmentShaderTime) ||
+        HasNewVersion(info->geometryShader.vertexShaderFilename, &info->geometryShader.vertexShaderTime) ||
+        HasNewVersion(info->geometryShader.geometryShaderFilename, &info->geometryShader.geometryShaderTime) ||
+        HasNewVersion(info->geometryShader.fragmentShaderFilename, &info->geometryShader.fragmentShaderTime))
     {
         CreateShaderPrograms(info);
     }
@@ -949,24 +969,24 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture)
 }
 
 void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                            PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
-                            Arena *tempArena, bool dynamicEnvPass = false)
+                            PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena, Arena *tempArena,
+                            bool dynamicEnvPass = false)
 {
     local_persist EnvironmentMap dynamicEnvMap;
     // Dynamic environment mapping.
     {
         s32 width = 1024;
         s32 height = 1024;
-        
+
         if (!dynamicEnvMap.initialized)
-        {            
+        {
             for (u32 i = 0; i < 6; i++)
             {
                 GLenum framebufferStatus =
                     CreateFramebuffer(width, height, &dynamicEnvMap.FBOs[i], &dynamicEnvMap.quads[i]);
                 myAssert(framebufferStatus == GL_FRAMEBUFFER_COMPLETE);
             }
-            
+
             glGenTextures(1, &dynamicEnvMap.skyboxTexture);
             glBindTexture(GL_TEXTURE_CUBE_MAP, dynamicEnvMap.skyboxTexture);
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
@@ -974,10 +994,10 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-            
+
             dynamicEnvMap.initialized = true;
         }
-        
+
         if (!dynamicEnvPass)
         {
             s32 savedFBO;
@@ -986,21 +1006,15 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
             glGetNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &savedViewMatrix);
             glm::mat4 savedProjectionMatrix;
             glGetNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &savedProjectionMatrix);
-        
-            float orientations[6][2] =
-            {
-                {PI, 0.f},
-                {0.f, 0.f},
-                {0.f, PI / 2},
-                {0.f, -PI / 2},
-                {PI / 2.f, 0.f},
-                {-PI / 2.f, 0.f},
+
+            float orientations[6][2] = {
+                {PI, 0.f}, {0.f, 0.f}, {0.f, PI / 2}, {0.f, -PI / 2}, {PI / 2.f, 0.f}, {-PI / 2.f, 0.f},
             };
-            
+
             CameraInfo centralCamera = {};
             centralCamera.aspectRatio = cameraInfo->aspectRatio;
             centralCamera.fov = cameraInfo->fov;
-            
+
             for (u32 i = 0; i < 6; i++)
             {
                 centralCamera.yaw = orientations[i][0];
@@ -1010,19 +1024,19 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
                 DrawScene(&centralCamera, transientInfo, persistentInfo, dynamicEnvMap.FBOs[i], dynamicEnvMap.quads[i],
                           window, listArena, tempArena, true);
             }
-            
+
             u8 *data = (u8 *)ArenaPush(tempArena, 1920 * 1080 * 4);
             for (u32 i = 0; i < 6; i++)
             {
                 glBindTexture(GL_TEXTURE_2D, dynamicEnvMap.quads[i]);
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-                
+
                 glBindTexture(GL_TEXTURE_CUBE_MAP, dynamicEnvMap.skyboxTexture);
-                glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB,
-                             GL_UNSIGNED_BYTE, data);
+                glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE,
+                             data);
             }
             ArenaPop(tempArena, 1920 * 1080 * 4);
-            
+
             glBindFramebuffer(GL_FRAMEBUFFER, savedFBO);
             glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &savedViewMatrix);
             glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &savedProjectionMatrix);
@@ -1032,7 +1046,7 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
             return;
         }
     }
-    
+
     u32 shaderProgram = transientInfo->objectShader.id;
     glUseProgram(shaderProgram);
 
@@ -1094,15 +1108,14 @@ void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *trans
     for (u32 i = 0; i < NUM_OBJECTS; i++)
     {
         glm::vec3 position = persistentInfo->texCubePos[i];
-        
+
         RenderObject(transientInfo->cubeVao, 36, position, shaderProgram);
     }
     glDisable(GL_CULL_FACE);
 }
 
 void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                           PersistentDrawingInfo *persistentInfo, Arena *listArena,
-                           Arena *tempArena)
+                           PersistentDrawingInfo *persistentInfo, Arena *listArena, Arena *tempArena)
 {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1125,7 +1138,7 @@ void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transie
     for (u32 i = 0; i < NUM_OBJECTS; i++)
     {
         glm::vec3 pos = GetValue(&list, i);
-        
+
         RenderObject(transientInfo->mainQuadVao, 6, pos, shaderProgram, cameraInfo->yaw);
     }
     ArenaClear(listArena);
@@ -1162,7 +1175,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     // Projection matrix: transforms vertices from view space to clip space.
     glm::mat4 projectionMatrix =
         glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, .1f, farPlaneDistance);
-    
+
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
@@ -1319,8 +1332,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     CheckForNewShaders(transientInfo);
 
     // Main pass.
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, transientInfo->mainQuad,
-              window, listArena, tempArena);
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, transientInfo->mainQuad, window,
+              listArena, tempArena);
 
     CameraInfo rearViewCamera = *cameraInfo;
     rearViewCamera.yaw += PI;
@@ -1331,7 +1344,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // Rear-view pass.
     DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, transientInfo->rearViewQuad,
               window, listArena, tempArena);
-    
+
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(1.f, 1.f, 1.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
