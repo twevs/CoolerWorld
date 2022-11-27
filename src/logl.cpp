@@ -1,6 +1,8 @@
 #include "common.h"
 #include "skiplist.h"
 
+#define NUM_ASTEROIDS 100000
+
 global_variable ImGuiContext *imGuiContext;
 global_variable ImGuiIO *imGuiIO;
 
@@ -217,6 +219,11 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
+    if (!CreateShaderProgram(&info->instancedObjectShader, info->instancedObjectShader.id, "instanced.vs",
+                             "fragment_shader.fs"))
+    {
+        return false;
+    }
     if (!CreateShaderProgram(&info->lightShader, info->lightShader.id, "vertex_shader.vs", "light_fragment_shader.fs"))
     {
         return false;
@@ -252,6 +259,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     SetShaderUniformSampler(info->objectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(info->objectShader.id, "material.specular", 1);
     SetShaderUniformSampler(info->objectShader.id, "skybox", 2);
+    glUseProgram(info->instancedObjectShader.id);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "material.diffuse", 0);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "material.specular", 1);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 2);
 
     glUseProgram(info->textureShader.id);
     SetShaderUniformSampler(info->textureShader.id, "tex", 0);
@@ -266,6 +277,7 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     return true;
 }
 
+/*
 internal bool ReloadShaderPrograms(TransientDrawingInfo *info)
 {
     myAssert(glIsProgram(info->objectShader.id));
@@ -293,6 +305,7 @@ internal bool ReloadShaderPrograms(TransientDrawingInfo *info)
     glGetAttachedShaders(info->textureShader.id, 2, &count, shaders);
     myAssert(count == 2);
 }
+*/
 
 internal u32 CreateTextureFromImage(const char *filename, GLenum wrapMode = GL_REPEAT)
 {
@@ -489,8 +502,7 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     Model result;
 
     Assimp::Importer importer;
-    char path[] = "backpack.obj";
-    const aiScene *scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs);
+    const aiScene *scene = importer.ReadFile(filename, aiProcess_Triangulate | aiProcess_FlipUVs);
     myAssert(scene);
     Mesh *meshes = (Mesh *)ArenaPush(meshDataArena, 100 * sizeof(Mesh));
     u32 meshCount = 0;
@@ -521,7 +533,7 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     return result;
 }
 
-bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInfo)
+internal bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInfo)
 {
     FILE *file;
     errno_t opened = fopen_s(&file, "save.bin", "rb");
@@ -538,7 +550,7 @@ bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInfo)
     return true;
 }
 
-GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture)
+internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture)
 {
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
@@ -561,6 +573,43 @@ GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture)
     glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
 
     return glCheckFramebufferStatus(GL_FRAMEBUFFER);
+}
+
+// Returns the size of the previous buffer.
+internal u32 AppendToVAO(u32 vao, void *data, u32 dataSize)
+{
+    glBindVertexArray(vao);
+    s32 bufferSize;
+    glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &bufferSize);
+    Arena *tempArena = AllocArena(bufferSize);
+    void *savedBuffer = ArenaPush(tempArena, bufferSize);
+    glGetBufferSubData(GL_ARRAY_BUFFER, 0, bufferSize, savedBuffer);
+    glBufferData(GL_ARRAY_BUFFER, bufferSize + dataSize, NULL, GL_STATIC_DRAW);
+    glBufferSubData(GL_ARRAY_BUFFER, 0, bufferSize, savedBuffer);
+    glBufferSubData(GL_ARRAY_BUFFER, bufferSize, dataSize, data);
+    FreeArena(tempArena);
+    return bufferSize;
+}
+
+internal f32 CreateRandomNumber(f32 min, f32 max)
+{
+    f32 midpoint = (max + min) / 2.f;
+    f32 delta = midpoint - min;
+    f32 x = (f32)(rand() % 10);
+    x = (rand() > RAND_MAX / 2) ? x : -x;
+    return midpoint + delta * (x / 10.f);
+}
+
+internal glm::vec3 CreateRandomVec3()
+{
+    f32 x = (f32)(rand() % 10);
+    x = (rand() > RAND_MAX / 2) ? x : -x;
+    f32 y = (f32)(rand() % 10);
+    y = (rand() > RAND_MAX / 2) ? y : -y;
+    f32 z = (f32)(rand() % 10);
+    z = (rand() > RAND_MAX / 2) ? z : -z;
+
+    return {x, y, z};
 }
 
 extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
@@ -628,6 +677,74 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     transientInfo->rearViewQuadVao = rearViewQuadVao;
     transientInfo->backpack =
         LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+    transientInfo->planet = LoadModel("planet.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+    transientInfo->asteroid = LoadModel("rock.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+
+    srand((u32)Win32GetWallClock());
+    
+    u32 modelMatricesSize = NUM_ASTEROIDS * sizeof(glm::mat4);
+    u32 normalMatricesSize = NUM_ASTEROIDS * sizeof(glm::mat3);
+    Arena *tempArena = AllocArena(modelMatricesSize + normalMatricesSize);
+    glm::mat4 *modelMatrices = (glm::mat4 *)ArenaPush(tempArena, modelMatricesSize);
+    glm::mat3 *normalMatrices = (glm::mat3 *)ArenaPush(tempArena, normalMatricesSize);
+    for (u32 i = 0; i < NUM_ASTEROIDS; i++)
+    {
+        glm::mat4 modelMatrix = glm::mat4(1.f);
+        f32 radius = CreateRandomNumber(.8f, 1.2f) * 50.f;
+        f32 angle = ((f32)i / (f32)NUM_ASTEROIDS) * 2 * PI;
+        f32 x = cosf(angle) * radius;
+        f32 z = sinf(angle) * radius;
+        f32 y = CreateRandomNumber(-5.f, 5.f);
+        modelMatrix = glm::translate(modelMatrix, glm::vec3(x, y, z));
+        f32 rotAngle = CreateRandomNumber(0, PI);
+        modelMatrix = glm::rotate(modelMatrix, rotAngle, CreateRandomVec3());
+        f32 scale = CreateRandomNumber(.01f, .2f);
+        modelMatrix = glm::scale(modelMatrix, glm::vec3(scale));
+        
+        modelMatrices[i] = modelMatrix;
+        normalMatrices[i] = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+    }
+    
+    // NOTE: I originally used AppendToVAO() as I did not know that a VAO could have attribute pointers
+    // into several VBOs. Out of curiosity, I profiled both methods and there is no performance
+    // difference.
+    u32 matricesVBO[2];
+    glGenBuffers(2, matricesVBO);
+    glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[0]);
+    glBufferData(GL_ARRAY_BUFFER, modelMatricesSize, modelMatrices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[1]);
+    glBufferData(GL_ARRAY_BUFFER, normalMatricesSize, normalMatrices, GL_STATIC_DRAW);
+    
+    for (u32 i = 0; i < transientInfo->asteroid.meshCount; i++)
+    {
+        u32 curVao = transientInfo->asteroid.vaos[i];
+        glBindVertexArray(curVao);
+        glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[0]);
+        glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(u64)0);
+        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(0 + 4 * sizeof(f32)));
+        glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(0 + 8 * sizeof(f32)));
+        glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(0 + 12 * sizeof(f32)));
+        glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[1]);
+        glVertexAttribPointer(7, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(f32), (void *)(u64)0);
+        glVertexAttribPointer(8, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(f32), (void *)(0 + 3 * sizeof(f32)));
+        glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(f32), (void *)(0 + 6 * sizeof(f32)));
+        glEnableVertexAttribArray(3);
+        glEnableVertexAttribArray(4);
+        glEnableVertexAttribArray(5);
+        glEnableVertexAttribArray(6);
+        glEnableVertexAttribArray(7);
+        glEnableVertexAttribArray(8);
+        glEnableVertexAttribArray(9);
+        glVertexAttribDivisor(3, 1);
+        glVertexAttribDivisor(4, 1);
+        glVertexAttribDivisor(5, 1);
+        glVertexAttribDivisor(6, 1);
+        glVertexAttribDivisor(7, 1);
+        glVertexAttribDivisor(8, 1);
+        glVertexAttribDivisor(9, 1);
+    }
+    FreeArena(tempArena);
+
     transientInfo->grassTexture = CreateTextureFromImage("grass.png", GL_CLAMP_TO_EDGE);
     transientInfo->windowTexture = CreateTextureFromImage("window.png", GL_CLAMP_TO_EDGE);
 
@@ -635,16 +752,9 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     {
         PointLight *pointLights = drawingInfo->pointLights;
 
-        srand((u32)Win32GetWallClock());
         for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
         {
-            f32 x = (f32)(rand() % 10);
-            x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)(rand() % 10);
-            y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)(rand() % 10);
-            z = (rand() > RAND_MAX / 2) ? z : -z;
-            pointLights[lightIndex].position = {x, y, z};
+            pointLights[lightIndex].position = CreateRandomVec3();
 
             u32 attIndex = rand() % myArraySize(globalAttenuationTable);
             // NOTE: constant-range point lights makes for easier visualization of light effects.
@@ -653,24 +763,12 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
 
         for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
         {
-            f32 x = (f32)(rand() % 10);
-            x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)(rand() % 10);
-            y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)(rand() % 10);
-            z = (rand() > RAND_MAX / 2) ? z : -z;
-            drawingInfo->texCubePos[texCubeIndex] = {x, y, z};
+            drawingInfo->texCubePos[texCubeIndex] = CreateRandomVec3();
         }
 
         for (u32 windowIndex = 0; windowIndex < NUM_OBJECTS; windowIndex++)
         {
-            f32 x = (f32)(rand() % 10);
-            x = (rand() > RAND_MAX / 2) ? x : -x;
-            f32 y = (f32)(rand() % 10);
-            y = (rand() > RAND_MAX / 2) ? y : -y;
-            f32 z = (f32)(rand() % 10);
-            z = (rand() > RAND_MAX / 2) ? z : -z;
-            drawingInfo->windowPos[windowIndex] = {x, y, z};
+            drawingInfo->windowPos[windowIndex] = CreateRandomVec3();
         }
 
         drawingInfo->dirLight.direction =
@@ -843,10 +941,11 @@ internal bool HasNewVersion(ShaderProgram *program)
 
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
-    if (HasNewVersion(&info->objectShader) || HasNewVersion(&info->lightShader) ||
-        HasNewVersion(&info->outlineShader) || HasNewVersion(&info->textureShader) ||
-        HasNewVersion(&info->glassShader) || HasNewVersion(&info->postProcessShader) ||
-        HasNewVersion(&info->skyboxShader) || HasNewVersion(&info->geometryShader))
+    if (HasNewVersion(&info->objectShader) || HasNewVersion(&info->instancedObjectShader) ||
+        HasNewVersion(&info->lightShader) || HasNewVersion(&info->outlineShader) ||
+        HasNewVersion(&info->textureShader) || HasNewVersion(&info->glassShader) ||
+        HasNewVersion(&info->postProcessShader) || HasNewVersion(&info->skyboxShader) ||
+        HasNewVersion(&info->geometryShader))
     {
         CreateShaderPrograms(info);
     }
@@ -901,16 +1000,16 @@ void RenderWithLightShader(TransientDrawingInfo *transientInfo, PersistentDrawin
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false);
 
-void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0)
+void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 numInstances = 1)
 {
+    glUseProgram(shaderProgram);
+    
     for (u32 i = 0; i < model->meshCount; i++)
     {
-        glUseProgram(shaderProgram);
-
         glBindVertexArray(model->vaos[i]);
 
         Mesh *mesh = &model->meshes[i];
-        for (u32 textureSlot = 0; textureSlot < 2; textureSlot++)
+        for (u32 textureSlot = 0; textureSlot < mesh->numTextures; textureSlot++)
         {
             glActiveTexture(GL_TEXTURE0 + textureSlot);
             glBindTexture(GL_TEXTURE_2D, mesh->textures[textureSlot].id);
@@ -922,40 +1021,24 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0)
             glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
         }
 
-        // Model matrix: transforms vertices from local to world space.
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+        if (numInstances == 1)
+        {
+            // Model matrix: transforms vertices from local to world space.
+            glm::mat4 modelMatrix = glm::mat4(1.f);
+            modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
 
-        glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+            glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
-        // glEnable(GL_STENCIL_TEST);
-        // glStencilMask(0xff);
-        // glStencilFunc(GL_ALWAYS, 1, 0xff);
-        // glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-        SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-        glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
-
-        // glStencilMask(0x00);
-
-        // shaderProgram = transientInfo->outlineShaderProgram;
-        // glUseProgram(shaderProgram);
-
-        // glDisable(GL_DEPTH_TEST);
-        // glStencilFunc(GL_NOTEQUAL, 1, 0xff);
-
-        // glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
-        // SetShaderUniformVec4(shaderProgram, "color", stencilColor);
-        // glm::mat4 stencilModelMatrix = glm::scale(modelMatrix, glm::vec3(1.02f));
-        // SetShaderUniformMat4(shaderProgram, "modelMatrix", &stencilModelMatrix);
-        // SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-        // SetShaderUniformMat4(shaderProgram, "viewMatrix", &viewMatrix);
-        // SetShaderUniformMat4(shaderProgram, "projectionMatrix", &projectionMatrix);
-        // glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
-
-        // glDisable(GL_STENCIL_TEST);
-        // glEnable(GL_DEPTH_TEST);
+            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+            SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+            
+            glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+        }
+        else
+        {
+            glDrawElementsInstanced(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0,
+                                    numInstances);
+        }
     }
 }
 
@@ -973,22 +1056,68 @@ void FlipImage(u8 *data, s32 width, s32 height, u32 bytesPerPixel, Arena *tempAr
     ArenaPop(tempArena, stride);
 }
 
-void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                            PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena, Arena *tempArena,
-                            bool dynamicEnvPass = false)
+internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, PersistentDrawingInfo *persistentInfo)
 {
+    glUseProgram(shaderProgram);
+    
+    SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
+
+    SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
+    SetShaderUniformVec3(shaderProgram, "dirLight.ambient", persistentInfo->dirLight.ambient);
+    SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
+    SetShaderUniformVec3(shaderProgram, "dirLight.specular", persistentInfo->dirLight.specular);
+
+    for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+    {
+        PointLight *lights = persistentInfo->pointLights;
+        PointLight light = lights[lightIndex];
+
+        char uniformString[32];
+        sprintf_s(uniformString, "pointLights[%i].position", lightIndex);
+        SetShaderUniformVec3(shaderProgram, uniformString, light.position);
+        sprintf_s(uniformString, "pointLights[%i].ambient", lightIndex);
+        SetShaderUniformVec3(shaderProgram, uniformString, light.ambient);
+        sprintf_s(uniformString, "pointLights[%i].diffuse", lightIndex);
+        SetShaderUniformVec3(shaderProgram, uniformString, light.diffuse);
+        sprintf_s(uniformString, "pointLights[%i].specular", lightIndex);
+        SetShaderUniformVec3(shaderProgram, uniformString, light.specular);
+
+        Attenuation *att = &globalAttenuationTable[light.attIndex];
+        sprintf_s(uniformString, "pointLights[%i].linear", lightIndex);
+        SetShaderUniformFloat(shaderProgram, uniformString, att->linear);
+        sprintf_s(uniformString, "pointLights[%i].quadratic", lightIndex);
+        SetShaderUniformFloat(shaderProgram, uniformString, att->quadratic);
+    }
+
+    SetShaderUniformVec3(shaderProgram, "spotLight.position", cameraInfo->pos);
+    SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector(cameraInfo));
+    SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
+    SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
+    SetShaderUniformVec3(shaderProgram, "spotLight.ambient", persistentInfo->spotLight.ambient);
+    SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
+    SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
+
+    SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
+}
+
+internal void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                                     PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
+                                     Arena *tempArena, bool dynamicEnvPass = false)
+{
+    // TODO: find a proper way to parameterize dynamic environment mapping. We only want certain objects
+    // to reflect the environment, not all of them. It should depend on their shininess.
     local_persist EnvironmentMap dynamicEnvMap;
+#if 0
     // Dynamic environment mapping.
     {
-        s32 width = 1024;
-        s32 height = 1024;
+        s32 sideLength = 728;
 
         if (!dynamicEnvMap.initialized)
         {
             for (u32 i = 0; i < 6; i++)
             {
                 GLenum framebufferStatus =
-                    CreateFramebuffer(width, height, &dynamicEnvMap.FBOs[i], &dynamicEnvMap.quads[i]);
+                    CreateFramebuffer(sideLength, sideLength, &dynamicEnvMap.FBOs[i], &dynamicEnvMap.quads[i]);
                 myAssert(framebufferStatus == GL_FRAMEBUFFER_COMPLETE);
             }
 
@@ -1035,9 +1164,9 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
             {
                 glBindTexture(GL_TEXTURE_2D, dynamicEnvMap.quads[i]);
                 glGetTexImage(GL_TEXTURE_2D, 0, GL_RGB, GL_UNSIGNED_BYTE, data);
-                FlipImage(data, width, height, 3, tempArena);
+                FlipImage(data, sideLength, sideLength, 3, tempArena);
                 glBindTexture(GL_TEXTURE_CUBE_MAP, dynamicEnvMap.skyboxTexture);
-                glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE,
+                glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, sideLength, sideLength, 0, GL_RGB, GL_UNSIGNED_BYTE,
                              data);
             }
             ArenaPop(tempArena, 1920 * 1080 * 4);
@@ -1051,50 +1180,15 @@ void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transi
             return;
         }
     }
+#endif
 
     u32 shaderProgram = transientInfo->objectShader.id;
-    glUseProgram(shaderProgram);
+    SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
+    RenderModel(&transientInfo->planet, shaderProgram);
 
-    SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
-
-    SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
-    SetShaderUniformVec3(shaderProgram, "dirLight.ambient", persistentInfo->dirLight.ambient);
-    SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
-    SetShaderUniformVec3(shaderProgram, "dirLight.specular", persistentInfo->dirLight.specular);
-
-    for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-    {
-        PointLight *lights = persistentInfo->pointLights;
-        PointLight light = lights[lightIndex];
-
-        char uniformString[32];
-        sprintf_s(uniformString, "pointLights[%i].position", lightIndex);
-        SetShaderUniformVec3(shaderProgram, uniformString, light.position);
-        sprintf_s(uniformString, "pointLights[%i].ambient", lightIndex);
-        SetShaderUniformVec3(shaderProgram, uniformString, light.ambient);
-        sprintf_s(uniformString, "pointLights[%i].diffuse", lightIndex);
-        SetShaderUniformVec3(shaderProgram, uniformString, light.diffuse);
-        sprintf_s(uniformString, "pointLights[%i].specular", lightIndex);
-        SetShaderUniformVec3(shaderProgram, uniformString, light.specular);
-
-        Attenuation *att = &globalAttenuationTable[light.attIndex];
-        sprintf_s(uniformString, "pointLights[%i].linear", lightIndex);
-        SetShaderUniformFloat(shaderProgram, uniformString, att->linear);
-        sprintf_s(uniformString, "pointLights[%i].quadratic", lightIndex);
-        SetShaderUniformFloat(shaderProgram, uniformString, att->quadratic);
-    }
-
-    SetShaderUniformVec3(shaderProgram, "spotLight.position", cameraInfo->pos);
-    SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector(cameraInfo));
-    SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
-    SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
-    SetShaderUniformVec3(shaderProgram, "spotLight.ambient", persistentInfo->spotLight.ambient);
-    SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
-    SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
-
-    SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
-
-    RenderModel(&transientInfo->backpack, shaderProgram, dynamicEnvMap.skyboxTexture);
+    shaderProgram = transientInfo->instancedObjectShader.id;
+    SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
+    RenderModel(&transientInfo->asteroid, shaderProgram, 0, NUM_ASTEROIDS);
 }
 
 void RenderWithGeometryShader(TransientDrawingInfo *transientInfo)
@@ -1102,7 +1196,7 @@ void RenderWithGeometryShader(TransientDrawingInfo *transientInfo)
     u32 shaderProgram = transientInfo->geometryShader.id;
     glUseProgram(shaderProgram);
 
-    RenderModel(&transientInfo->backpack, shaderProgram);
+    RenderModel(&transientInfo->planet, shaderProgram);
 }
 
 void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
@@ -1181,7 +1275,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
     glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
 
-    float farPlaneDistance = 100.f;
+    float farPlaneDistance = 150.f;
 
     glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 
@@ -1196,18 +1290,19 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
 
     // Point lights.
-    RenderWithLightShader(transientInfo, persistentInfo);
+    // RenderWithLightShader(transientInfo, persistentInfo);
 
     // Objects.
     RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, dynamicEnvPass);
-    RenderWithGeometryShader(transientInfo);
+    // RenderWithGeometryShader(transientInfo);
 
     // Textured cubes.
-    RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
+    // RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
 
     // Windows.
-    RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
+    // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
 
+#if 0
     // Skybox.
     {
         u32 shaderProgram = transientInfo->skyboxShader.id;
@@ -1222,6 +1317,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
 
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
     }
+#endif
 }
 
 void DrawDebugWindow(CameraInfo *cameraInfo, PersistentDrawingInfo *persistentInfo)

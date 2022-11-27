@@ -174,6 +174,7 @@ struct ShaderProgram
 struct TransientDrawingInfo
 {
     ShaderProgram objectShader;
+    ShaderProgram instancedObjectShader;
     ShaderProgram lightShader;
     ShaderProgram outlineShader;
     ShaderProgram glassShader;
@@ -187,6 +188,8 @@ struct TransientDrawingInfo
     u32 cubeVao;
 
     Model backpack;
+    Model planet;
+    Model asteroid;
     u32 grassTexture;
     u32 windowTexture;
     u32 skyboxTexture;

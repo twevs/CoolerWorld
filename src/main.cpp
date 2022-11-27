@@ -573,6 +573,24 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
+            
+            /*
+            struct RingBuffer
+            {
+                f32 deltaTimes[60];
+                u32 index = 0;
+            };
+            local_persist RingBuffer deltaTimeBuffer;
+            deltaTimeBuffer.deltaTimes[deltaTimeBuffer.index] = deltaTime;
+            deltaTimeBuffer.index = (deltaTimeBuffer.index + 1) % 60;
+            f32 totalDeltaTime = 0.f;
+            for (u32 i = 0; i < 60; i++)
+            {
+                totalDeltaTime += deltaTimeBuffer.deltaTimes[i];
+            }
+            f32 averageDeltaTime = totalDeltaTime / 60;
+            DebugPrintA("averageDeltaTime: %f\n", averageDeltaTime);
+            */
         }
     }
 
