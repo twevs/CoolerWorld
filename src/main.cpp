@@ -36,11 +36,27 @@ PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
 
 LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
-internal void ResizeGLViewport(HWND window)
+internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                               PersistentDrawingInfo *persistentInfo)
 {
     RECT clientRect;
     GetClientRect(window, &clientRect);
-    glViewport(0, 0, clientRect.right, clientRect.bottom);
+    s32 width = clientRect.right;
+    s32 height = clientRect.bottom;
+    glViewport(0, 0, width, height);
+    cameraInfo->aspectRatio = (f32)width / (f32)height;
+
+    if (persistentInfo->initialized)
+    {
+        glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuad);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->mainRBO);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->rearViewRBO);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+    }
 }
 
 internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
@@ -496,7 +512,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
 #endif
 
-        ResizeGLViewport(window);
+        ResizeGLViewport(window, &appState.cameraInfo, &appState.transientInfo, &appState.persistentInfo);
 
         // MessageBoxA(NULL, (char *)glGetString(GL_VERSION), "OpenGL version", MB_OK);
 
@@ -573,7 +589,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
-            
+
             struct RingBuffer
             {
                 f32 deltaTimes[60];
@@ -619,8 +635,7 @@ LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case WM_SIZE: {
-        ResizeGLViewport(hWnd);
-        HDC hdc = GetDC(hWnd);
+        ResizeGLViewport(hWnd, &appState->cameraInfo, &appState->transientInfo, &appState->persistentInfo);
         return 0;
     }
     case WM_ERASEBKGND:

@@ -197,10 +197,12 @@ struct TransientDrawingInfo
     u32 mainQuadVao;
     u32 mainFBO;
     u32 mainQuad;
+    u32 mainRBO;
 
     u32 rearViewQuadVao;
     u32 rearViewFBO;
     u32 rearViewQuad;
+    u32 rearViewRBO;
 };
 
 struct PersistentDrawingInfo

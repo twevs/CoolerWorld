@@ -550,7 +550,7 @@ internal bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInf
     return true;
 }
 
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture)
+internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo)
 {
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
@@ -565,12 +565,11 @@ internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadText
     glBindTexture(GL_TEXTURE_2D, 0);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *quadTexture, 0);
 
-    u32 rbo;
-    glGenRenderbuffers(1, &rbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, rbo);
+    glGenRenderbuffers(1, rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
     glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
     glBindRenderbuffer(GL_RENDERBUFFER, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, rbo);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
 
     return glCheckFramebufferStatus(GL_FRAMEBUFFER);
 }
@@ -681,11 +680,11 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     transientInfo->asteroid = LoadModel("rock.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
 
     srand((u32)Win32GetWallClock());
-    
+
     u32 modelMatricesSize = NUM_ASTEROIDS * sizeof(glm::mat4);
     u32 radiiSize = NUM_ASTEROIDS * sizeof(f32);
     u32 yValuesSize = NUM_ASTEROIDS * sizeof(f32);
-    
+
     Arena *tempArena = AllocArena(modelMatricesSize + radiiSize + yValuesSize);
     glm::mat4 *modelMatrices = (glm::mat4 *)ArenaPush(tempArena, modelMatricesSize);
     f32 *radii = (f32 *)ArenaPush(tempArena, radiiSize);
@@ -696,16 +695,16 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         radii[i] = radius;
         float y = CreateRandomNumber(-5.f, 5.f);
         yValues[i] = y;
-        
+
         glm::mat4 modelMatrix = glm::mat4(1.f);
         f32 rotAngle = CreateRandomNumber(0, PI);
         modelMatrix = glm::rotate(modelMatrix, rotAngle, CreateRandomVec3());
         f32 scale = CreateRandomNumber(.01f, .2f);
         modelMatrix = glm::scale(modelMatrix, glm::vec3(scale));
-        
+
         modelMatrices[i] = modelMatrix;
     }
-    
+
     // NOTE: I originally used AppendToVAO() as I did not know that a VAO could have attribute pointers
     // into several VBOs. Out of curiosity, I profiled both methods and there is no performance
     // difference.
@@ -717,7 +716,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     glBufferData(GL_ARRAY_BUFFER, radiiSize, radii, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[2]);
     glBufferData(GL_ARRAY_BUFFER, yValuesSize, yValues, GL_STATIC_DRAW);
-    
+
     for (u32 i = 0; i < transientInfo->asteroid.meshCount; i++)
     {
         u32 curVao = transientInfo->asteroid.vaos[i];
@@ -781,11 +780,12 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     s32 width = clientRect.right;
     s32 height = clientRect.bottom;
 
-    GLenum mainFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->mainFBO, &transientInfo->mainQuad);
+    GLenum mainFramebufferStatus =
+        CreateFramebuffer(width, height, &transientInfo->mainFBO, &transientInfo->mainQuad, &transientInfo->mainRBO);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum rearViewFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->rearViewFBO, &transientInfo->rearViewQuad);
+    GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO,
+                                                         &transientInfo->rearViewQuad, &transientInfo->rearViewRBO);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     u32 skyboxTexture;
@@ -817,8 +817,6 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
 
     drawingInfo->initialized = true;
-
-    cameraInfo->aspectRatio = (f32)width / (f32)height;
 
     glGenBuffers(1, &transientInfo->matricesUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
@@ -1005,7 +1003,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
 void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 numInstances = 1)
 {
     glUseProgram(shaderProgram);
-    
+
     for (u32 i = 0; i < model->meshCount; i++)
     {
         glBindVertexArray(model->vaos[i]);
@@ -1033,7 +1031,7 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 num
 
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
             SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
-            
+
             glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
         }
         else
@@ -1062,7 +1060,7 @@ void FlipImage(u8 *data, s32 width, s32 height, u32 bytesPerPixel, Arena *tempAr
 internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, PersistentDrawingInfo *persistentInfo)
 {
     glUseProgram(shaderProgram);
-    
+
     SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
 
     SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
