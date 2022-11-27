@@ -574,7 +574,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
             
-            /*
             struct RingBuffer
             {
                 f32 deltaTimes[60];
@@ -590,7 +589,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             }
             f32 averageDeltaTime = totalDeltaTime / 60;
             DebugPrintA("averageDeltaTime: %f\n", averageDeltaTime);
-            */
         }
     }
 

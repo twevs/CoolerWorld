@@ -683,37 +683,40 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     srand((u32)Win32GetWallClock());
     
     u32 modelMatricesSize = NUM_ASTEROIDS * sizeof(glm::mat4);
-    u32 normalMatricesSize = NUM_ASTEROIDS * sizeof(glm::mat3);
-    Arena *tempArena = AllocArena(modelMatricesSize + normalMatricesSize);
+    u32 radiiSize = NUM_ASTEROIDS * sizeof(f32);
+    u32 yValuesSize = NUM_ASTEROIDS * sizeof(f32);
+    
+    Arena *tempArena = AllocArena(modelMatricesSize + radiiSize + yValuesSize);
     glm::mat4 *modelMatrices = (glm::mat4 *)ArenaPush(tempArena, modelMatricesSize);
-    glm::mat3 *normalMatrices = (glm::mat3 *)ArenaPush(tempArena, normalMatricesSize);
+    f32 *radii = (f32 *)ArenaPush(tempArena, radiiSize);
+    f32 *yValues = (f32 *)ArenaPush(tempArena, yValuesSize);
     for (u32 i = 0; i < NUM_ASTEROIDS; i++)
     {
+        float radius = CreateRandomNumber(.8f, 1.2f) * 50.f;
+        radii[i] = radius;
+        float y = CreateRandomNumber(-5.f, 5.f);
+        yValues[i] = y;
+        
         glm::mat4 modelMatrix = glm::mat4(1.f);
-        f32 radius = CreateRandomNumber(.8f, 1.2f) * 50.f;
-        f32 angle = ((f32)i / (f32)NUM_ASTEROIDS) * 2 * PI;
-        f32 x = cosf(angle) * radius;
-        f32 z = sinf(angle) * radius;
-        f32 y = CreateRandomNumber(-5.f, 5.f);
-        modelMatrix = glm::translate(modelMatrix, glm::vec3(x, y, z));
         f32 rotAngle = CreateRandomNumber(0, PI);
         modelMatrix = glm::rotate(modelMatrix, rotAngle, CreateRandomVec3());
         f32 scale = CreateRandomNumber(.01f, .2f);
         modelMatrix = glm::scale(modelMatrix, glm::vec3(scale));
         
         modelMatrices[i] = modelMatrix;
-        normalMatrices[i] = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
     }
     
     // NOTE: I originally used AppendToVAO() as I did not know that a VAO could have attribute pointers
     // into several VBOs. Out of curiosity, I profiled both methods and there is no performance
     // difference.
-    u32 matricesVBO[2];
-    glGenBuffers(2, matricesVBO);
+    u32 matricesVBO[3];
+    glGenBuffers(3, matricesVBO);
     glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[0]);
     glBufferData(GL_ARRAY_BUFFER, modelMatricesSize, modelMatrices, GL_STATIC_DRAW);
     glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[1]);
-    glBufferData(GL_ARRAY_BUFFER, normalMatricesSize, normalMatrices, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, radiiSize, radii, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[2]);
+    glBufferData(GL_ARRAY_BUFFER, yValuesSize, yValues, GL_STATIC_DRAW);
     
     for (u32 i = 0; i < transientInfo->asteroid.meshCount; i++)
     {
@@ -725,23 +728,21 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(0 + 8 * sizeof(f32)));
         glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(0 + 12 * sizeof(f32)));
         glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[1]);
-        glVertexAttribPointer(7, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(f32), (void *)(u64)0);
-        glVertexAttribPointer(8, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(f32), (void *)(0 + 3 * sizeof(f32)));
-        glVertexAttribPointer(9, 3, GL_FLOAT, GL_FALSE, 9 * sizeof(f32), (void *)(0 + 6 * sizeof(f32)));
+        glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, sizeof(f32), (void *)0);
+        glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[2]);
+        glVertexAttribPointer(8, 1, GL_FLOAT, GL_FALSE, sizeof(f32), (void *)0);
         glEnableVertexAttribArray(3);
         glEnableVertexAttribArray(4);
         glEnableVertexAttribArray(5);
         glEnableVertexAttribArray(6);
         glEnableVertexAttribArray(7);
         glEnableVertexAttribArray(8);
-        glEnableVertexAttribArray(9);
         glVertexAttribDivisor(3, 1);
         glVertexAttribDivisor(4, 1);
         glVertexAttribDivisor(5, 1);
         glVertexAttribDivisor(6, 1);
         glVertexAttribDivisor(7, 1);
         glVertexAttribDivisor(8, 1);
-        glVertexAttribDivisor(9, 1);
     }
     FreeArena(tempArena);
 
@@ -791,8 +792,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     glGenTextures(1, &skyboxTexture);
     glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
 
-    const char *skyboxImages[] = {"skybox/right.jpg",  "skybox/left.jpg",  "skybox/top.jpg",
-                                  "skybox/bottom.jpg", "skybox/front.jpg", "skybox/back.jpg"};
+    const char *skyboxImages[] = {"space_skybox/right.png",  "space_skybox/left.png",  "space_skybox/top.png",
+                                  "space_skybox/bottom.png", "space_skybox/front.png", "space_skybox/back.png"};
     stbi_set_flip_vertically_on_load_thread(false);
     for (u32 i = 0; i < 6; i++)
     {
@@ -800,7 +801,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         s32 imageHeight;
         s32 numChannels;
         u8 *data = stbi_load(skyboxImages[i], &imageWidth, &imageHeight, &numChannels, 0);
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGB, imageWidth, imageHeight, 0, GL_RGB,
+        myAssert(data);
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA, imageWidth, imageHeight, 0, GL_RGBA,
                      GL_UNSIGNED_BYTE, data);
         stbi_image_free(data);
     }
@@ -1036,6 +1038,7 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 num
         }
         else
         {
+            SetShaderUniformFloat(shaderProgram, "time", Win32GetTime());
             glDrawElementsInstanced(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0,
                                     numInstances);
         }
@@ -1302,7 +1305,6 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     // Windows.
     // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
 
-#if 0
     // Skybox.
     {
         u32 shaderProgram = transientInfo->skyboxShader.id;
@@ -1317,7 +1319,6 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
 
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
     }
-#endif
 }
 
 void DrawDebugWindow(CameraInfo *cameraInfo, PersistentDrawingInfo *persistentInfo)
