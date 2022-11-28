@@ -13,6 +13,7 @@ layout (std140, binding = 0) uniform Matrices
 {
 	mat4 viewMatrix;
 	mat4 projectionMatrix;
+	mat4 lightSpaceMatrix;
 };
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;

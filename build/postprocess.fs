@@ -141,4 +141,6 @@ void main()
 	// fragColor = vec4(color, 1.f);
 	fragColor = texture(tex, texCoords);
 	fragColor.rgb = pow(fragColor.rgb, vec3(1.f / gamma));
+	// float depthValue = texture(tex, texCoords).r;
+	// fragColor = vec4(vec3(depthValue), 1.f);
 }

@@ -194,6 +194,7 @@ struct TransientDrawingInfo
     Model models[MAX_MODELS];
     u32 numModels;
     
+    ShaderProgram depthMapShader;
     ShaderProgram objectShader;
     ShaderProgram instancedObjectShader;
     ShaderProgram colorShader;
@@ -229,10 +230,10 @@ struct TransientDrawingInfo
     u32 postProcessingQuad;
     u32 postProcessingRBO;
     
-    u32 depthMapQuadVao;
-    u32 depthMapFBO;
-    u32 depthMapQuad;
-    u32 depthMapRBO;
+    u32 shadowMapQuadVao;
+    u32 shadowMapFBO;
+    u32 shadowMapQuad;
+    u32 shadowMapRBO;
 };
 
 struct PersistentDrawingInfo

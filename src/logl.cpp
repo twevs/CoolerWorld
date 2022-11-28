@@ -87,11 +87,11 @@ internal bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shader
     glCompileShader(*shaderID);
 
     int success;
-    char infoLog[512];
+    char infoLog[1024];
     glGetShaderiv(*shaderID, GL_COMPILE_STATUS, &success);
     if (!success)
     {
-        glGetShaderInfoLog(*shaderID, 512, NULL, infoLog);
+        glGetShaderInfoLog(*shaderID, 1024, NULL, infoLog);
         DebugPrintA("Shader compilation failed for %s: %s\n", shaderFilename, infoLog);
         return false;
     }
@@ -135,11 +135,11 @@ internal bool CreateShaderProgram(ShaderProgram *program)
     glLinkProgram(*programID);
 
     int success;
-    char infoLog[512];
+    char infoLog[1024];
     glGetProgramiv(*programID, GL_LINK_STATUS, &success);
     if (!success)
     {
-        glGetProgramInfoLog(*programID, 512, NULL, infoLog);
+        glGetProgramInfoLog(*programID, 1024, NULL, infoLog);
         DebugPrintA("Shader program creation failed: %s\n", infoLog);
         return false;
     }
@@ -220,6 +220,10 @@ internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *ve
 
 internal bool CreateShaderPrograms(TransientDrawingInfo *info)
 {
+    if (!CreateShaderProgram(&info->depthMapShader, info->depthMapShader.id, "depth_map.vs", "depth_map.fs"))
+    {
+        return false;
+    }
     if (!CreateShaderProgram(&info->objectShader, info->objectShader.id, "vertex_shader.vs", "fragment_shader.fs"))
     {
         return false;
@@ -775,7 +779,7 @@ void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInfo)
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum depthMapFramebufferStatus = CreateFramebuffer(
-        width, height, &transientInfo->depthMapFBO, &transientInfo->depthMapQuad, &transientInfo->depthMapRBO, true);
+        width, height, &transientInfo->shadowMapFBO, &transientInfo->shadowMapQuad, &transientInfo->shadowMapRBO, true);
     myAssert(depthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 }
 
@@ -859,6 +863,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     Model *planet = AddModel("planet.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
     Model *rock = AddModel("rock.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
     
+    AddModelToShaderPass(&transientInfo->depthMapShader, backpack);
     AddModelToShaderPass(&transientInfo->objectShader, backpack);
     AddModelToShaderPass(&transientInfo->geometryShader, backpack);
     
@@ -881,7 +886,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
                                 sizeof(quadIndices));
     transientInfo->mainQuadVao = mainQuadVao;
     transientInfo->postProcessingQuadVao = mainQuadVao;
-    transientInfo->depthMapQuadVao = mainQuadVao;
+    transientInfo->shadowMapQuadVao = mainQuadVao;
 
     f32 rearViewQuadVertices[] = {.5f,  1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f, .5f,  .7f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
                                   -.5f, .7f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -.5f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
@@ -915,12 +920,14 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
         {
             Object *texCube = AddObject(transientInfo, transientInfo->cubeVao, 36, CreateRandomVec3());
+            AddObjectToShaderPass(&transientInfo->depthMapShader, texCube);
             AddObjectToShaderPass(&transientInfo->textureShader, texCube);
         }
 
         for (u32 windowIndex = 0; windowIndex < NUM_OBJECTS; windowIndex++)
         {
             Object *curWindow = AddObject(transientInfo, transientInfo->mainQuadVao, 6, CreateRandomVec3());
+            AddObjectToShaderPass(&transientInfo->depthMapShader, curWindow);
             AddObjectToShaderPass(&transientInfo->textureShader, curWindow);
         }
 
@@ -938,7 +945,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
 
     glGenBuffers(1, &transientInfo->matricesUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
-    glBufferData(GL_UNIFORM_BUFFER, 128, NULL, GL_STATIC_DRAW);
+    glBufferData(GL_UNIFORM_BUFFER, 3 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
 
     return true;
@@ -1413,51 +1420,59 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
     glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
     glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
-
-    f32 nearPlaneDistance = shadowMapPass ? 1.f : .1f;
-    f32 farPlaneDistance = shadowMapPass ? 7.5f : 150.f;
-
-    glm::mat4 viewMatrix = shadowMapPass
-                               ? glm::lookAt(glm::vec3(-2.f, 4.f, -1.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f))
-                               : LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
-
-    glm::mat4 projectionMatrix = shadowMapPass
-                                     ? glm::ortho(-10.f, 10.f, -10.f, 10.f, nearPlaneDistance, farPlaneDistance)
-                                     : glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio,
+    
+    f32 lightNearPlaneDistance = 1.f;
+    f32 lightFarPlaneDistance = 7.5f;
+    glm::mat4 lightViewMatrix = glm::lookAt(glm::vec3(-2.f, 4.f, -1.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
+    glm::mat4 lightProjectionMatrix = glm::ortho(-10.f, 10.f, -10.f, 10.f, lightNearPlaneDistance, lightFarPlaneDistance);
+    glm::mat4 lightSpaceMatrix = lightProjectionMatrix * lightViewMatrix;
+    
+    f32 nearPlaneDistance = .1f;
+    f32 farPlaneDistance = 150.f;
+    glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
+    glm::mat4 projectionMatrix = glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio,
                                                         nearPlaneDistance, farPlaneDistance);
 
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
-
-    // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
-
-    // Point lights.
-    RenderWithColorShader(transientInfo, persistentInfo);
-
-    // Objects.
-    RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, dynamicEnvPass);
-    RenderWithGeometryShader(transientInfo);
-
-    // Textured cubes.
-    RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
-
-    // Windows.
-    // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
-
-    // Skybox.
+    glBufferSubData(GL_UNIFORM_BUFFER, 128, 64, &lightSpaceMatrix);
+    
+    if (shadowMapPass)
     {
-        u32 shaderProgram = transientInfo->skyboxShader.id;
-        glUseProgram(shaderProgram);
+        RenderShaderPass(&transientInfo->depthMapShader);
+    }
+    else
+    {
+        // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
 
-        glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
-        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
+        // Point lights.
+        RenderWithColorShader(transientInfo, persistentInfo);
 
-        glBindVertexArray(transientInfo->cubeVao);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+        // Objects.
+        RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, dynamicEnvPass);
+        RenderWithGeometryShader(transientInfo);
 
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        // Textured cubes.
+        RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
+
+        // Windows.
+        // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
+
+        // Skybox.
+        {
+            u32 shaderProgram = transientInfo->skyboxShader.id;
+            glUseProgram(shaderProgram);
+
+            glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
+
+            glBindVertexArray(transientInfo->cubeVao);
+            glActiveTexture(GL_TEXTURE0);
+            glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+
+            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+        }
     }
 }
 
@@ -1613,6 +1628,10 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     }
 
     CheckForNewShaders(transientInfo);
+    
+    // Shadow map pass.
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->shadowMapFBO, transientInfo->shadowMapQuad, window,
+              listArena, tempArena, false, true);
 
     // Main pass.
     DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, transientInfo->mainQuad, window,
