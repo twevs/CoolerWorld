@@ -48,13 +48,28 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
 
     if (persistentInfo->initialized)
     {
-        glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuad);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->mainQuad);
+        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGB, width, height, GL_TRUE);
         glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->mainRBO);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples, GL_DEPTH24_STENCIL8, width, height);
+        
+        // See also: note about rear-view quad in DrawWindow().
+        /*
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->rearViewQuad);
+        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGB, width, height, GL_TRUE);
+        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->rearViewRBO);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples, GL_DEPTH24_STENCIL8, width,
+                                         height);
+        */
+        
         glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
         glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->rearViewRBO);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        
+        glBindTexture(GL_TEXTURE_2D, transientInfo->postProcessingQuad);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->postProcessingRBO);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
     }
 }

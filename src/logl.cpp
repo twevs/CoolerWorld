@@ -550,26 +550,43 @@ internal bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInf
     return true;
 }
 
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo)
+internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool multisampled,
+                                  s32 numSamples = 4)
 {
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
 
     glGenTextures(1, quadTexture);
-    glBindTexture(GL_TEXTURE_2D, *quadTexture);
+    if (multisampled)
+    {
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, *quadTexture);
+        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGB, width, height, GL_TRUE);
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
 
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, *quadTexture, 0);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *quadTexture, 0);
+        glGenRenderbuffers(1, rbo);
+        glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, numSamples, GL_DEPTH24_STENCIL8, width, height);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
+    }
+    else
+    {
+        glBindTexture(GL_TEXTURE_2D, *quadTexture);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glBindTexture(GL_TEXTURE_2D, 0);
 
-    glGenRenderbuffers(1, rbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
-    glBindRenderbuffer(GL_RENDERBUFFER, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *quadTexture, 0);
+
+        glGenRenderbuffers(1, rbo);
+        glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
+    }
 
     return glCheckFramebufferStatus(GL_FRAMEBUFFER);
 }
@@ -674,6 +691,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     transientInfo->cubeVao = cubeVao;
     transientInfo->mainQuadVao = mainQuadVao;
     transientInfo->rearViewQuadVao = rearViewQuadVao;
+    transientInfo->postProcessingQuadVao = mainQuadVao;
     transientInfo->backpack =
         LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
     transientInfo->planet = LoadModel("planet.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
@@ -780,13 +798,19 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     s32 width = clientRect.right;
     s32 height = clientRect.bottom;
 
-    GLenum mainFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->mainFBO, &transientInfo->mainQuad, &transientInfo->mainRBO);
+    transientInfo->numSamples = 4;
+    GLenum mainFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->mainFBO, &transientInfo->mainQuad,
+                                                     &transientInfo->mainRBO, true, transientInfo->numSamples);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO,
-                                                         &transientInfo->rearViewQuad, &transientInfo->rearViewRBO);
+    GLenum rearViewFramebufferStatus =
+        CreateFramebuffer(width, height, &transientInfo->rearViewFBO, &transientInfo->rearViewQuad,
+                          &transientInfo->rearViewRBO, false);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+    
+    GLenum postProcessingFramebufferStatus =
+        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
+            &transientInfo->postProcessingRBO, false);
 
     u32 skyboxTexture;
     glGenTextures(1, &skyboxTexture);
@@ -1182,14 +1206,18 @@ internal void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInf
         }
     }
 #endif
-
+    
     u32 shaderProgram = transientInfo->objectShader.id;
     SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
-    RenderModel(&transientInfo->planet, shaderProgram);
+    RenderModel(&transientInfo->backpack, shaderProgram);
 
-    shaderProgram = transientInfo->instancedObjectShader.id;
-    SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
-    RenderModel(&transientInfo->asteroid, shaderProgram, 0, NUM_ASTEROIDS);
+    // u32 shaderProgram = transientInfo->objectShader.id;
+    // SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
+    // RenderModel(&transientInfo->planet, shaderProgram);
+    
+    // shaderProgram = transientInfo->instancedObjectShader.id;
+    // SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
+    // RenderModel(&transientInfo->asteroid, shaderProgram, 0, NUM_ASTEROIDS);
 }
 
 void RenderWithGeometryShader(TransientDrawingInfo *transientInfo)
@@ -1333,6 +1361,19 @@ void DrawDebugWindow(CameraInfo *cameraInfo, PersistentDrawingInfo *persistentIn
         cameraInfo->pitch = 0.f;
     }
 
+    ImGui::Text("Multisampling: %s", glIsEnabled(GL_MULTISAMPLE) ? "enabled" : "disabled");
+    ImGui::SameLine();
+    if (ImGui::Button("Toggle multisampling"))
+    {
+        if (glIsEnabled(GL_MULTISAMPLE))
+        {
+            glDisable(GL_MULTISAMPLE);
+        }
+        else
+        {
+            glEnable(GL_MULTISAMPLE);
+        }
+    }
     ImGui::Text("Blending: %s", glIsEnabled(GL_BLEND) ? "enabled" : "disabled");
     ImGui::SameLine();
     if (ImGui::Button("Toggle blending"))
@@ -1453,7 +1494,28 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // Rear-view pass.
     DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, transientInfo->rearViewQuad,
               window, listArena, tempArena);
-
+    
+    RECT clientRect;
+    GetClientRect(window, &clientRect);
+    s32 width = clientRect.right;
+    s32 height = clientRect.bottom;
+    
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->postProcessingFBO);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    // NOTE: in the case of the rear-view mirror, since a multisampled framebuffer cannot be blitted to
+    // only a portion of a non-multisampled framebuffer, there are 3 options:
+    // 1. blit a non-multisampled framebuffer to a portion of the main buffer;
+    // 2. draw the texture attached to a non-multisampled buffer to the screen;
+    // 3. draw the texture attached to a multisampled buffer to the screen.
+    // I went with option 2 here since it results in less aliasing than option 1 and unlike option 3
+    // doesn't require maintaining a second shader to apply the same post-processing effects to the
+    // multisampled rear-view framebuffer (see: postprocess_ms.fs).
+    // See also: ResizeGLViewport().
+    /*
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->rearViewFBO);
+    glBlitFramebuffer(0, 0, width, height, width / 4, height * 17 / 20, width * 3 / 4, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    */
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(1.f, 1.f, 1.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -1466,13 +1528,13 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glDisable(GL_DEPTH_TEST);
 
         glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuad);
+        glBindTexture(GL_TEXTURE_2D, transientInfo->postProcessingQuad);
 
         glm::mat4 identity = glm::mat4(1.f);
         glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
         glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
 
-        glBindVertexArray(transientInfo->mainQuadVao);
+        glBindVertexArray(transientInfo->postProcessingQuadVao);
 
         // Model matrix: transforms vertices from local to world space.
         glm::mat4 modelMatrix = glm::mat4(1.f);

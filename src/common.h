@@ -194,6 +194,8 @@ struct TransientDrawingInfo
     u32 windowTexture;
     u32 skyboxTexture;
 
+    s32 numSamples;
+    
     u32 mainQuadVao;
     u32 mainFBO;
     u32 mainQuad;
@@ -203,6 +205,11 @@ struct TransientDrawingInfo
     u32 rearViewFBO;
     u32 rearViewQuad;
     u32 rearViewRBO;
+    
+    u32 postProcessingQuadVao;
+    u32 postProcessingFBO;
+    u32 postProcessingQuad;
+    u32 postProcessingRBO;
 };
 
 struct PersistentDrawingInfo
