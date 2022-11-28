@@ -64,6 +64,8 @@ uniform vec3 cameraPos;
 uniform samplerCube skybox;
 vec3 CalcEnvironment(vec3 normal, vec3 cameraDir);
 
+uniform bool blinn;
+
 void main()
 {
     vec3 norm = normalize(normal);
@@ -89,8 +91,11 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir)
     vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
 
     // Specular contribution.
+    vec3 halfway = normalize(lightDir + cameraDir);
     vec3 reflectionDir = reflect(-lightDir, normal);
-    float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), material.shininess);
+    vec3 specVec1 = blinn ? halfway : reflectionDir;
+    vec3 specVec2 = blinn ? normal : cameraDir;
+    float spec = pow(max(dot(specVec1, specVec2), 0.f), material.shininess);
     vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
 
     return ambient + diffuse + specular;
@@ -116,8 +121,11 @@ vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 camer
         vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
 
         // Specular contribution.
+        vec3 halfway = normalize(lightDir + cameraDir);
         vec3 reflectionDir = reflect(-lightDir, normal);
-        float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), material.shininess);
+        vec3 specVec1 = blinn ? halfway : reflectionDir;
+        vec3 specVec2 = blinn ? normal : cameraDir;
+        float spec = pow(max(dot(specVec1, specVec2), 0.f), material.shininess);
         vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
         
         result += intensity * (ambient + diffuse + specular);
@@ -141,8 +149,11 @@ vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir)
     vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
 
     // Specular contribution.
+    vec3 halfway = normalize(lightDir + cameraDir);
     vec3 reflectionDir = reflect(-lightDir, normal);
-    float spec = pow(max(dot(reflectionDir, cameraDir), 0.f), material.shininess);
+    vec3 specVec1 = blinn ? halfway : reflectionDir;
+    vec3 specVec2 = blinn ? normal : cameraDir;
+    float spec = pow(max(dot(specVec1, specVec2), 0.f), material.shininess);
     vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
 
     return intensity * (diffuse + specular);

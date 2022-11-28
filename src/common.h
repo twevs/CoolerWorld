@@ -182,7 +182,7 @@ struct TransientDrawingInfo
     ShaderProgram postProcessShader;
     ShaderProgram skyboxShader;
     ShaderProgram geometryShader;
-
+    
     u32 matricesUBO;
 
     u32 cubeVao;
@@ -223,6 +223,9 @@ struct PersistentDrawingInfo
     SpotLight spotLight;
     glm::vec3 texCubePos[NUM_OBJECTS];
     glm::vec3 windowPos[NUM_OBJECTS];
+    
+    f32 materialShininess = 32.f;
+    bool blinn = true;
 };
 
 struct CameraInfo

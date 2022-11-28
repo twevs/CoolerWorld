@@ -160,9 +160,14 @@ internal FILETIME GetFileTime(const char *filename)
     return fileTime;
 }
 
-internal void SetShaderUniformSampler(u32 shaderProgram, const char *uniformName, u32 slot)
+internal void SetShaderUniformSampler(u32 shaderProgram, const char *uniformName, s32 slot)
 {
     glUniform1i(glGetUniformLocation(shaderProgram, uniformName), slot);
+}
+
+internal void SetShaderUniformInt(u32 shaderProgram, const char *uniformName, s32 value)
+{
+    glUniform1i(glGetUniformLocation(shaderProgram, uniformName), value);
 }
 
 internal void SetShaderUniformFloat(u32 shaderProgram, const char *uniformName, float value)
@@ -803,14 +808,13 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
                                                      &transientInfo->mainRBO, true, transientInfo->numSamples);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum rearViewFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->rearViewFBO, &transientInfo->rearViewQuad,
-                          &transientInfo->rearViewRBO, false);
+    GLenum rearViewFramebufferStatus = CreateFramebuffer(
+        width, height, &transientInfo->rearViewFBO, &transientInfo->rearViewQuad, &transientInfo->rearViewRBO, false);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
-    
+
     GLenum postProcessingFramebufferStatus =
         CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
-            &transientInfo->postProcessingRBO, false);
+                          &transientInfo->postProcessingRBO, false);
 
     u32 skyboxTexture;
     glGenTextures(1, &skyboxTexture);
@@ -1085,7 +1089,8 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
 {
     glUseProgram(shaderProgram);
 
-    SetShaderUniformFloat(shaderProgram, "material.shininess", 32.f);
+    SetShaderUniformFloat(shaderProgram, "material.shininess", persistentInfo->materialShininess);
+    SetShaderUniformInt(shaderProgram, "blinn", persistentInfo->blinn);
 
     SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
     SetShaderUniformVec3(shaderProgram, "dirLight.ambient", persistentInfo->dirLight.ambient);
@@ -1206,7 +1211,7 @@ internal void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInf
         }
     }
 #endif
-    
+
     u32 shaderProgram = transientInfo->objectShader.id;
     SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
     RenderModel(&transientInfo->backpack, shaderProgram);
@@ -1214,7 +1219,7 @@ internal void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInf
     // u32 shaderProgram = transientInfo->objectShader.id;
     // SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
     // RenderModel(&transientInfo->planet, shaderProgram);
-    
+
     // shaderProgram = transientInfo->instancedObjectShader.id;
     // SetObjectShaderUniforms(shaderProgram, cameraInfo, persistentInfo);
     // RenderModel(&transientInfo->asteroid, shaderProgram, 0, NUM_ASTEROIDS);
@@ -1319,14 +1324,14 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     // TODO: fix effect of outlining on meshes that appear between the camera and the outlined object.
 
     // Point lights.
-    // RenderWithLightShader(transientInfo, persistentInfo);
+    RenderWithLightShader(transientInfo, persistentInfo);
 
     // Objects.
     RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, dynamicEnvPass);
     // RenderWithGeometryShader(transientInfo);
 
     // Textured cubes.
-    // RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
+    RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
 
     // Windows.
     // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
@@ -1347,7 +1352,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     }
 }
 
-void DrawDebugWindow(CameraInfo *cameraInfo, PersistentDrawingInfo *persistentInfo)
+void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo)
 {
     u32 id = 0;
     ImGui::Begin("Debug Window");
@@ -1360,6 +1365,20 @@ void DrawDebugWindow(CameraInfo *cameraInfo, PersistentDrawingInfo *persistentIn
         cameraInfo->yaw = 0.f;
         cameraInfo->pitch = 0.f;
     }
+
+    ImGui::Separator();
+
+    if (ImGui::CollapsingHeader("Shading"))
+    {
+        ImGui::InputFloat("Material shininess", &persistentInfo->materialShininess);
+        ImGui::Text("Using %s shading", persistentInfo->blinn ? "Blinn-Phong" : "Phong");
+        if (ImGui::Button("Toggle"))
+        {
+            persistentInfo->blinn = !persistentInfo->blinn;
+        }
+    }
+
+    ImGui::Separator();
 
     ImGui::Text("Multisampling: %s", glIsEnabled(GL_MULTISAMPLE) ? "enabled" : "disabled");
     ImGui::SameLine();
@@ -1494,12 +1513,12 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // Rear-view pass.
     DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, transientInfo->rearViewQuad,
               window, listArena, tempArena);
-    
+
     RECT clientRect;
     GetClientRect(window, &clientRect);
     s32 width = clientRect.right;
     s32 height = clientRect.bottom;
-    
+
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->postProcessingFBO);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -1514,7 +1533,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // See also: ResizeGLViewport().
     /*
     glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->rearViewFBO);
-    glBlitFramebuffer(0, 0, width, height, width / 4, height * 17 / 20, width * 3 / 4, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBlitFramebuffer(0, 0, width, height, width / 4, height * 17 / 20, width * 3 / 4, height, GL_COLOR_BUFFER_BIT,
+    GL_NEAREST);
     */
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(1.f, 1.f, 1.f, 1.f);
@@ -1572,7 +1592,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glEnable(GL_DEPTH_TEST);
     }
 
-    DrawDebugWindow(cameraInfo, persistentInfo);
+    DrawDebugWindow(cameraInfo, transientInfo, persistentInfo);
 
     if (!SwapBuffers(hdc))
     {
