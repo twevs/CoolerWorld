@@ -148,6 +148,7 @@ struct Model
     Mesh *meshes;
     u32 meshCount;
     u32 *vaos;
+    glm::vec3 position;
 };
 
 struct VaoInformation
@@ -160,6 +161,16 @@ struct VaoInformation
     u32 indicesSize;
 };
 
+struct Object
+{
+    u32 VAO;
+    u32 numIndices;
+    glm::vec3 position;
+};
+
+#define MAX_OBJECTS 20
+#define MAX_MODELS 20
+
 struct ShaderProgram
 {
     u32 id;
@@ -169,13 +180,23 @@ struct ShaderProgram
     FILETIME geometryShaderTime;
     char fragmentShaderFilename[64];
     FILETIME fragmentShaderTime;
+    
+    Object *shaderPassObjects[MAX_OBJECTS];
+    u32 numObjects;
+    Model *shaderPassModels[MAX_MODELS];
+    u32 numModels;
 };
 
 struct TransientDrawingInfo
 {
+    Object objects[MAX_OBJECTS];
+    u32 numObjects;
+    Model models[MAX_MODELS];
+    u32 numModels;
+    
     ShaderProgram objectShader;
     ShaderProgram instancedObjectShader;
-    ShaderProgram lightShader;
+    ShaderProgram colorShader;
     ShaderProgram outlineShader;
     ShaderProgram glassShader;
     ShaderProgram textureShader;
@@ -187,9 +208,6 @@ struct TransientDrawingInfo
 
     u32 cubeVao;
 
-    Model backpack;
-    Model planet;
-    Model asteroid;
     u32 grassTexture;
     u32 windowTexture;
     u32 skyboxTexture;
@@ -221,13 +239,16 @@ struct PersistentDrawingInfo
 {
     bool initialized;
     bool wireframeMode = false;
+    
+    u32 numObjects;
+    glm::vec3 objectPositions[MAX_OBJECTS];
+    u32 numModels;
+    glm::vec3 modelPositions[MAX_MODELS];
 
     float clearColor[4] = {.1f, .1f, .1f, 1.f};
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;
-    glm::vec3 texCubePos[NUM_OBJECTS];
-    glm::vec3 windowPos[NUM_OBJECTS];
     
     f32 materialShininess = 32.f;
     bool blinn = true;

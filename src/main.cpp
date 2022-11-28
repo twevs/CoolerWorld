@@ -15,7 +15,7 @@ typedef bool (*InitializeDrawingInfo_t)(HWND window, TransientDrawingInfo *trans
                                         Arena *texturesArena, Arena *meshDataArena);
 InitializeDrawingInfo_t InitializeDrawingInfo;
 
-typedef bool (*SaveDrawingInfo_t)(PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo);
+typedef bool (*SaveDrawingInfo_t)(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo);
 SaveDrawingInfo_t SaveDrawingInfo;
 
 typedef void (*ProvideCameraVectors_t)(CameraInfo *cameraInfo);
@@ -624,7 +624,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         }
     }
 
-    SaveDrawingInfo(&appState.persistentInfo, &appState.cameraInfo);
+    SaveDrawingInfo(&appState.transientInfo, &appState.persistentInfo, &appState.cameraInfo);
 
     return 0;
 }
