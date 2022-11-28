@@ -226,6 +226,8 @@ struct PersistentDrawingInfo
     
     f32 materialShininess = 32.f;
     bool blinn = true;
+    
+    f32 gamma = 2.2f;
 };
 
 struct CameraInfo

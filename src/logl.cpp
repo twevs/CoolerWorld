@@ -312,7 +312,7 @@ internal bool ReloadShaderPrograms(TransientDrawingInfo *info)
 }
 */
 
-internal u32 CreateTextureFromImage(const char *filename, GLenum wrapMode = GL_REPEAT)
+internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrapMode = GL_REPEAT)
 {
     s32 width;
     s32 height;
@@ -332,7 +332,15 @@ internal u32 CreateTextureFromImage(const char *filename, GLenum wrapMode = GL_R
 
     bool alpha = strstr(filename, "png") != NULL;
     GLenum pixelFormat = alpha ? GL_RGBA : GL_RGB;
-    glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
+    if (sRGB)
+    {
+        GLenum internalFormat = alpha ? GL_SRGB_ALPHA : GL_SRGB;
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
+    }
+    else
+    {
+        glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
+    }
     glGenerateMipmap(GL_TEXTURE_2D);
 
     stbi_image_free(textureData);
@@ -369,7 +377,7 @@ internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureT
         if (!skip)
         {
             Texture *texture = (Texture *)ArenaPush(texturesArena, sizeof(Texture));
-            texture->id = CreateTextureFromImage(path.C_Str());
+            texture->id = CreateTextureFromImage(path.C_Str(), type == aiTextureType_DIFFUSE);
             texture->type = (type == aiTextureType_DIFFUSE) ? TextureType::Diffuse : TextureType::Specular;
             texture->hash = hash;
             mesh->textures[mesh->numTextures].id = texture->id;
@@ -768,8 +776,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     }
     FreeArena(tempArena);
 
-    transientInfo->grassTexture = CreateTextureFromImage("grass.png", GL_CLAMP_TO_EDGE);
-    transientInfo->windowTexture = CreateTextureFromImage("window.png", GL_CLAMP_TO_EDGE);
+    transientInfo->grassTexture = CreateTextureFromImage("grass.png", true, GL_CLAMP_TO_EDGE);
+    transientInfo->windowTexture = CreateTextureFromImage("window.png", true, GL_CLAMP_TO_EDGE);
 
     if (!LoadDrawingInfo(drawingInfo, cameraInfo))
     {
@@ -1365,6 +1373,10 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
         cameraInfo->yaw = 0.f;
         cameraInfo->pitch = 0.f;
     }
+    
+    ImGui::Separator();
+    
+    ImGui::SliderFloat("Gamma correction", &persistentInfo->gamma, 0.f, 5.f);
 
     ImGui::Separator();
 
@@ -1544,6 +1556,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         u32 shaderProgram = transientInfo->postProcessShader.id;
         glUseProgram(shaderProgram);
+        
+        SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
 
         glDisable(GL_DEPTH_TEST);
 
@@ -1570,6 +1584,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         u32 shaderProgram = transientInfo->postProcessShader.id;
         glUseProgram(shaderProgram);
+        
+        SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
 
         glDisable(GL_DEPTH_TEST);
 
