@@ -563,37 +563,57 @@ internal bool LoadDrawingInfo(PersistentDrawingInfo *info, CameraInfo *cameraInf
     return true;
 }
 
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool multisampled,
-                                  s32 numSamples = 4)
+internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo,
+                                              s32 numSamples = 4)
 {
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
 
     glGenTextures(1, quadTexture);
-    if (multisampled)
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, *quadTexture);
+    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGB, width, height, GL_TRUE);
+    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, *quadTexture, 0);
+
+    glGenRenderbuffers(1, rbo);
+    glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
+    glRenderbufferStorageMultisample(GL_RENDERBUFFER, numSamples, GL_DEPTH24_STENCIL8, width, height);
+    glBindRenderbuffer(GL_RENDERBUFFER, 0);
+    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
+
+    return glCheckFramebufferStatus(GL_FRAMEBUFFER);
+}
+
+internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false)
+{
+    glGenFramebuffers(1, fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+
+    glGenTextures(1, quadTexture);
+    glBindTexture(GL_TEXTURE_2D, *quadTexture);
+    GLenum format = depthMap ? GL_DEPTH_COMPONENT : GL_RGB;
+    GLenum type = depthMap ? GL_FLOAT : GL_UNSIGNED_BYTE;
+    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, type, NULL);
+    GLint filteringMethod = depthMap ? GL_NEAREST : GL_LINEAR;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filteringMethod);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filteringMethod);
+    if (depthMap)
     {
-        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, *quadTexture);
-        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGB, width, height, GL_TRUE);
-        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+    }
+    glBindTexture(GL_TEXTURE_2D, 0);
 
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, *quadTexture, 0);
-
-        glGenRenderbuffers(1, rbo);
-        glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, numSamples, GL_DEPTH24_STENCIL8, width, height);
-        glBindRenderbuffer(GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
+    GLenum attachment = depthMap ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0;
+    glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, *quadTexture, 0);
+    if (depthMap)
+    {
+        glDrawBuffer(GL_NONE);
+        glReadBuffer(GL_NONE);
     }
     else
     {
-        glBindTexture(GL_TEXTURE_2D, *quadTexture);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glBindTexture(GL_TEXTURE_2D, 0);
-
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, *quadTexture, 0);
-
         glGenRenderbuffers(1, rbo);
         glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
@@ -641,77 +661,21 @@ internal glm::vec3 CreateRandomVec3()
     return {x, y, z};
 }
 
-extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
-                                                            PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo,
-                                                            Arena *texturesArena, Arena *meshDataArena)
+u32 CreateVAO(f32 *vertices, u32 verticesSize, s32 *elemCounts, u32 elemCountsSize, u32 *indices, u32 indicesSize)
 {
-    u64 arenaSize = 100 * 1024 * 1024;
-
-    if (!CreateShaderPrograms(transientInfo))
-    {
-        return false;
-    }
-
-    s32 elemCounts[] = {3, 3, 2};
-
-    FILE *rectFile;
-    fopen_s(&rectFile, "rect.bin", "rb");
-    // 4 vertices per face * 6 faces * (vec3 pos + vec3 normal + vec2 texCoords).
-    f32 rectVertices[192];
-    u32 rectIndices[36];
-    fread(rectVertices, sizeof(f32), myArraySize(rectVertices), rectFile);
-    fread(rectIndices, sizeof(u32), myArraySize(rectIndices), rectFile);
-    fclose(rectFile);
-
     VaoInformation vaoInfo = {};
-    vaoInfo.vertices = rectVertices;
-    vaoInfo.verticesSize = sizeof(rectVertices);
+    vaoInfo.vertices = vertices;
+    vaoInfo.verticesSize = verticesSize;
     vaoInfo.elemCounts = elemCounts;
-    vaoInfo.elementCountsSize = myArraySize(elemCounts);
-    vaoInfo.indices = rectIndices;
-    vaoInfo.indicesSize = sizeof(rectIndices);
+    vaoInfo.elementCountsSize = elemCountsSize;
+    vaoInfo.indices = indices;
+    vaoInfo.indicesSize = indicesSize;
 
-    u32 cubeVao = CreateVAO(&vaoInfo);
+    return CreateVAO(&vaoInfo);
+}
 
-    f32 quadVertices[] = {1.f,  1.f,  0.f, 0.f, 0.f, 1.f, 1.f, 1.f, 1.f,  -1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
-                          -1.f, -1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -1.f, 1.f,  0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
-
-    u32 quadIndices[] = {0, 1, 3, 1, 2, 3};
-
-    vaoInfo.vertices = quadVertices;
-    vaoInfo.verticesSize = sizeof(quadVertices);
-    vaoInfo.elemCounts = elemCounts;
-    vaoInfo.elementCountsSize = myArraySize(elemCounts);
-    vaoInfo.indices = quadIndices;
-    vaoInfo.indicesSize = sizeof(quadIndices);
-
-    u32 mainQuadVao = CreateVAO(&vaoInfo);
-
-    f32 rearViewQuadVertices[] = {.5f,  1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f, .5f,  .7f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
-                                  -.5f, .7f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -.5f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
-
-    u32 rearViewQuadIndices[] = {0, 1, 3, 1, 2, 3};
-
-    vaoInfo.vertices = rearViewQuadVertices;
-    vaoInfo.verticesSize = sizeof(rearViewQuadVertices);
-    vaoInfo.elemCounts = elemCounts;
-    vaoInfo.elementCountsSize = myArraySize(elemCounts);
-    vaoInfo.indices = rearViewQuadIndices;
-    vaoInfo.indicesSize = sizeof(rearViewQuadIndices);
-
-    u32 rearViewQuadVao = CreateVAO(&vaoInfo);
-
-    transientInfo->cubeVao = cubeVao;
-    transientInfo->mainQuadVao = mainQuadVao;
-    transientInfo->rearViewQuadVao = rearViewQuadVao;
-    transientInfo->postProcessingQuadVao = mainQuadVao;
-    transientInfo->backpack =
-        LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
-    transientInfo->planet = LoadModel("planet.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
-    transientInfo->asteroid = LoadModel("rock.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
-
-    srand((u32)Win32GetWallClock());
-
+void SetUpAsteroids(TransientDrawingInfo *transientInfo)
+{
     u32 modelMatricesSize = NUM_ASTEROIDS * sizeof(glm::mat4);
     u32 radiiSize = NUM_ASTEROIDS * sizeof(f32);
     u32 yValuesSize = NUM_ASTEROIDS * sizeof(f32);
@@ -775,6 +739,114 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         glVertexAttribDivisor(8, 1);
     }
     FreeArena(tempArena);
+}
+
+void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInfo)
+{
+    RECT clientRect;
+    GetClientRect(window, &clientRect);
+    s32 width = clientRect.right;
+    s32 height = clientRect.bottom;
+
+    transientInfo->numSamples = 4;
+
+    GLenum mainFramebufferStatus =
+        CreateMultisampledFramebuffer(width, height, &transientInfo->mainFBO, &transientInfo->mainQuad,
+                                      &transientInfo->mainRBO, transientInfo->numSamples);
+    myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
+    GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO,
+                                                         &transientInfo->rearViewQuad, &transientInfo->rearViewRBO);
+    myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
+    GLenum postProcessingFramebufferStatus =
+        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
+                          &transientInfo->postProcessingRBO);
+    myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
+    GLenum depthMapFramebufferStatus = CreateFramebuffer(
+        width, height, &transientInfo->depthMapFBO, &transientInfo->depthMapQuad, &transientInfo->depthMapRBO, true);
+    myAssert(depthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+}
+
+void CreateSkybox(TransientDrawingInfo *transientInfo)
+{
+    u32 skyboxTexture;
+    glGenTextures(1, &skyboxTexture);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
+
+    const char *skyboxImages[] = {"space_skybox/right.png",  "space_skybox/left.png",  "space_skybox/top.png",
+                                  "space_skybox/bottom.png", "space_skybox/front.png", "space_skybox/back.png"};
+    stbi_set_flip_vertically_on_load_thread(false);
+    for (u32 i = 0; i < 6; i++)
+    {
+        s32 imageWidth;
+        s32 imageHeight;
+        s32 numChannels;
+        u8 *data = stbi_load(skyboxImages[i], &imageWidth, &imageHeight, &numChannels, 0);
+        myAssert(data);
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA, imageWidth, imageHeight, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, data);
+        stbi_image_free(data);
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+    transientInfo->skyboxTexture = skyboxTexture;
+}
+
+extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
+                                                            PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo,
+                                                            Arena *texturesArena, Arena *meshDataArena)
+{
+    u64 arenaSize = 100 * 1024 * 1024;
+
+    if (!CreateShaderPrograms(transientInfo))
+    {
+        return false;
+    }
+
+    s32 elemCounts[] = {3, 3, 2};
+
+    FILE *rectFile;
+    fopen_s(&rectFile, "rect.bin", "rb");
+    // 4 vertices per face * 6 faces * (vec3 pos + vec3 normal + vec2 texCoords).
+    f32 rectVertices[192];
+    u32 rectIndices[36];
+    fread(rectVertices, sizeof(f32), myArraySize(rectVertices), rectFile);
+    fread(rectIndices, sizeof(u32), myArraySize(rectIndices), rectFile);
+    fclose(rectFile);
+
+    transientInfo->cubeVao = CreateVAO(rectVertices, sizeof(rectVertices), elemCounts, myArraySize(elemCounts),
+                                       rectIndices, sizeof(rectIndices));
+
+    f32 quadVertices[] = {1.f,  1.f,  0.f, 0.f, 0.f, 1.f, 1.f, 1.f, 1.f,  -1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
+                          -1.f, -1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -1.f, 1.f,  0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
+    u32 quadIndices[] = {0, 1, 3, 1, 2, 3};
+    u32 mainQuadVao = CreateVAO(quadVertices, sizeof(quadVertices), elemCounts, myArraySize(elemCounts), quadIndices,
+                                sizeof(quadIndices));
+    transientInfo->mainQuadVao = mainQuadVao;
+    transientInfo->postProcessingQuadVao = mainQuadVao;
+    transientInfo->depthMapQuadVao = mainQuadVao;
+
+    f32 rearViewQuadVertices[] = {.5f,  1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f, .5f,  .7f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
+                                  -.5f, .7f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -.5f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
+    u32 rearViewQuadIndices[] = {0, 1, 3, 1, 2, 3};
+    transientInfo->rearViewQuadVao =
+        CreateVAO(rearViewQuadVertices, sizeof(rearViewQuadVertices), elemCounts, myArraySize(elemCounts),
+                  rearViewQuadIndices, sizeof(rearViewQuadIndices));
+
+    transientInfo->backpack =
+        LoadModel("backpack.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+    transientInfo->planet = LoadModel("planet.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+    transientInfo->asteroid = LoadModel("rock.obj", elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+
+    srand((u32)Win32GetWallClock());
+
+    SetUpAsteroids(transientInfo);
 
     transientInfo->grassTexture = CreateTextureFromImage("grass.png", true, GL_CLAMP_TO_EDGE);
     transientInfo->windowTexture = CreateTextureFromImage("window.png", true, GL_CLAMP_TO_EDGE);
@@ -806,49 +878,9 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
             glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
     }
 
-    RECT clientRect;
-    GetClientRect(window, &clientRect);
-    s32 width = clientRect.right;
-    s32 height = clientRect.bottom;
+    CreateFramebuffers(window, transientInfo);
 
-    transientInfo->numSamples = 4;
-    GLenum mainFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->mainFBO, &transientInfo->mainQuad,
-                                                     &transientInfo->mainRBO, true, transientInfo->numSamples);
-    myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
-
-    GLenum rearViewFramebufferStatus = CreateFramebuffer(
-        width, height, &transientInfo->rearViewFBO, &transientInfo->rearViewQuad, &transientInfo->rearViewRBO, false);
-    myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
-
-    GLenum postProcessingFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
-                          &transientInfo->postProcessingRBO, false);
-
-    u32 skyboxTexture;
-    glGenTextures(1, &skyboxTexture);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
-
-    const char *skyboxImages[] = {"space_skybox/right.png",  "space_skybox/left.png",  "space_skybox/top.png",
-                                  "space_skybox/bottom.png", "space_skybox/front.png", "space_skybox/back.png"};
-    stbi_set_flip_vertically_on_load_thread(false);
-    for (u32 i = 0; i < 6; i++)
-    {
-        s32 imageWidth;
-        s32 imageHeight;
-        s32 numChannels;
-        u8 *data = stbi_load(skyboxImages[i], &imageWidth, &imageHeight, &numChannels, 0);
-        myAssert(data);
-        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_RGBA, imageWidth, imageHeight, 0, GL_RGBA,
-                     GL_UNSIGNED_BYTE, data);
-        stbi_image_free(data);
-    }
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
-
-    transientInfo->skyboxTexture = skyboxTexture;
+    CreateSkybox(transientInfo);
 
     glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
 
@@ -1373,9 +1405,9 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
         cameraInfo->yaw = 0.f;
         cameraInfo->pitch = 0.f;
     }
-    
+
     ImGui::Separator();
-    
+
     ImGui::SliderFloat("Gamma correction", &persistentInfo->gamma, 0.f, 5.f);
 
     ImGui::Separator();
@@ -1556,7 +1588,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         u32 shaderProgram = transientInfo->postProcessShader.id;
         glUseProgram(shaderProgram);
-        
+
         SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
 
         glDisable(GL_DEPTH_TEST);
@@ -1584,7 +1616,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         u32 shaderProgram = transientInfo->postProcessShader.id;
         glUseProgram(shaderProgram);
-        
+
         SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
 
         glDisable(GL_DEPTH_TEST);

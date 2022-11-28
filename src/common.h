@@ -210,6 +210,11 @@ struct TransientDrawingInfo
     u32 postProcessingFBO;
     u32 postProcessingQuad;
     u32 postProcessingRBO;
+    
+    u32 depthMapQuadVao;
+    u32 depthMapFBO;
+    u32 depthMapQuad;
+    u32 depthMapRBO;
 };
 
 struct PersistentDrawingInfo
