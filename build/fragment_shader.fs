@@ -44,6 +44,7 @@ struct SpotLight
 in vec3 fragWorldPos;
 in vec3 normal;
 in vec2 texCoords;
+in vec4 fragPosLightSpace;
 
 out vec4 fragColor;
 
@@ -65,6 +66,34 @@ uniform samplerCube skybox;
 vec3 CalcEnvironment(vec3 normal, vec3 cameraDir);
 
 uniform bool blinn;
+
+uniform sampler2D depthMap;
+
+float CalcShadow(vec3 nrm, vec3 lightDir)
+{
+    vec4 posLightSpace = fragPosLightSpace;
+    posLightSpace.xyz /= posLightSpace.w;
+    posLightSpace.xyz += 1.f;
+    posLightSpace.xyz /= 2.f;
+    float shadowMapDepth = texture(depthMap, posLightSpace.xy).r;
+    float bias = max(.05f * (1.f - dot(nrm, lightDir)), .005f);
+    if (posLightSpace.z > 1.f)
+    {
+        return 0.f;
+    }
+    
+    float shadow = 0.f;
+    vec2 texelSize = 1.f / textureSize(depthMap, 0);
+    for (int x = -1; x <= 1; x++)
+    {
+        for (int y = -1; y <= 1; y++)
+        {
+            float pcfDepth = texture(depthMap, posLightSpace.xy + vec2(x, y) * texelSize).r;
+            shadow += posLightSpace.z - bias > pcfDepth ? 1.f : 0.f;
+        }
+    }
+    return shadow / 9.f;
+}
 
 void main()
 {
@@ -98,7 +127,7 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir)
     float spec = pow(max(dot(specVec1, specVec2), 0.f), material.shininess);
     vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
 
-    return ambient + diffuse + specular;
+    return ambient + (1.f - CalcShadow(normal, lightDir)) * (diffuse + specular);
 }
 
 vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 cameraDir)

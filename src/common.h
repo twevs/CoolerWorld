@@ -66,6 +66,7 @@ typedef double f64;
 #define PI 3.1415926535f
 #define NUM_POINTLIGHTS 4
 #define NUM_OBJECTS 5
+#define SHADOW_MAP_SIZE 4096
 
 struct DirLight
 {
@@ -181,9 +182,9 @@ struct ShaderProgram
     char fragmentShaderFilename[64];
     FILETIME fragmentShaderTime;
     
-    Object *shaderPassObjects[MAX_OBJECTS];
+    u32 objectIndices[MAX_OBJECTS];
     u32 numObjects;
-    Model *shaderPassModels[MAX_MODELS];
+    u32 modelIndices[MAX_MODELS];
     u32 numModels;
 };
 
