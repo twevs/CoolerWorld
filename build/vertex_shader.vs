@@ -7,13 +7,15 @@ layout (location = 2) in vec2 aTexCoords;
 out vec3 fragWorldPos;
 out vec3 normal;
 out vec2 texCoords;
-out vec4 fragPosLightSpace;
+out vec4 fragPosDirLightSpace;
+out vec4 fragPosSpotLightSpace;
 
 layout (std140, binding = 0) uniform Matrices
 {
 	mat4 viewMatrix;
 	mat4 projectionMatrix;
-	mat4 lightSpaceMatrix;
+	mat4 dirLightSpaceMatrix;
+	mat4 spotLightSpaceMatrix;
 };
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;
@@ -24,5 +26,6 @@ void main()
     fragWorldPos = vec3(modelMatrix * vec4(aPos, 1.f));
     normal = normalize(normalMatrix * aNormal);
     texCoords = aTexCoords;
-	fragPosLightSpace = lightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
+	fragPosDirLightSpace = dirLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
+	fragPosSpotLightSpace = spotLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
 }

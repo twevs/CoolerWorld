@@ -224,7 +224,11 @@ internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *ve
 
 internal bool CreateShaderPrograms(TransientDrawingInfo *info)
 {
-    if (!CreateShaderProgram(&info->depthMapShader, info->depthMapShader.id, "depth_map.vs", "depth_map.fs"))
+    if (!CreateShaderProgram(&info->dirDepthMapShader, info->dirDepthMapShader.id, "depth_map.vs", "depth_map.fs"))
+    {
+        return false;
+    }
+    if (!CreateShaderProgram(&info->spotDepthMapShader, info->spotDepthMapShader.id, "spot_depth_map.vs", "depth_map.fs"))
     {
         return false;
     }
@@ -272,12 +276,14 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     SetShaderUniformSampler(info->objectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(info->objectShader.id, "material.specular", 1);
     SetShaderUniformSampler(info->objectShader.id, "skybox", 2);
-    SetShaderUniformSampler(info->objectShader.id, "depthMap", 3);
+    SetShaderUniformSampler(info->objectShader.id, "dirDepthMap", 3);
+    SetShaderUniformSampler(info->objectShader.id, "spotDepthMap", 4);
     glUseProgram(info->instancedObjectShader.id);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.specular", 1);
     SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 2);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "depthMap", 3);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "dirDepthMap", 3);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "spotDepthMap", 4);
 
     glUseProgram(info->textureShader.id);
     SetShaderUniformSampler(info->textureShader.id, "tex", 0);
@@ -584,7 +590,8 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
     {
         transientInfo->models[i].position = info->modelPositions[i];
     }
-    LoadShaderPass(file, &transientInfo->depthMapShader);
+    LoadShaderPass(file, &transientInfo->dirDepthMapShader);
+    LoadShaderPass(file, &transientInfo->spotDepthMapShader);
     LoadShaderPass(file, &transientInfo->objectShader);
     LoadShaderPass(file, &transientInfo->instancedObjectShader);
     LoadShaderPass(file, &transientInfo->colorShader);
@@ -804,9 +811,13 @@ void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInfo)
                           &transientInfo->postProcessingRBO);
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum depthMapFramebufferStatus = CreateFramebuffer(
-        SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, &transientInfo->shadowMapFBO, &transientInfo->shadowMapQuad, &transientInfo->shadowMapRBO, true);
-    myAssert(depthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+    GLenum dirDepthMapFramebufferStatus = CreateFramebuffer(
+        SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO, &transientInfo->dirShadowMapQuad, &transientInfo->dirShadowMapRBO, true);
+    myAssert(dirDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+    
+    GLenum spotDepthMapFramebufferStatus = CreateFramebuffer(
+        SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO, &transientInfo->spotShadowMapQuad, &transientInfo->spotShadowMapRBO, true);
+    myAssert(spotDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 }
 
 void CreateSkybox(TransientDrawingInfo *transientInfo)
@@ -887,7 +898,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     u32 planetIndex = AddModel("planet.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
     u32 rockIndex = AddModel("rock.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
     
-    AddModelToShaderPass(&transientInfo->depthMapShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->objectShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
     
@@ -910,7 +922,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
                                 sizeof(quadIndices));
     transientInfo->mainQuadVao = mainQuadVao;
     transientInfo->postProcessingQuadVao = mainQuadVao;
-    transientInfo->shadowMapQuadVao = mainQuadVao;
+    transientInfo->dirShadowMapQuadVao = mainQuadVao;
+    transientInfo->spotShadowMapQuadVao = mainQuadVao;
 
     f32 rearViewQuadVertices[] = {.5f,  1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f, .5f,  .7f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
                                   -.5f, .7f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -.5f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
@@ -942,14 +955,16 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
     {
         u32 curTexCubeIndex = AddObject(transientInfo, transientInfo->cubeVao, 36, CreateRandomVec3());
-        AddObjectToShaderPass(&transientInfo->depthMapShader, curTexCubeIndex);
+        AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curTexCubeIndex);
+        AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->textureShader, curTexCubeIndex);
     }
 
     for (u32 windowIndex = 0; windowIndex < NUM_OBJECTS; windowIndex++)
     {
         u32 curWindowIndex = AddObject(transientInfo, transientInfo->mainQuadVao, 6, CreateRandomVec3());
-        AddObjectToShaderPass(&transientInfo->depthMapShader, curWindowIndex);
+        AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curWindowIndex);
+        AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curWindowIndex);
         AddObjectToShaderPass(&transientInfo->textureShader, curWindowIndex);
     }
 
@@ -968,7 +983,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
 
     glGenBuffers(1, &transientInfo->matricesUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
-    glBufferData(GL_UNIFORM_BUFFER, 3 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
+    glBufferData(GL_UNIFORM_BUFFER, 4 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
 
     return true;
@@ -1046,7 +1061,8 @@ extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *tran
          info->modelPositions[i] = transientInfo->models[i].position;
     }
     fwrite(info, sizeof(PersistentDrawingInfo), 1, file);
-    SaveShaderPass(file, &transientInfo->depthMapShader);
+    SaveShaderPass(file, &transientInfo->dirDepthMapShader);
+    SaveShaderPass(file, &transientInfo->spotDepthMapShader);
     SaveShaderPass(file, &transientInfo->objectShader);
     SaveShaderPass(file, &transientInfo->instancedObjectShader);
     SaveShaderPass(file, &transientInfo->colorShader);
@@ -1173,9 +1189,16 @@ void RenderWithColorShader(TransientDrawingInfo *transientInfo, PersistentDrawin
     }
 }
 
+enum class RenderPassType
+{
+    Normal,
+    DirShadowMap,
+    SpotShadowMap
+};
+
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false,
-               bool shadowMapPass = false);
+               RenderPassType passType = RenderPassType::Normal);
 
 void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 numInstances = 1)
 {
@@ -1297,7 +1320,10 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     
     // TODO: figure out the best place to assign textures.
     glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->shadowMapQuad);
+    glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
+    
+    glActiveTexture(GL_TEXTURE4);
+    glBindTexture(GL_TEXTURE_2D, transientInfo->spotShadowMapQuad);
 }
 
 internal void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
@@ -1452,7 +1478,7 @@ void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transie
 
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass,
-               bool shadowMapPass)
+               RenderPassType passType)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
@@ -1471,27 +1497,40 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
     glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
     
-    f32 lightNearPlaneDistance = 1.f;
-    f32 lightFarPlaneDistance = 7.5f;
-    glm::vec3 eye = glm::vec3(0.f) - glm::normalize(persistentInfo->dirLight.direction) * 5.f;
-    glm::mat4 lightViewMatrix = glm::lookAt(eye, glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
-    glm::mat4 lightProjectionMatrix = glm::ortho(-10.f, 10.f, -10.f, 10.f, lightNearPlaneDistance, lightFarPlaneDistance);
-    glm::mat4 lightSpaceMatrix = lightProjectionMatrix * lightViewMatrix;
+    // TODO: move these calculations out since they don't depend on camera placement so we don't need to do
+    // them every time the scene is drawn?
+    f32 dirLightNearPlaneDistance = 1.f;
+    f32 dirLightFarPlaneDistance = 7.5f;
+    glm::vec3 dirEye = glm::vec3(0.f) - glm::normalize(persistentInfo->dirLight.direction) * 5.f;
+    glm::mat4 dirLightViewMatrix = glm::lookAt(dirEye, glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
+    glm::mat4 dirLightProjectionMatrix = glm::ortho(-10.f, 10.f, -10.f, 10.f, dirLightNearPlaneDistance, dirLightFarPlaneDistance);
+    glm::mat4 dirLightSpaceMatrix = dirLightProjectionMatrix * dirLightViewMatrix;
     
     f32 nearPlaneDistance = .1f;
     f32 farPlaneDistance = 150.f;
-    glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
     glm::mat4 projectionMatrix = glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio,
                                                         nearPlaneDistance, farPlaneDistance);
+    f32 spotLightNearPlaneDistance = .1f;
+    f32 spotLightFarPlaneDistance = 150.f;
+    glm::vec3 spotEye = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
+    glm::mat4 spotLightViewMatrix = glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), cameraUpVec);
+    glm::mat4 spotLightSpaceMatrix = projectionMatrix * spotLightViewMatrix;
+    
+    glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
-    glBufferSubData(GL_UNIFORM_BUFFER, 128, 64, &lightSpaceMatrix);
+    glBufferSubData(GL_UNIFORM_BUFFER, 128, 64, &dirLightSpaceMatrix);
+    glBufferSubData(GL_UNIFORM_BUFFER, 192, 64, &spotLightSpaceMatrix);
     
-    if (shadowMapPass)
+    if (passType == RenderPassType::DirShadowMap)
     {
-        RenderShaderPass(&transientInfo->depthMapShader, transientInfo);
+        RenderShaderPass(&transientInfo->dirDepthMapShader, transientInfo);
+    }
+    else if (passType == RenderPassType::SpotShadowMap)
+    {
+        RenderShaderPass(&transientInfo->spotDepthMapShader, transientInfo);
     }
     else
     {
@@ -1706,8 +1745,12 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // some objects.
     glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
     glCullFace(GL_FRONT);
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->shadowMapFBO, transientInfo->shadowMapQuad, window,
-              listArena, tempArena, false, true);
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->dirShadowMapFBO, transientInfo->dirShadowMapQuad, window,
+              listArena, tempArena, false, RenderPassType::DirShadowMap);
+    
+    // Spot shadow map pass.
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->spotShadowMapFBO, transientInfo->spotShadowMapQuad, window,
+              listArena, tempArena, false, RenderPassType::SpotShadowMap);
     glCullFace(GL_BACK);
     glViewport(0, 0, width, height);
 

@@ -73,7 +73,7 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
         glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->postProcessingRBO);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
         
-        glBindTexture(GL_TEXTURE_2D, transientInfo->shadowMapQuad);
+        glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
     }
 }

@@ -14,5 +14,5 @@ uniform mat3 normalMatrix;
 
 void main()
 {
-    gl_Position = dirLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
+    gl_Position = spotLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
 }
