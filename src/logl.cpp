@@ -228,7 +228,8 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->spotDepthMapShader, info->spotDepthMapShader.id, "spot_depth_map.vs", "depth_map.fs"))
+    if (!CreateShaderProgram(&info->spotDepthMapShader, info->spotDepthMapShader.id, "spot_depth_map.vs",
+                             "depth_map.fs"))
     {
         return false;
     }
@@ -647,7 +648,7 @@ internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadText
     {
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-        f32 borderColor[] = { 1.f, 1.f, 1.f, 1.f };
+        f32 borderColor[] = {1.f, 1.f, 1.f, 1.f};
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
     }
     glBindTexture(GL_TEXTURE_2D, 0);
@@ -788,6 +789,30 @@ void SetUpAsteroids(Model *asteroid)
     FreeArena(tempArena);
 }
 
+GLenum CreateDepthCubemap(u32 *depthCubemap, u32 *depthCubemapFBO)
+{
+    glGenTextures(1, depthCubemap);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, *depthCubemap);
+    for (u32 i = 0; i < 6; i++)
+    {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT, POINT_SHADOW_MAP_SIZE,
+                     POINT_SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glGenFramebuffers(1, depthCubemapFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, *depthCubemapFBO);
+    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, *depthCubemap, 0);
+    glDrawBuffer(GL_NONE);
+    glReadBuffer(GL_NONE);
+
+    return glCheckFramebufferStatus(GL_FRAMEBUFFER);
+}
+
 void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInfo)
 {
     RECT clientRect;
@@ -811,13 +836,19 @@ void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInfo)
                           &transientInfo->postProcessingRBO);
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum dirDepthMapFramebufferStatus = CreateFramebuffer(
-        SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO, &transientInfo->dirShadowMapQuad, &transientInfo->dirShadowMapRBO, true);
+    GLenum dirDepthMapFramebufferStatus =
+        CreateFramebuffer(DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO,
+                          &transientInfo->dirShadowMapQuad, &transientInfo->dirShadowMapRBO, true);
     myAssert(dirDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
-    
-    GLenum spotDepthMapFramebufferStatus = CreateFramebuffer(
-        SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO, &transientInfo->spotShadowMapQuad, &transientInfo->spotShadowMapRBO, true);
+
+    GLenum spotDepthMapFramebufferStatus =
+        CreateFramebuffer(DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO,
+                          &transientInfo->spotShadowMapQuad, &transientInfo->spotShadowMapRBO, true);
     myAssert(spotDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
+    GLenum pointDepthCubemapStatus =
+        CreateDepthCubemap(&transientInfo->pointCubemapTexture, &transientInfo->pointCubemapFBO);
+    myAssert(pointDepthCubemapStatus == GL_FRAMEBUFFER_COMPLETE);
 }
 
 void CreateSkybox(TransientDrawingInfo *transientInfo)
@@ -849,7 +880,8 @@ void CreateSkybox(TransientDrawingInfo *transientInfo)
     transientInfo->skyboxTexture = skyboxTexture;
 }
 
-u32 AddModel(const char *filename, TransientDrawingInfo *transientInfo, s32 *elemCounts, u32 elemCountsSize, Arena *texturesArena, Arena *meshDataArena)
+u32 AddModel(const char *filename, TransientDrawingInfo *transientInfo, s32 *elemCounts, u32 elemCountsSize,
+             Arena *texturesArena, Arena *meshDataArena)
 {
     u32 modelIndex = transientInfo->numModels;
     transientInfo->models[modelIndex] = LoadModel(filename, elemCounts, elemCountsSize, texturesArena, meshDataArena);
@@ -893,16 +925,19 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     }
 
     s32 elemCounts[] = {3, 3, 2};
-    
-    u32 backpackIndex = AddModel("backpack.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
-    u32 planetIndex = AddModel("planet.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
-    u32 rockIndex = AddModel("rock.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
-    
+
+    u32 backpackIndex =
+        AddModel("backpack.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+    u32 planetIndex =
+        AddModel("planet.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+    u32 rockIndex =
+        AddModel("rock.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena, meshDataArena);
+
     AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->objectShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
-    
+
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
     // 4 vertices per face * 6 faces * (vec3 pos + vec3 normal + vec2 texCoords).
@@ -938,7 +973,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
 
     transientInfo->grassTexture = CreateTextureFromImage("grass.png", true, GL_CLAMP_TO_EDGE);
     transientInfo->windowTexture = CreateTextureFromImage("window.png", true, GL_CLAMP_TO_EDGE);
-    
+
     // First we create the objects.
     PointLight *pointLights = drawingInfo->pointLights;
 
@@ -1045,7 +1080,8 @@ void SaveShaderPass(FILE *file, ShaderProgram *shader)
     fwrite(shader->modelIndices, sizeof(u32), shader->numModels, file);
 }
 
-extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *info, CameraInfo *cameraInfo)
+extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *info,
+                                                      CameraInfo *cameraInfo)
 {
     FILE *file;
     fopen_s(&file, "save.bin", "wb");
@@ -1053,12 +1089,12 @@ extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *tran
     info->numObjects = transientInfo->numObjects;
     for (u32 i = 0; i < transientInfo->numObjects; i++)
     {
-         info->objectPositions[i] = transientInfo->objects[i].position;
+        info->objectPositions[i] = transientInfo->objects[i].position;
     }
     info->numModels = transientInfo->numModels;
     for (u32 i = 0; i < transientInfo->numModels; i++)
     {
-         info->modelPositions[i] = transientInfo->models[i].position;
+        info->modelPositions[i] = transientInfo->models[i].position;
     }
     fwrite(info, sizeof(PersistentDrawingInfo), 1, file);
     SaveShaderPass(file, &transientInfo->dirDepthMapShader);
@@ -1246,7 +1282,7 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 num
 void RenderShaderPass(ShaderProgram *shaderProgram, TransientDrawingInfo *transientInfo)
 {
     glUseProgram(shaderProgram->id);
-    
+
     for (u32 i = 0; i < shaderProgram->numObjects; i++)
     {
         u32 curIndex = shaderProgram->objectIndices[i];
@@ -1274,7 +1310,8 @@ void FlipImage(u8 *data, s32 width, s32 height, u32 bytesPerPixel, Arena *tempAr
     ArenaPop(tempArena, stride);
 }
 
-internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo)
+internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                                      PersistentDrawingInfo *persistentInfo)
 {
     glUseProgram(shaderProgram);
 
@@ -1317,11 +1354,11 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
 
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
-    
+
     // TODO: figure out the best place to assign textures.
     glActiveTexture(GL_TEXTURE3);
     glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
-    
+
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, transientInfo->spotShadowMapQuad);
 }
@@ -1410,7 +1447,7 @@ internal void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInf
 
     u32 shaderProgram = transientInfo->objectShader.id;
     SetObjectShaderUniforms(shaderProgram, cameraInfo, transientInfo, persistentInfo);
-    
+
     RenderShaderPass(&transientInfo->objectShader, transientInfo);
 }
 
@@ -1418,7 +1455,7 @@ void RenderWithGeometryShader(TransientDrawingInfo *transientInfo)
 {
     u32 shaderProgram = transientInfo->geometryShader.id;
     glUseProgram(shaderProgram);
-    
+
     SetShaderUniformVec3(shaderProgram, "color", glm::vec3(1.f, 1.f, 0.f));
 
     RenderShaderPass(&transientInfo->geometryShader, transientInfo);
@@ -1496,26 +1533,27 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
     glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
     glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
-    
+
     // TODO: move these calculations out since they don't depend on camera placement so we don't need to do
     // them every time the scene is drawn?
     f32 dirLightNearPlaneDistance = 1.f;
     f32 dirLightFarPlaneDistance = 7.5f;
     glm::vec3 dirEye = glm::vec3(0.f) - glm::normalize(persistentInfo->dirLight.direction) * 5.f;
     glm::mat4 dirLightViewMatrix = glm::lookAt(dirEye, glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
-    glm::mat4 dirLightProjectionMatrix = glm::ortho(-10.f, 10.f, -10.f, 10.f, dirLightNearPlaneDistance, dirLightFarPlaneDistance);
+    glm::mat4 dirLightProjectionMatrix =
+        glm::ortho(-10.f, 10.f, -10.f, 10.f, dirLightNearPlaneDistance, dirLightFarPlaneDistance);
     glm::mat4 dirLightSpaceMatrix = dirLightProjectionMatrix * dirLightViewMatrix;
-    
+
     f32 nearPlaneDistance = .1f;
     f32 farPlaneDistance = 150.f;
-    glm::mat4 projectionMatrix = glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio,
-                                                        nearPlaneDistance, farPlaneDistance);
+    glm::mat4 projectionMatrix =
+        glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, nearPlaneDistance, farPlaneDistance);
     f32 spotLightNearPlaneDistance = .1f;
     f32 spotLightFarPlaneDistance = 150.f;
     glm::vec3 spotEye = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
     glm::mat4 spotLightViewMatrix = glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), cameraUpVec);
     glm::mat4 spotLightSpaceMatrix = projectionMatrix * spotLightViewMatrix;
-    
+
     glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
@@ -1523,7 +1561,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 128, 64, &dirLightSpaceMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 192, 64, &spotLightSpaceMatrix);
-    
+
     if (passType == RenderPassType::DirShadowMap)
     {
         RenderShaderPass(&transientInfo->dirDepthMapShader, transientInfo);
@@ -1634,7 +1672,7 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     ImGui::Separator();
 
     ImGui::SliderFloat4("Clear color", persistentInfo->clearColor, 0.f, 1.f);
-    
+
     if (ImGui::CollapsingHeader("Positions"))
     {
         for (u32 i = 0; i < transientInfo->numModels; i++)
@@ -1734,7 +1772,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     }
 
     CheckForNewShaders(transientInfo);
-    
+
     RECT clientRect;
     GetClientRect(window, &clientRect);
     s32 width = clientRect.right;
@@ -1743,14 +1781,14 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // Directional shadow map pass.
     // NOTE: front-face culling is a sledgehammer solution to Peter-Panning and may break down with
     // some objects.
-    glViewport(0, 0, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE);
+    glViewport(0, 0, DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE);
     glCullFace(GL_FRONT);
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->dirShadowMapFBO, transientInfo->dirShadowMapQuad, window,
-              listArena, tempArena, false, RenderPassType::DirShadowMap);
-    
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->dirShadowMapFBO,
+              transientInfo->dirShadowMapQuad, window, listArena, tempArena, false, RenderPassType::DirShadowMap);
+
     // Spot shadow map pass.
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->spotShadowMapFBO, transientInfo->spotShadowMapQuad, window,
-              listArena, tempArena, false, RenderPassType::SpotShadowMap);
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->spotShadowMapFBO,
+              transientInfo->spotShadowMapQuad, window, listArena, tempArena, false, RenderPassType::SpotShadowMap);
     glCullFace(GL_BACK);
     glViewport(0, 0, width, height);
 

@@ -66,7 +66,8 @@ typedef double f64;
 #define PI 3.1415926535f
 #define NUM_POINTLIGHTS 4
 #define NUM_OBJECTS 5
-#define SHADOW_MAP_SIZE 4096
+#define DIR_SHADOW_MAP_SIZE 4096
+#define POINT_SHADOW_MAP_SIZE 1024
 
 struct DirLight
 {
@@ -241,6 +242,9 @@ struct TransientDrawingInfo
     u32 spotShadowMapFBO;
     u32 spotShadowMapQuad;
     u32 spotShadowMapRBO;
+    
+    u32 pointCubemapTexture;
+    u32 pointCubemapFBO;
 };
 
 struct PersistentDrawingInfo

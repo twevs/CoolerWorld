@@ -15,7 +15,8 @@ typedef bool (*InitializeDrawingInfo_t)(HWND window, TransientDrawingInfo *trans
                                         Arena *texturesArena, Arena *meshDataArena);
 InitializeDrawingInfo_t InitializeDrawingInfo;
 
-typedef bool (*SaveDrawingInfo_t)(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo);
+typedef bool (*SaveDrawingInfo_t)(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *drawingInfo,
+                                  CameraInfo *cameraInfo);
 SaveDrawingInfo_t SaveDrawingInfo;
 
 typedef void (*ProvideCameraVectors_t)(CameraInfo *cameraInfo);
@@ -72,9 +73,10 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
         glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->postProcessingRBO);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
-        
+
         glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, 0,
+                     GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
     }
 }
 
