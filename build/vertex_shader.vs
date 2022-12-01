@@ -1,4 +1,4 @@
-#version 420 core
+#version 450 core
 
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
@@ -16,6 +16,7 @@ layout (std140, binding = 0) uniform Matrices
 	mat4 projectionMatrix;
 	mat4 dirLightSpaceMatrix;
 	mat4 spotLightSpaceMatrix;
+    mat4 pointShadowMatrices[6];
 };
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;

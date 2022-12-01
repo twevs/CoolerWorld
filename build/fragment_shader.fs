@@ -1,4 +1,4 @@
-#version 330 core
+#version 450 core
     
 struct Material
 {
@@ -70,6 +70,9 @@ uniform bool blinn;
 
 uniform sampler2D dirDepthMap;
 uniform sampler2D spotDepthMap;
+uniform samplerCube pointDepthMaps[NUM_POINTLIGHTS];
+
+uniform float pointFar;
 
 float CalcShadow(vec4 posLightSpace, vec3 nrm, vec3 lightDir, sampler2D depthMap)
 {
@@ -90,10 +93,32 @@ float CalcShadow(vec4 posLightSpace, vec3 nrm, vec3 lightDir, sampler2D depthMap
         for (int y = -1; y <= 1; y++)
         {
             float pcfDepth = texture(depthMap, posLightSpace.xy + vec2(x, y) * texelSize).r;
-            shadow += posLightSpace.z - bias > pcfDepth ? 1.f : 0.f;
+            shadow += (posLightSpace.z - bias > pcfDepth) ? 1.f : 0.f;
         }
     }
     return shadow / 9.f;
+}
+
+float CalcPointShadow(vec3 nrm, vec3 lightPos, samplerCube depthMap)
+{
+    vec3 lightToFrag = fragWorldPos - lightPos;
+    float shadowMapDepth = texture(depthMap, lightToFrag).r * pointFar;
+    float bias = max(.05f * (1.f - dot(nrm, normalize(lightToFrag))), .005f);
+    float dist = length(lightToFrag);
+    
+    float shadow = 0.f;
+    for (int x = -1; x <= 1; x++)
+    {
+        for (int y = -1; y <= 1; y++)
+        {
+            for (int z = -1; z <= 1; z++)
+            {
+                float pcfDepth = texture(depthMap, lightToFrag + vec3(x, y, z)).r;
+                shadow += dist - bias > pcfDepth ? 1.f : 0.f;
+            }
+        }
+    }
+    return shadow / 27.f;
 }
 
 void main()
@@ -158,9 +183,10 @@ vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 camer
         float spec = pow(max(dot(specVec1, specVec2), 0.f), material.shininess);
         vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
         
-        result += intensity * (ambient + diffuse + specular);
+        float shadow = CalcPointShadow(normal, lights[i].position, pointDepthMaps[i]);
+        result += intensity * (ambient + (1.f - shadow) * (diffuse + specular));
     }
-
+    
     return result;
 }
 
@@ -192,7 +218,7 @@ vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir)
 vec3 CalcEnvironment(vec3 normal, vec3 cameraDir)
 {
     vec3 reflectionDir = reflect(-cameraDir, normal);
-    vec3 sample = vec3(texture(skybox, reflectionDir));
+    vec3 envSample = vec3(texture(skybox, reflectionDir));
     
-    return sample * .2f;
+    return envSample * .2f;
 }

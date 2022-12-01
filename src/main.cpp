@@ -50,18 +50,19 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
     if (persistentInfo->initialized)
     {
         glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->mainQuad);
-        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGB, width, height, GL_TRUE);
+        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGB, width, height,
+                                GL_TRUE);
         glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->mainRBO);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples, GL_DEPTH24_STENCIL8, width,
-                                         height);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples, GL_DEPTH24_STENCIL8,
+                                         width, height);
 
         // See also: note about rear-view quad in DrawWindow().
         /*
         glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->rearViewQuad);
-        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGB, width, height, GL_TRUE);
-        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->rearViewRBO);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples, GL_DEPTH24_STENCIL8, width,
-                                         height);
+        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGB, width,
+        height, GL_TRUE); glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->rearViewRBO);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples,
+        GL_DEPTH24_STENCIL8, width, height);
         */
 
         glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
@@ -85,8 +86,8 @@ internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
-internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawingInfo *drawingInfo, glm::vec3 *movement,
-                                   CameraInfo *cameraInfo)
+internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawingInfo *drawingInfo,
+                                   glm::vec3 *movement, CameraInfo *cameraInfo)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
@@ -141,7 +142,8 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
                 s16 xCoord = originX + GET_X_LPARAM(message.lParam);
                 s16 yCoord = originY + GET_Y_LPARAM(message.lParam);
                 cameraInfo->yaw -= (xCoord - centreX) / 100.f;
-                cameraInfo->pitch = clampf(cameraInfo->pitch - (yCoord - centreY) / 100.f, -PI / 2, PI / 2, .01f);
+                cameraInfo->pitch =
+                    clampf(cameraInfo->pitch - (yCoord - centreY) / 100.f, -PI / 2, PI / 2, .01f);
 
                 SetCursorPos(centreX, centreY);
             }
@@ -354,7 +356,8 @@ internal int InitializeOpenGLExtensions(HINSTANCE hInstance)
     }
 
     wglChoosePixelFormatARB = (PFNWGLCHOOSEPIXELFORMATARBPROC)wglGetProcAddress("wglChoosePixelFormatARB");
-    wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
+    wglCreateContextAttribsARB =
+        (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
 
     wglMakeCurrent(dummyDC, 0);
     wglDeleteContext(dummyRenderingContext);
@@ -510,7 +513,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         if (!wglMakeCurrent(hdc, renderingContext))
         {
-            OutputDebugStringW(L"Failed to make the created OpenGL rendering context the hardware device context's "
+            OutputDebugStringW(L"Failed to make the created OpenGL rendering context the hardware "
+                               L"device context's "
                                L"current rendering context.");
             return -1;
         }
@@ -518,7 +522,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         wglSwapIntervalEXT = (PFNWGLSWAPINTERVALEXTPROC)wglGetProcAddress("wglSwapIntervalEXT");
         if (!wglSwapIntervalEXT(1))
         {
-            OutputDebugStringW(L"Failed to make the created OpenGL rendering context the hardware device context's "
+            OutputDebugStringW(L"Failed to make the created OpenGL rendering context the hardware "
+                               L"device context's "
                                L"current rendering context.");
             return -1;
         }
@@ -549,7 +554,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
         Arena *listArena = AllocArena(2048);
         Arena *tempArena = AllocArena(1920 * 1080 * 32);
-        if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo, texturesArena, meshDataArena))
+        if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo, texturesArena,
+                                   meshDataArena))
         {
             return -1;
         }
@@ -597,16 +603,17 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
             // Game loop uses deltaTime value here ...
 
-            // TODO: investigate whether it's worth keeping this around as a framerate cap mechanism.
-            // Won't it produce screen-tearing since it won't necessarily be synchronized with the
-            // v-blank? How many users actually disable v-sync anyway?
+            // TODO: investigate whether it's worth keeping this around as a framerate cap
+            // mechanism. Won't it produce screen-tearing since it won't necessarily be synchronized
+            // with the v-blank? How many users actually disable v-sync anyway?
 
             // WCHAR frameTimeString[32];
             // swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
             // OutputDebugStringW(frameTimeString);
 
             cameraInfo->pos += movementPerFrame * deltaTime;
-            DrawWindow(window, hdc, &appState.running, transientInfo, drawingInfo, cameraInfo, listArena, tempArena);
+            DrawWindow(window, hdc, &appState.running, transientInfo, drawingInfo, cameraInfo, listArena,
+                       tempArena);
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
@@ -660,7 +667,8 @@ LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
         return 0;
     }
     case WM_ERASEBKGND:
-        // See: https://stackoverflow.com/questions/43670470/drawn-opengl-disappearing-on-window-resize
+        // See:
+        // https://stackoverflow.com/questions/43670470/drawn-opengl-disappearing-on-window-resize
         return 1;
     }
 

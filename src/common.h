@@ -198,6 +198,7 @@ struct TransientDrawingInfo
     
     ShaderProgram dirDepthMapShader;
     ShaderProgram spotDepthMapShader;
+    ShaderProgram pointDepthMapShader;
     ShaderProgram objectShader;
     ShaderProgram instancedObjectShader;
     ShaderProgram colorShader;
@@ -243,8 +244,8 @@ struct TransientDrawingInfo
     u32 spotShadowMapQuad;
     u32 spotShadowMapRBO;
     
-    u32 pointCubemapTexture;
-    u32 pointCubemapFBO;
+    u32 pointShadowMapQuad[NUM_POINTLIGHTS];
+    u32 pointShadowMapFBO[NUM_POINTLIGHTS];
 };
 
 struct PersistentDrawingInfo
