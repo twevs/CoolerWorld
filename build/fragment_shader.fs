@@ -105,20 +105,26 @@ float CalcPointShadow(vec3 nrm, vec3 lightPos, samplerCube depthMap)
     float shadowMapDepth = texture(depthMap, lightToFrag).r * pointFar;
     float bias = max(.05f * (1.f - dot(nrm, normalize(lightToFrag))), .005f);
     float dist = length(lightToFrag);
+    // return dist - bias > shadowMapDepth ? 1.f : 0.f;
+    
+    vec3 sampleOffsetDirections[20] =
+    {
+        vec3( 1.f,  1.f,  1.f), vec3( 1.f, -1.f,  1.f), vec3(-1.f, -1.f,  1.f), vec3(-1.f,  1.f,  1.f),
+        vec3( 1.f,  1.f, -1.f), vec3( 1.f, -1.f, -1.f), vec3(-1.f, -1.f, -1.f), vec3(-1.f,  1.f, -1.f), 
+        vec3( 1.f,  1.f,  0.f), vec3( 1.f, -1.f,  0.f), vec3(-1.f, -1.f,  0.f), vec3(-1.f,  1.f,  0.f),
+        vec3( 1.f,  0.f,  1.f), vec3(-1.f,  0.f,  1.f), vec3( 1.f,  0.f, -1.f), vec3(-1.f,  0.f, -1.f),
+        vec3( 0.f,  1.f,  1.f), vec3( 0.f, -1.f,  1.f), vec3( 0.f, -1.f, -1.f), vec3( 0.f,  1.f, -1.f),
+    };
     
     float shadow = 0.f;
-    for (int x = -1; x <= 1; x++)
+    float viewDistance = distance(cameraPos, fragWorldPos);
+    float cubeSize = (1.f + (viewDistance / pointFar)) / 25.f;
+    for (int i = 0; i < 20; i++)
     {
-        for (int y = -1; y <= 1; y++)
-        {
-            for (int z = -1; z <= 1; z++)
-            {
-                float pcfDepth = texture(depthMap, lightToFrag + vec3(x, y, z)).r;
-                shadow += dist - bias > pcfDepth ? 1.f : 0.f;
-            }
-        }
+        float pcfDepth = texture(depthMap, lightToFrag + sampleOffsetDirections[i] * cubeSize).r * pointFar;
+        shadow += dist - bias > pcfDepth ? 1.f : 0.f;
     }
-    return shadow / 27.f;
+    return shadow / 20.f;
 }
 
 void main()

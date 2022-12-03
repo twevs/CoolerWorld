@@ -44,6 +44,10 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
     GetClientRect(window, &clientRect);
     s32 width = clientRect.right;
     s32 height = clientRect.bottom;
+    if (height == 0)
+    {
+        return;
+    }
     glViewport(0, 0, width, height);
     cameraInfo->aspectRatio = (f32)width / (f32)height;
 
