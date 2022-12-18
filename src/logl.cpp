@@ -288,9 +288,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     glUseProgram(info->objectShader.id);
     SetShaderUniformSampler(info->objectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(info->objectShader.id, "material.specular", 1);
-    SetShaderUniformSampler(info->objectShader.id, "skybox", 2);
-    SetShaderUniformSampler(info->objectShader.id, "dirDepthMap", 3);
-    SetShaderUniformSampler(info->objectShader.id, "spotDepthMap", 4);
+    SetShaderUniformSampler(info->objectShader.id, "material.normals", 2);
+    SetShaderUniformSampler(info->objectShader.id, "skybox", 3);
+    SetShaderUniformSampler(info->objectShader.id, "dirDepthMap", 4);
+    SetShaderUniformSampler(info->objectShader.id, "spotDepthMap", 5);
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
         char uniformName[32];
@@ -300,9 +301,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     glUseProgram(info->instancedObjectShader.id);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.specular", 1);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 2);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "dirDepthMap", 3);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "spotDepthMap", 4);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "material.normals", 2);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 3);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "dirDepthMap", 4);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "spotDepthMap", 5);
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
         char uniformName[32];
@@ -353,7 +355,7 @@ internal bool ReloadShaderPrograms(TransientDrawingInfo *info)
 }
 */
 
-internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrapMode = GL_REPEAT)
+internal u32 CreateTextureFromImage(const char *filename, bool sRGB, bool alpha, GLenum wrapMode = GL_REPEAT)
 {
     s32 width;
     s32 height;
@@ -371,7 +373,6 @@ internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrap
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    bool alpha = strstr(filename, "png") != NULL;
     GLenum pixelFormat = alpha ? GL_RGBA : GL_RGB;
     if (sRGB)
     {
@@ -381,6 +382,7 @@ internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrap
     }
     else
     {
+        glPixelStorei(GL_PACK_ALIGNMENT, alpha ? 4 : 1);
         glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE,
                      textureData);
     }
@@ -396,6 +398,24 @@ struct LoadedTextures
     Texture *textures;
     u32 numTextures;
 };
+
+internal TextureType GetTextureTypeFromAssimp(aiTextureType type)
+{
+    if (type == aiTextureType_DIFFUSE)
+    {
+        return TextureType::Diffuse;
+    }
+    if (type == aiTextureType_SPECULAR)
+    {
+        return TextureType::Specular;
+    }
+    if (type == aiTextureType_HEIGHT)
+    {
+        return TextureType::Normals;
+    }
+    myAssert(false);
+    return TextureType::Diffuse;
+}
 
 internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type,
                            Arena *texturesArena, LoadedTextures *loadedTextures)
@@ -420,8 +440,8 @@ internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureT
         if (!skip)
         {
             Texture *texture = (Texture *)ArenaPush(texturesArena, sizeof(Texture));
-            texture->id = CreateTextureFromImage(path.C_Str(), type == aiTextureType_DIFFUSE);
-            texture->type = (type == aiTextureType_DIFFUSE) ? TextureType::Diffuse : TextureType::Specular;
+            texture->id = CreateTextureFromImage(path.C_Str(), type == aiTextureType_DIFFUSE, false);
+            texture->type = GetTextureTypeFromAssimp(type);
             texture->hash = hash;
             mesh->textures[mesh->numTextures].id = texture->id;
             mesh->textures[mesh->numTextures].type = texture->type;
@@ -451,6 +471,14 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         result.vertices[i].normal.x = mesh->mNormals[i].x;
         result.vertices[i].normal.y = mesh->mNormals[i].y;
         result.vertices[i].normal.z = mesh->mNormals[i].z;
+        
+        result.vertices[i].tangent.x = mesh->mTangents[i].x;
+        result.vertices[i].tangent.y = mesh->mTangents[i].y;
+        result.vertices[i].tangent.z = mesh->mTangents[i].z;
+        
+        result.vertices[i].bitangent.x = mesh->mBitangents[i].x;
+        result.vertices[i].bitangent.y = mesh->mBitangents[i].y;
+        result.vertices[i].bitangent.z = mesh->mBitangents[i].z;
 
         if (mesh->mTextureCoords[0])
         {
@@ -482,13 +510,15 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
 
         u32 numDiffuse = material->GetTextureCount(aiTextureType_DIFFUSE);
         u32 numSpecular = material->GetTextureCount(aiTextureType_SPECULAR);
-        u32 numTextures = numDiffuse + numSpecular;
+        u32 numNormals = material->GetTextureCount(aiTextureType_HEIGHT);
+        u32 numTextures = numDiffuse + numSpecular + numNormals;
 
         u64 texturesSize = sizeof(Texture) * numTextures;
         result.textures = (Texture *)ArenaPush(meshDataArena, texturesSize);
 
         LoadTextures(&result, numDiffuse, material, aiTextureType_DIFFUSE, texturesArena, loadedTextures);
         LoadTextures(&result, numSpecular, material, aiTextureType_SPECULAR, texturesArena, loadedTextures);
+        LoadTextures(&result, numNormals, material, aiTextureType_HEIGHT, texturesArena, loadedTextures);
     }
 
     return result;
@@ -559,7 +589,7 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     Model result = {};
 
     Assimp::Importer importer;
-    const aiScene *scene = importer.ReadFile(filename, aiProcess_Triangulate | aiProcess_FlipUVs);
+    const aiScene *scene = importer.ReadFile(filename, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
     myAssert(scene);
     Mesh *meshes = (Mesh *)ArenaPush(meshDataArena, 100 * sizeof(Mesh));
     u32 meshCount = 0;
@@ -782,6 +812,7 @@ void SetUpAsteroids(Model *asteroid)
     // NOTE: I originally used AppendToVAO() as I did not know that a VAO could have attribute
     // pointers into several VBOs. Out of curiosity, I profiled both methods and there is no
     // performance difference.
+    // TODO: account for tangents and bitangents.
     u32 matricesVBO[3];
     glGenBuffers(3, matricesVBO);
     glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[0]);
@@ -962,13 +993,14 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         return false;
     }
 
-    s32 elemCounts[] = {3, 3, 2};
+    s32 elemCounts[] = {3, 3, 2}; // Position, normal, texcoords.
+    s32 tangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
 
-    u32 backpackIndex = AddModel("backpack.obj", transientInfo, elemCounts, myArraySize(elemCounts),
+    u32 backpackIndex = AddModel("backpack.obj", transientInfo, tangentElemCounts, myArraySize(tangentElemCounts),
                                  texturesArena, meshDataArena);
-    u32 planetIndex = AddModel("planet.obj", transientInfo, elemCounts, myArraySize(elemCounts),
+    u32 planetIndex = AddModel("planet.obj", transientInfo, tangentElemCounts, myArraySize(tangentElemCounts),
                                texturesArena, meshDataArena);
-    u32 rockIndex = AddModel("rock.obj", transientInfo, elemCounts, myArraySize(elemCounts), texturesArena,
+    u32 rockIndex = AddModel("rock.obj", transientInfo, tangentElemCounts, myArraySize(tangentElemCounts), texturesArena,
                              meshDataArena);
 
     AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
@@ -1011,8 +1043,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
 
     SetUpAsteroids(&transientInfo->models[2]);
 
-    transientInfo->grassTexture = CreateTextureFromImage("grass.png", true, GL_CLAMP_TO_EDGE);
-    transientInfo->windowTexture = CreateTextureFromImage("window.png", true, GL_CLAMP_TO_EDGE);
+    transientInfo->grassTexture = CreateTextureFromImage("grass.png", true, true, GL_CLAMP_TO_EDGE);
+    transientInfo->windowTexture = CreateTextureFromImage("window.png", true, true, GL_CLAMP_TO_EDGE);
 
     // First we create the objects.
     PointLight *pointLights = drawingInfo->pointLights;
