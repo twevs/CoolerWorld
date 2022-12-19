@@ -42,12 +42,17 @@ struct SpotLight
     float outerCutoff;
 };
 
-in vec3 fragWorldPos;
+#define NUM_POINTLIGHTS 4
+
 in vec3 normal;
 in vec2 texCoords;
 in vec4 fragPosDirLightSpace;
 in vec4 fragPosSpotLightSpace;
-in mat3 tbn;
+in vec3 cameraPosTS;
+in vec3 fragPosTS;
+in vec3 dirLightDirectionTS;
+in vec3 pointLightPosTS[NUM_POINTLIGHTS];
+in vec3 spotLightPosTS;
 
 out vec4 fragColor;
 
@@ -56,14 +61,11 @@ uniform Material material;
 uniform DirLight dirLight;
 vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir);
 
-#define NUM_POINTLIGHTS 4
 uniform PointLight pointLights[NUM_POINTLIGHTS];
 vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 cameraDir);
 
 uniform SpotLight spotLight;
 vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir);
-
-uniform vec3 cameraPos;
 
 uniform samplerCube skybox;
 vec3 CalcEnvironment(vec3 normal, vec3 cameraDir);
@@ -103,7 +105,7 @@ float CalcShadow(vec4 posLightSpace, vec3 nrm, vec3 lightDir, sampler2D depthMap
 
 float CalcPointShadow(vec3 nrm, vec3 lightPos, samplerCube depthMap)
 {
-    vec3 lightToFrag = fragWorldPos - lightPos;
+    vec3 lightToFrag = fragPosTS - lightPos;
     float shadowMapDepth = texture(depthMap, lightToFrag).r * pointFar;
     float bias = max(.05f * (1.f - dot(nrm, normalize(lightToFrag))), .005f);
     float dist = length(lightToFrag);
@@ -119,7 +121,7 @@ float CalcPointShadow(vec3 nrm, vec3 lightPos, samplerCube depthMap)
     };
     
     float shadow = 0.f;
-    float viewDistance = distance(cameraPos, fragWorldPos);
+    float viewDistance = distance(cameraPosTS, fragPosTS);
     float cubeSize = (1.f + (viewDistance / pointFar)) / 25.f;
     for (int i = 0; i < 20; i++)
     {
@@ -132,9 +134,8 @@ float CalcPointShadow(vec3 nrm, vec3 lightPos, samplerCube depthMap)
 void main()
 {
     vec3 norm = texture(material.normals, texCoords).rgb;
-    norm = norm * 2.f - 1.f;
-    norm = normalize(tbn * norm);
-    vec3 cameraDir = normalize(cameraPos - fragWorldPos);
+    norm = normalize(norm * 2.f - 1.f);
+    vec3 cameraDir = normalize(cameraPosTS - fragPosTS);
     vec3 dirContribution = CalcDirLight(dirLight, norm, cameraDir);
     vec3 pointsContribution = CalcPointLights(pointLights, norm, cameraDir);
     vec3 spotContribution = CalcSpotLight(spotLight, norm, cameraDir);
@@ -151,7 +152,7 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir)
     vec3 ambient = vec3(texture(material.diffuse, texCoords)) * light.ambient;
     
     // Diffuse contribution.
-    vec3 lightDir = normalize(-light.direction);
+    vec3 lightDir = normalize(-dirLightDirectionTS);
     float diff = max(dot(normal, lightDir), 0.f);
     vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
 
@@ -173,15 +174,16 @@ vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 camer
     for (int i = 0; i < lights.length(); i++)
     {
         PointLight light = lights[i];
+        vec3 lightPosTS = pointLightPosTS[i];
         
-        float d = distance(fragWorldPos, light.position);
+        float d = distance(fragPosTS, lightPosTS);
         float intensity = 1.f / (1.f + light.linear * d + light.quadratic * d * d);
         
         // Ambient contribution.
         vec3 ambient = vec3(texture(material.diffuse, texCoords)) * light.ambient;
     
         // Diffuse contribution.
-        vec3 lightDir = normalize(light.position - fragWorldPos);
+        vec3 lightDir = normalize(lightPosTS - fragPosTS);
         float diff = max(dot(normal, lightDir), 0.f);
         vec3 diffuse = vec3(texture(material.diffuse, texCoords)) * diff * light.diffuse;
 
@@ -193,7 +195,7 @@ vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 camer
         float spec = pow(max(dot(specVec1, specVec2), 0.f), material.shininess);
         vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
         
-        float shadow = CalcPointShadow(normal, lights[i].position, pointDepthMaps[i]);
+        float shadow = CalcPointShadow(normal, lightPosTS, pointDepthMaps[i]);
         result += intensity * (ambient + (1.f - shadow) * (diffuse + specular));
     }
     
@@ -202,8 +204,8 @@ vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 camer
 
 vec3 CalcSpotLight(SpotLight light, vec3 normal, vec3 cameraDir)
 {
-    vec3 lightDir = normalize(light.position - fragWorldPos);
-    float dotDirs = dot(lightDir, normalize(-light.direction));
+    vec3 lightDir = normalize(spotLightPosTS - fragPosTS);
+    float dotDirs = dot(lightDir, normalize(-dirLightDirectionTS));
     float intensity = (dotDirs - light.outerCutoff) / (light.innerCutoff - light.outerCutoff);
     intensity = clamp(intensity, 0.f, 1.f);
         
