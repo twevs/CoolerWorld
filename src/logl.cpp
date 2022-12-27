@@ -289,27 +289,29 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     SetShaderUniformSampler(info->objectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(info->objectShader.id, "material.specular", 1);
     SetShaderUniformSampler(info->objectShader.id, "material.normals", 2);
-    SetShaderUniformSampler(info->objectShader.id, "skybox", 3);
-    SetShaderUniformSampler(info->objectShader.id, "dirDepthMap", 4);
-    SetShaderUniformSampler(info->objectShader.id, "spotDepthMap", 5);
+    SetShaderUniformSampler(info->objectShader.id, "material.displacement", 3);
+    SetShaderUniformSampler(info->objectShader.id, "skybox", 4);
+    SetShaderUniformSampler(info->objectShader.id, "dirDepthMap", 5);
+    SetShaderUniformSampler(info->objectShader.id, "spotDepthMap", 6);
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
         char uniformName[32];
         sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->objectShader.id, uniformName, 6 + i);
+        SetShaderUniformSampler(info->objectShader.id, uniformName, 7 + i);
     }
     glUseProgram(info->instancedObjectShader.id);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.specular", 1);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.normals", 2);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 3);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "dirDepthMap", 4);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "spotDepthMap", 5);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "material.displacement", 3);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 4);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "dirDepthMap", 5);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "spotDepthMap", 6);
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
         char uniformName[32];
         sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->instancedObjectShader.id, uniformName, 6 + i);
+        SetShaderUniformSampler(info->instancedObjectShader.id, uniformName, 7 + i);
     }
 
     glUseProgram(info->textureShader.id);
@@ -355,7 +357,7 @@ internal bool ReloadShaderPrograms(TransientDrawingInfo *info)
 }
 */
 
-internal u32 CreateTextureFromImage(const char *filename, bool sRGB, bool alpha, GLenum wrapMode = GL_REPEAT)
+internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrapMode = GL_REPEAT)
 {
     s32 width;
     s32 height;
@@ -373,7 +375,8 @@ internal u32 CreateTextureFromImage(const char *filename, bool sRGB, bool alpha,
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    GLenum pixelFormat = alpha ? GL_RGBA : GL_RGB;
+    bool alpha = (numChannels == 4);
+    GLenum pixelFormat = alpha ? GL_RGBA : (numChannels == 3) ? GL_RGB : GL_RED;
     if (sRGB)
     {
         GLenum internalFormat = alpha ? GL_SRGB_ALPHA : GL_SRGB;
@@ -382,7 +385,7 @@ internal u32 CreateTextureFromImage(const char *filename, bool sRGB, bool alpha,
     }
     else
     {
-        glPixelStorei(GL_PACK_ALIGNMENT, alpha ? 4 : 1);
+        glPixelStorei(GL_UNPACK_ALIGNMENT, alpha ? 4 : 1);
         glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE,
                      textureData);
     }
@@ -413,6 +416,10 @@ internal TextureType GetTextureTypeFromAssimp(aiTextureType type)
     {
         return TextureType::Normals;
     }
+    if (type == aiTextureType_DISPLACEMENT)
+    {
+        return TextureType::Displacement;
+    }
     myAssert(false);
     return TextureType::Diffuse;
 }
@@ -440,7 +447,7 @@ internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureT
         if (!skip)
         {
             Texture *texture = (Texture *)ArenaPush(texturesArena, sizeof(Texture));
-            texture->id = CreateTextureFromImage(path.C_Str(), type == aiTextureType_DIFFUSE, false);
+            texture->id = CreateTextureFromImage(path.C_Str(), type == aiTextureType_DIFFUSE);
             texture->type = GetTextureTypeFromAssimp(type);
             texture->hash = hash;
             mesh->textures[mesh->numTextures].id = texture->id;
@@ -511,7 +518,8 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         u32 numDiffuse = material->GetTextureCount(aiTextureType_DIFFUSE);
         u32 numSpecular = material->GetTextureCount(aiTextureType_SPECULAR);
         u32 numNormals = material->GetTextureCount(aiTextureType_HEIGHT);
-        u32 numTextures = numDiffuse + numSpecular + numNormals;
+        u32 numDisp = material->GetTextureCount(aiTextureType_DISPLACEMENT);
+        u32 numTextures = numDiffuse + numSpecular + numNormals + numDisp;
 
         u64 texturesSize = sizeof(Texture) * numTextures;
         result.textures = (Texture *)ArenaPush(meshDataArena, texturesSize);
@@ -519,6 +527,10 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         LoadTextures(&result, numDiffuse, material, aiTextureType_DIFFUSE, texturesArena, loadedTextures);
         LoadTextures(&result, numSpecular, material, aiTextureType_SPECULAR, texturesArena, loadedTextures);
         LoadTextures(&result, numNormals, material, aiTextureType_HEIGHT, texturesArena, loadedTextures);
+        if (numDisp > 0)
+        {
+            LoadTextures(&result, numDisp, material, aiTextureType_DISPLACEMENT, texturesArena, loadedTextures);
+        }
     }
 
     return result;
@@ -1043,8 +1055,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
 
     SetUpAsteroids(&transientInfo->models[2]);
 
-    transientInfo->grassTexture = CreateTextureFromImage("grass.png", true, true, GL_CLAMP_TO_EDGE);
-    transientInfo->windowTexture = CreateTextureFromImage("window.png", true, true, GL_CLAMP_TO_EDGE);
+    transientInfo->grassTexture = CreateTextureFromImage("grass.png", true, GL_CLAMP_TO_EDGE);
+    transientInfo->windowTexture = CreateTextureFromImage("window.png", true, GL_CLAMP_TO_EDGE);
 
     // First we create the objects.
     PointLight *pointLights = drawingInfo->pointLights;
@@ -1331,11 +1343,11 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 num
             glActiveTexture(GL_TEXTURE0 + textureSlot);
             glBindTexture(GL_TEXTURE_2D, mesh->textures[textureSlot].id);
         }
-        myAssert(textureSlot == 3);
+        SetShaderUniformInt(shaderProgram, "displace", textureSlot == 4);
         if (skyboxTexture > 0)
         {
             // Skybox contribution.
-            glActiveTexture(GL_TEXTURE3);
+            glActiveTexture(GL_TEXTURE4);
             glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
         }
 
@@ -1439,17 +1451,19 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
 
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
+    
+    SetShaderUniformFloat(shaderProgram, "heightScale", 1.f);
 
     // TODO: figure out the best place to assign textures.
-    glActiveTexture(GL_TEXTURE4);
+    glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
 
-    glActiveTexture(GL_TEXTURE5);
+    glActiveTexture(GL_TEXTURE6);
     glBindTexture(GL_TEXTURE_2D, transientInfo->spotShadowMapQuad);
 
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
-        glActiveTexture(GL_TEXTURE6 + i);
+        glActiveTexture(GL_TEXTURE7 + i);
         glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->pointShadowMapQuad[i]);
     }
 }

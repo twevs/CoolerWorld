@@ -128,7 +128,8 @@ enum class TextureType
 {
     Diffuse,
     Specular,
-    Normals
+    Normals,
+    Displacement
 };
 
 struct Texture
