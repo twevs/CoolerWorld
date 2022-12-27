@@ -42,7 +42,6 @@ layout (location = 4) in vec3 aBitangent;
 
 #define NUM_POINTLIGHTS 4
 
-out vec3 normal;
 out vec2 texCoords;
 out vec4 fragPosDirLightSpace;
 out vec4 fragPosSpotLightSpace;
@@ -51,6 +50,8 @@ out vec3 fragPosTS;
 out vec3 dirLightDirectionTS;
 out vec3 pointLightPosTS[NUM_POINTLIGHTS];
 out vec3 spotLightPosTS;
+out vec3 normalWS;
+out vec3 fragWorldPos;
 
 layout (std140, binding = 0) uniform Matrices
 {
@@ -70,7 +71,7 @@ uniform SpotLight spotLight;
 void main()
 {
     gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(aPos, 1.f);
-    normal = normalize(normalMatrix * aNormal);
+    normalWS = normalMatrix * aNormal;
     texCoords = aTexCoords;
 	fragPosDirLightSpace = dirLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
 	fragPosSpotLightSpace = spotLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
@@ -78,12 +79,12 @@ void main()
 	// NOTE: Assimp's aiProcess_CalcTangentSpace produces unit vectors.
 	vec3 tangent = normalize(vec3(modelMatrix * vec4(aTangent, 0.f)));
 	vec3 norm = normalize(vec3(modelMatrix * vec4(aNormal, 0.f)));
-	tangent = normalize(tangent - dot(tangent, norm) * norm);
-	vec3 bitangent = cross(norm, tangent);
+	// tangent = normalize(tangent - dot(tangent, norm) * norm);
+	vec3 bitangent = normalize(vec3(modelMatrix * vec4(aBitangent, 0.f)));
 	mat3 tbn = transpose(mat3(tangent, bitangent, norm));
 	
 	cameraPosTS = tbn * cameraPos;
-    vec3 fragWorldPos = vec3(modelMatrix * vec4(aPos, 1.f));
+    fragWorldPos = vec3(modelMatrix * vec4(aPos, 1.f));
 	fragPosTS = tbn * fragWorldPos;
 	dirLightDirectionTS = tbn * dirLight.direction;
 	for (int i = 0; i < NUM_POINTLIGHTS; i++)

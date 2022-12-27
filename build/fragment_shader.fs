@@ -44,7 +44,6 @@ struct SpotLight
 
 #define NUM_POINTLIGHTS 4
 
-in vec3 normal;
 in vec2 texCoords;
 in vec4 fragPosDirLightSpace;
 in vec4 fragPosSpotLightSpace;
@@ -53,6 +52,8 @@ in vec3 fragPosTS;
 in vec3 dirLightDirectionTS;
 in vec3 pointLightPosTS[NUM_POINTLIGHTS];
 in vec3 spotLightPosTS;
+in vec3 normalWS;
+in vec3 fragWorldPos;
 
 out vec4 fragColor;
 
@@ -105,7 +106,7 @@ float CalcShadow(vec4 posLightSpace, vec3 nrm, vec3 lightDir, sampler2D depthMap
 
 float CalcPointShadow(vec3 nrm, vec3 lightPos, samplerCube depthMap)
 {
-    vec3 lightToFrag = fragPosTS - lightPos;
+    vec3 lightToFrag = fragWorldPos - lightPos;
     float shadowMapDepth = texture(depthMap, lightToFrag).r * pointFar;
     float bias = max(.05f * (1.f - dot(nrm, normalize(lightToFrag))), .005f);
     float dist = length(lightToFrag);
@@ -195,7 +196,7 @@ vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 normal, vec3 camer
         float spec = pow(max(dot(specVec1, specVec2), 0.f), material.shininess);
         vec3 specular = vec3(texture(material.specular, texCoords)) * spec * light.specular;
         
-        float shadow = CalcPointShadow(normal, lightPosTS, pointDepthMaps[i]);
+        float shadow = CalcPointShadow(normalWS, lights[i].position, pointDepthMaps[i]);
         result += intensity * (ambient + (1.f - shadow) * (diffuse + specular));
     }
     

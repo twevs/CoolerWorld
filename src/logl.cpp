@@ -296,7 +296,7 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         char uniformName[32];
         sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->objectShader.id, uniformName, 5 + i);
+        SetShaderUniformSampler(info->objectShader.id, uniformName, 6 + i);
     }
     glUseProgram(info->instancedObjectShader.id);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.diffuse", 0);
@@ -309,7 +309,7 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         char uniformName[32];
         sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->instancedObjectShader.id, uniformName, 5 + i);
+        SetShaderUniformSampler(info->instancedObjectShader.id, uniformName, 6 + i);
     }
 
     glUseProgram(info->textureShader.id);
@@ -1325,15 +1325,17 @@ void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 num
         glBindVertexArray(model->vaos[i]);
 
         Mesh *mesh = &model->meshes[i];
-        for (u32 textureSlot = 0; textureSlot < mesh->numTextures; textureSlot++)
+        u32 textureSlot = 0;
+        for (; textureSlot < mesh->numTextures; textureSlot++)
         {
             glActiveTexture(GL_TEXTURE0 + textureSlot);
             glBindTexture(GL_TEXTURE_2D, mesh->textures[textureSlot].id);
         }
+        myAssert(textureSlot == 3);
         if (skyboxTexture > 0)
         {
             // Skybox contribution.
-            glActiveTexture(GL_TEXTURE2);
+            glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
         }
 
@@ -1439,15 +1441,15 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     // TODO: figure out the best place to assign textures.
-    glActiveTexture(GL_TEXTURE3);
+    glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
 
-    glActiveTexture(GL_TEXTURE4);
+    glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, transientInfo->spotShadowMapQuad);
 
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
-        glActiveTexture(GL_TEXTURE5 + i);
+        glActiveTexture(GL_TEXTURE6 + i);
         glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->pointShadowMapQuad[i]);
     }
 }
