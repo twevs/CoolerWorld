@@ -86,7 +86,7 @@ uniform float heightScale;
 vec2 GetDisplacedTexCoords(vec3 viewDir)
 {
     float height = texture(material.displacement, texCoords).r;
-    vec2 p = viewDir.xy / viewDir.z * (height * heightScale);
+    vec2 p = (viewDir.xy / viewDir.z) * (height * heightScale);
     return texCoords - p;
 }
 

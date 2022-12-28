@@ -139,6 +139,14 @@ struct Texture
     u64 hash;
 };
 
+struct Textures
+{
+    Texture diffuse;
+    Texture specular;
+    Texture normals;
+    Texture displacement;
+};
+
 struct Mesh
 {
     Vertex *vertices;
@@ -172,6 +180,7 @@ struct Object
     u32 VAO;
     u32 numIndices;
     glm::vec3 position;
+    Textures textures = {};
 };
 
 #define MAX_OBJECTS 20
@@ -218,7 +227,6 @@ struct TransientDrawingInfo
     u32 cubeVao;
 
     u32 grassTexture;
-    u32 windowTexture;
     u32 skyboxTexture;
 
     s32 numSamples;

@@ -79,8 +79,8 @@ void main()
 	// NOTE: Assimp's aiProcess_CalcTangentSpace produces unit vectors.
 	vec3 tangent = normalize(vec3(modelMatrix * vec4(aTangent, 0.f)));
 	vec3 norm = normalize(vec3(modelMatrix * vec4(aNormal, 0.f)));
-	// tangent = normalize(tangent - dot(tangent, norm) * norm);
-	vec3 bitangent = normalize(vec3(modelMatrix * vec4(aBitangent, 0.f)));
+	tangent = normalize(tangent - dot(tangent, norm) * norm);
+	vec3 bitangent = cross(norm, tangent);
 	mat3 tbn = transpose(mat3(tangent, bitangent, norm));
 	
 	cameraPosTS = tbn * cameraPos;
