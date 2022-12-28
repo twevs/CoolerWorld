@@ -226,7 +226,6 @@ struct TransientDrawingInfo
 
     u32 cubeVao;
 
-    u32 grassTexture;
     u32 skyboxTexture;
 
     s32 numSamples;

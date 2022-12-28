@@ -23,11 +23,9 @@ extern "C" __declspec(dllexport) ImGuiIO *GetImGuiIO()
     return imGuiIO;
 }
 
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam,
-                                                             LPARAM lParam);
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-extern "C" __declspec(dllexport) LRESULT
-    ImGui_WndProcHandler(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+extern "C" __declspec(dllexport) LRESULT ImGui_WndProcHandler(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     return ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
 }
@@ -112,8 +110,7 @@ internal bool CreateShaderProgram(ShaderProgram *program)
 
     bool hasGeometryShader = strlen(program->geometryShaderFilename) > 0;
     u32 geometryShaderID = 0;
-    if (hasGeometryShader &&
-        !CompileShader(&geometryShaderID, GL_GEOMETRY_SHADER, program->geometryShaderFilename))
+    if (hasGeometryShader && !CompileShader(&geometryShaderID, GL_GEOMETRY_SHADER, program->geometryShaderFilename))
     {
         return false;
     }
@@ -190,14 +187,12 @@ internal void SetShaderUniformVec4(u32 shaderProgram, const char *uniformName, g
 
 internal void SetShaderUniformMat3(u32 shaderProgram, const char *uniformName, glm::mat3 *matrix)
 {
-    glUniformMatrix3fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE,
-                       glm::value_ptr(*matrix));
+    glUniformMatrix3fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
 }
 
 internal void SetShaderUniformMat4(u32 shaderProgram, const char *uniformName, glm::mat4 *matrix)
 {
-    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE,
-                       glm::value_ptr(*matrix));
+    glUniformMatrix4fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
 }
 
 internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *vertexShaderFilename,
@@ -229,8 +224,7 @@ internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *ve
 
 internal bool CreateShaderPrograms(TransientDrawingInfo *info)
 {
-    if (!CreateShaderProgram(&info->dirDepthMapShader, info->dirDepthMapShader.id, "depth_map.vs",
-                             "depth_map.fs"))
+    if (!CreateShaderProgram(&info->dirDepthMapShader, info->dirDepthMapShader.id, "depth_map.vs", "depth_map.fs"))
     {
         return false;
     }
@@ -244,8 +238,7 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->objectShader, info->objectShader.id, "vertex_shader.vs",
-                             "fragment_shader.fs"))
+    if (!CreateShaderProgram(&info->objectShader, info->objectShader.id, "vertex_shader.vs", "fragment_shader.fs"))
     {
         return false;
     }
@@ -279,8 +272,8 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->geometryShader, info->geometryShader.id, "vertex_shader_geometry.vs",
-                             "color.fs", "vis_normals.gs"))
+    if (!CreateShaderProgram(&info->geometryShader, info->geometryShader.id, "vertex_shader_geometry.vs", "color.fs",
+                             "vis_normals.gs"))
     {
         return false;
     }
@@ -380,14 +373,12 @@ internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrap
     if (sRGB)
     {
         GLenum internalFormat = alpha ? GL_SRGB_ALPHA : GL_SRGB;
-        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE,
-                     textureData);
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
     }
     else
     {
         glPixelStorei(GL_UNPACK_ALIGNMENT, alpha ? 4 : 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE,
-                     textureData);
+        glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
     }
     glGenerateMipmap(GL_TEXTURE_2D);
 
@@ -424,8 +415,8 @@ internal TextureType GetTextureTypeFromAssimp(aiTextureType type)
     return TextureType::Diffuse;
 }
 
-internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type,
-                           Arena *texturesArena, LoadedTextures *loadedTextures)
+internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type, Arena *texturesArena,
+                           LoadedTextures *loadedTextures)
 {
     for (u32 i = 0; i < num; i++)
     {
@@ -459,8 +450,8 @@ internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureT
     }
 }
 
-internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena,
-                          LoadedTextures *loadedTextures, Arena *meshDataArena)
+internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures,
+                          Arena *meshDataArena)
 {
     Mesh result = {};
 
@@ -478,11 +469,11 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         result.vertices[i].normal.x = mesh->mNormals[i].x;
         result.vertices[i].normal.y = mesh->mNormals[i].y;
         result.vertices[i].normal.z = mesh->mNormals[i].z;
-        
+
         result.vertices[i].tangent.x = mesh->mTangents[i].x;
         result.vertices[i].tangent.y = mesh->mTangents[i].y;
         result.vertices[i].tangent.z = mesh->mTangents[i].z;
-        
+
         result.vertices[i].bitangent.x = mesh->mBitangents[i].x;
         result.vertices[i].bitangent.y = mesh->mBitangents[i].y;
         result.vertices[i].bitangent.z = mesh->mBitangents[i].z;
@@ -536,8 +527,8 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
     return result;
 }
 
-internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount,
-                          Arena *texturesArena, LoadedTextures *loadedTextures, Arena *meshDataArena)
+internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount, Arena *texturesArena,
+                          LoadedTextures *loadedTextures, Arena *meshDataArena)
 {
     for (u32 i = 0; i < node->mNumMeshes; i++)
     {
@@ -548,8 +539,7 @@ internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 
 
     for (u32 i = 0; i < node->mNumChildren; i++)
     {
-        ProcessNode(node->mChildren[i], scene, meshes, meshCount, texturesArena, loadedTextures,
-                    meshDataArena);
+        ProcessNode(node->mChildren[i], scene, meshes, meshCount, texturesArena, loadedTextures, meshDataArena);
     }
 }
 
@@ -599,7 +589,8 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     Model result = {};
 
     Assimp::Importer importer;
-    const aiScene *scene = importer.ReadFile(filename, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
+    const aiScene *scene =
+        importer.ReadFile(filename, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
     myAssert(scene);
     Mesh *meshes = (Mesh *)ArenaPush(meshDataArena, 100 * sizeof(Mesh));
     u32 meshCount = 0;
@@ -638,8 +629,7 @@ internal void LoadShaderPass(FILE *file, ShaderProgram *shader)
     fread(shader->modelIndices, sizeof(u32), shader->numModels, file);
 }
 
-internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *info,
-                              CameraInfo *cameraInfo)
+internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *info, CameraInfo *cameraInfo)
 {
     FILE *file;
     errno_t opened = fopen_s(&file, "save.bin", "rb");
@@ -700,8 +690,7 @@ internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u
     return glCheckFramebufferStatus(GL_FRAMEBUFFER);
 }
 
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo,
-                                  bool depthMap = false)
+internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false)
 {
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
@@ -780,7 +769,7 @@ internal glm::vec3 CreateRandomVec3()
 }
 
 internal u32 CreateVAO(f32 *vertices, u32 verticesSize, s32 *elemCounts, u32 elemCountsSize, u32 *indices,
-              u32 indicesSize)
+                       u32 indicesSize)
 {
     VaoInformation vaoInfo = {};
     vaoInfo.vertices = vertices;
@@ -899,14 +888,13 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
                                       &transientInfo->mainRBO, transientInfo->numSamples);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum rearViewFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->rearViewFBO, &transientInfo->rearViewQuad,
-                          &transientInfo->rearViewRBO);
+    GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO,
+                                                         &transientInfo->rearViewQuad, &transientInfo->rearViewRBO);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum postProcessingFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO,
-                          &transientInfo->postProcessingQuad, &transientInfo->postProcessingRBO);
+        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
+                          &transientInfo->postProcessingRBO);
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum dirDepthMapFramebufferStatus =
@@ -933,9 +921,8 @@ internal void CreateSkybox(TransientDrawingInfo *transientInfo)
     glGenTextures(1, &skyboxTexture);
     glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
 
-    const char *skyboxImages[] = {"space_skybox/right.png", "space_skybox/left.png",
-                                  "space_skybox/top.png",   "space_skybox/bottom.png",
-                                  "space_skybox/front.png", "space_skybox/back.png"};
+    const char *skyboxImages[] = {"space_skybox/right.png",  "space_skybox/left.png",  "space_skybox/top.png",
+                                  "space_skybox/bottom.png", "space_skybox/front.png", "space_skybox/back.png"};
     stbi_set_flip_vertically_on_load_thread(false);
     for (u32 i = 0; i < 6; i++)
     {
@@ -958,11 +945,10 @@ internal void CreateSkybox(TransientDrawingInfo *transientInfo)
 }
 
 internal u32 AddModel(const char *filename, TransientDrawingInfo *transientInfo, s32 *elemCounts, u32 elemCountsSize,
-             Arena *texturesArena, Arena *meshDataArena)
+                      Arena *texturesArena, Arena *meshDataArena)
 {
     u32 modelIndex = transientInfo->numModels;
-    transientInfo->models[modelIndex] =
-        LoadModel(filename, elemCounts, elemCountsSize, texturesArena, meshDataArena);
+    transientInfo->models[modelIndex] = LoadModel(filename, elemCounts, elemCountsSize, texturesArena, meshDataArena);
     transientInfo->numModels++;
     myAssert(transientInfo->numModels <= MAX_MODELS);
     return modelIndex;
@@ -980,17 +966,19 @@ internal Texture CreateTexture(const char *filename, TextureType type, GLenum wr
     return result;
 }
 
-internal Textures CreateTextures(const char *diffusePath, const char *specularPath = "", const char *normalsPath = "", const char *displacementPath = "")
+internal Textures CreateTextures(const char *diffusePath, const char *specularPath = "", const char *normalsPath = "",
+                                 const char *displacementPath = "")
 {
-    Textures result     = {};
-    result.diffuse      = CreateTexture(diffusePath, TextureType::Diffuse);
-    result.specular     = CreateTexture(specularPath, TextureType::Specular);
-    result.normals      = CreateTexture(normalsPath, TextureType::Normals);
+    Textures result = {};
+    result.diffuse = CreateTexture(diffusePath, TextureType::Diffuse);
+    result.specular = CreateTexture(specularPath, TextureType::Specular);
+    result.normals = CreateTexture(normalsPath, TextureType::Normals);
     result.displacement = CreateTexture(displacementPath, TextureType::Displacement);
     return result;
 }
 
-internal u32 AddObject(TransientDrawingInfo *transientInfo, u32 vao, u32 numIndices, glm::vec3 position, Textures *textures = nullptr)
+internal u32 AddObject(TransientDrawingInfo *transientInfo, u32 vao, u32 numIndices, glm::vec3 position,
+                       Textures *textures = nullptr)
 {
     u32 objectIndex = transientInfo->numObjects;
     transientInfo->objects[objectIndex] = {vao, numIndices, position};
@@ -1017,10 +1005,81 @@ internal void AddObjectToShaderPass(ShaderProgram *shader, u32 objectIndex)
     myAssert(shader->numObjects <= MAX_OBJECTS);
 }
 
+// Following Lenyel's "Foundations of Game Engine Development", vol. 1 (2016), p. 35.
+internal glm::vec3 Reject(glm::vec3 a, glm::vec3 b)
+{
+    return (a - b * dot(a, b) / dot(b, b));
+}
+
+// Following Lenyel's "Foundations of Game Engine Development", vol. 2 (2019), pp. 114-5.
+internal void CalculateTangents(Vertex *vertices, u32 numVertices, u32 *indices, u32 numIndices, Arena *arena)
+{
+    u64 allocatedSize = sizeof(glm::vec3) * numVertices * 2;
+    glm::vec3 *tangents = (glm::vec3 *)ArenaPush(arena, allocatedSize);
+    glm::vec3 *bitangents = tangents + numVertices;
+
+    for (u32 i = 0; i < numIndices; i += 3)
+    {
+        u32 i0 = indices[i];
+        u32 i1 = indices[i + 1];
+        u32 i2 = indices[i + 2];
+
+        glm::vec3 p0 = vertices[i0].position;
+        glm::vec3 p1 = vertices[i1].position;
+        glm::vec3 p2 = vertices[i2].position;
+
+        glm::vec2 w0 = vertices[i0].texCoords;
+        glm::vec2 w1 = vertices[i1].texCoords;
+        glm::vec2 w2 = vertices[i2].texCoords;
+
+        glm::vec3 e1 = p1 - p0;
+        glm::vec3 e2 = p2 - p0;
+        f32 x1 = w1.x - w0.x;
+        f32 x2 = w2.x - w0.x;
+        f32 y1 = w1.y - w0.y;
+        f32 y2 = w2.y - w0.y;
+
+        f32 r = 1.f / (x1 * y2 - x2 * y1);
+        glm::vec3 tangent = (e1 * y2 - e2 * y1) * r;
+        glm::vec3 bitangent = (e2 * x1 - e1 * x2) * r;
+
+        tangents[i0] += tangent;
+        tangents[i1] += tangent;
+        tangents[i2] += tangent;
+
+        bitangents[i0] += bitangent;
+        bitangents[i1] += bitangent;
+        bitangents[i2] += bitangent;
+    }
+
+    // Orthogonalize each normal and calculate its handedness.
+    for (u32 i = 0; i < numVertices; i++)
+    {
+        glm::vec4 result;
+
+        glm::vec3 tangent = tangents[i];
+        glm::vec3 bitangent = bitangents[i];
+        glm::vec3 normal = vertices[i].normal;
+
+        // Gram-Schmidt orthogonalization.
+        glm::vec3 tan = normalize(Reject(tangent, normal));
+        result.x = tan.x;
+        result.y = tan.y;
+        result.z = tan.z;
+        result.w = (dot(cross(tangent, bitangent), normal) > 0.f) ? 1.f : -1.f;
+
+        // TODO: use a vec4 type for the tangent so we can forego storing the bitangent and can access
+        // the handedness in the shader.
+        vertices[i].tangent = tan;
+        vertices[i].bitangent = bitangent;
+    }
+
+    ArenaPop(arena, allocatedSize);
+}
+
 extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
-                                                            PersistentDrawingInfo *drawingInfo,
-                                                            CameraInfo *cameraInfo, Arena *texturesArena,
-                                                            Arena *meshDataArena)
+                                                            PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo,
+                                                            Arena *texturesArena, Arena *meshDataArena)
 {
     u64 arenaSize = 100 * 1024 * 1024;
 
@@ -1029,16 +1088,15 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         return false;
     }
 
-    s32 elemCounts[] = {3, 3, 2}; // Position, normal, texcoords.
-    s32 tangentElemCounts[] = {3, 3, 2, 3}; // Position, normal, texcoords, tangent.
+    s32 elemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
     s32 bitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
 
     u32 backpackIndex = AddModel("backpack.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
                                  texturesArena, meshDataArena);
     u32 planetIndex = AddModel("planet.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
                                texturesArena, meshDataArena);
-    u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts), texturesArena,
-                             meshDataArena);
+    u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+                             texturesArena, meshDataArena);
 
     AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
@@ -1055,22 +1113,52 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     fread(rectIndices, sizeof(u32), myArraySize(rectIndices), rectFile);
     fclose(rectFile);
 
-    transientInfo->cubeVao = CreateVAO(rectVertices, sizeof(rectVertices), elemCounts,
-                                       myArraySize(elemCounts), rectIndices, sizeof(rectIndices));
+    transientInfo->cubeVao = CreateVAO(rectVertices, sizeof(rectVertices), elemCounts, myArraySize(elemCounts),
+                                       rectIndices, sizeof(rectIndices));
 
-    f32 quadVertices[] = {1.f,  1.f,  0.f, 0.f, 0.f, 1.f, 1.f, 1.f, 1.f,  -1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
-                          -1.f, -1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -1.f, 1.f,  0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
+    Vertex quadVertices[4] = {{
+                                  // Top-right.
+                                  glm::vec3(1.f, 1.f, 0.f), // Position.
+                                  glm::vec3(0.f, 0.f, 1.f), // Normal.
+                                  glm::vec2(1.f, 1.f),      // Texcoord.
+                                  glm::vec3(0.f, 0.f, 0.f), // Tangent.
+                                  glm::vec3(0.f, 0.f, 0.f), // Bitangent.
+                              },
+                              {
+                                  // Bottom-right.
+                                  glm::vec3(1.f, -1.f, 0.f), // Position.
+                                  glm::vec3(0.f, 0.f, 1.f),  // Normal.
+                                  glm::vec2(1.f, 0.f),       // Texcoord.
+                                  glm::vec3(0.f, 0.f, 0.f),  // Tangent.
+                                  glm::vec3(0.f, 0.f, 0.f),  // Bitangent.
+                              },
+                              {
+                                  // Bottom-left.
+                                  glm::vec3(-1.f, -1.f, 0.f), // Position.
+                                  glm::vec3(0.f, 0.f, 1.f),   // Normal.
+                                  glm::vec2(0.f, 0.f),        // Texcoord.
+                                  glm::vec3(0.f, 0.f, 0.f),   // Tangent.
+                                  glm::vec3(0.f, 0.f, 0.f),   // Bitangent.
+                              },
+                              {
+                                  // Top-left
+                                  glm::vec3(-1.f, 1.f, 0.f), // Position.
+                                  glm::vec3(0.f, 0.f, 1.f),  // Normal.
+                                  glm::vec2(0.f, 1.f),       // Texcoord.
+                                  glm::vec3(0.f, 0.f, 0.f),  // Tangent.
+                                  glm::vec3(0.f, 0.f, 0.f),  // Bitangent.
+                              }};
     u32 quadIndices[] = {0, 1, 3, 1, 2, 3};
-    u32 mainQuadVao = CreateVAO(quadVertices, sizeof(quadVertices), elemCounts, myArraySize(elemCounts),
-                                quadIndices, sizeof(quadIndices));
+    CalculateTangents(quadVertices, 4, quadIndices, 6, texturesArena);
+    u32 mainQuadVao = CreateVAO((f32 *)quadVertices, sizeof(quadVertices), bitangentElemCounts,
+                                myArraySize(bitangentElemCounts), quadIndices, sizeof(quadIndices));
     transientInfo->mainQuadVao = mainQuadVao;
     transientInfo->postProcessingQuadVao = mainQuadVao;
     transientInfo->dirShadowMapQuadVao = mainQuadVao;
     transientInfo->spotShadowMapQuadVao = mainQuadVao;
 
-    f32 rearViewQuadVertices[] = {.5f, 1.f, 0.f,  0.f, 0.f, 1.f,  1.f, 1.f, .5f, .7f, 0.f,
-                                  0.f, 0.f, 1.f,  1.f, 0.f, -.5f, .7f, 0.f, 0.f, 0.f, 1.f,
-                                  0.f, 0.f, -.5f, 1.f, 0.f, 0.f,  0.f, 1.f, 0.f, 1.f};
+    f32 rearViewQuadVertices[] = {.5f,  1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f, .5f,  .7f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
+                                  -.5f, .7f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -.5f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
     u32 rearViewQuadIndices[] = {0, 1, 3, 1, 2, 3};
     transientInfo->rearViewQuadVao =
         CreateVAO(rearViewQuadVertices, sizeof(rearViewQuadVertices), elemCounts, myArraySize(elemCounts),
@@ -1079,8 +1167,6 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     srand((u32)Win32GetWallClock());
 
     SetUpAsteroids(&transientInfo->models[2]);
-
-    transientInfo->grassTexture = CreateTextureFromImage("grass.png", true, GL_CLAMP_TO_EDGE);
 
     // First we create the objects.
     PointLight *pointLights = drawingInfo->pointLights;
@@ -1193,8 +1279,8 @@ internal void SaveShaderPass(FILE *file, ShaderProgram *shader)
     fwrite(shader->modelIndices, sizeof(u32), shader->numModels, file);
 }
 
-extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *transientInfo,
-                                                      PersistentDrawingInfo *info, CameraInfo *cameraInfo)
+extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *info,
+                                                      CameraInfo *cameraInfo)
 {
     FILE *file;
     fopen_s(&file, "save.bin", "wb");
@@ -1277,8 +1363,7 @@ internal bool HasNewVersion(ShaderProgram *program)
 {
     bool hasGeometryShader = (strlen(program->geometryShaderFilename) > 0);
     return HasNewVersion(program->vertexShaderFilename, &program->vertexShaderTime) ||
-           (hasGeometryShader &&
-            HasNewVersion(program->geometryShaderFilename, &program->geometryShaderTime)) ||
+           (hasGeometryShader && HasNewVersion(program->geometryShaderFilename, &program->geometryShaderTime)) ||
            HasNewVersion(program->fragmentShaderFilename, &program->fragmentShaderTime);
 }
 
@@ -1298,16 +1383,16 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
 internal void RenderObject(Object *object, u32 shaderProgram, f32 yRot = 0.f, float scale = 1.f)
 {
     glBindVertexArray(object->VAO);
-    
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, object->textures.diffuse.id);
-    
+
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, object->textures.specular.id);
-    
+
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, object->textures.normals.id);
-    
+
     glActiveTexture(GL_TEXTURE3);
     if (object->textures.displacement.id > 0)
     {
@@ -1371,9 +1456,8 @@ enum class RenderPassType
     PointShadowMap
 };
 
-void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-               PersistentDrawingInfo *persistentInfo, u32 fbo, u32 quadTexture, HWND window, Arena *listArena,
-               Arena *tempArena, bool dynamicEnvPass = false,
+void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
+               u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false,
                RenderPassType passType = RenderPassType::Normal);
 
 internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 numInstances = 1)
@@ -1400,7 +1484,7 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
             glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D, 0);
         }
-        
+
         if (skyboxTexture > 0)
         {
             // Skybox contribution.
@@ -1461,8 +1545,7 @@ internal void FlipImage(u8 *data, s32 width, s32 height, u32 bytesPerPixel, Aren
     ArenaPop(tempArena, stride);
 }
 
-internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
-                                      TransientDrawingInfo *transientInfo,
+internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
                                       PersistentDrawingInfo *persistentInfo)
 {
     glUseProgram(shaderProgram);
@@ -1499,17 +1582,15 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
 
     SetShaderUniformVec3(shaderProgram, "spotLight.position", cameraInfo->pos);
     SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector(cameraInfo));
-    SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff",
-                          cosf(persistentInfo->spotLight.innerCutoff));
-    SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff",
-                          cosf(persistentInfo->spotLight.outerCutoff));
+    SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
+    SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
     SetShaderUniformVec3(shaderProgram, "spotLight.ambient", persistentInfo->spotLight.ambient);
     SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
     SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
 
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
-    
-    SetShaderUniformFloat(shaderProgram, "heightScale", 1.f);
+
+    SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
 
     // TODO: figure out the best place to assign textures.
     glActiveTexture(GL_TEXTURE5);
@@ -1624,7 +1705,7 @@ internal void RenderWithGeometryShader(TransientDrawingInfo *transientInfo)
 }
 
 internal void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                             PersistentDrawingInfo *persistentInfo)
+                                      PersistentDrawingInfo *persistentInfo)
 
 {
     u32 shaderProgram = transientInfo->textureShader.id;
@@ -1638,7 +1719,7 @@ internal void RenderWithTextureShader(CameraInfo *cameraInfo, TransientDrawingIn
 }
 
 internal void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                           PersistentDrawingInfo *persistentInfo, Arena *listArena, Arena *tempArena)
+                                    PersistentDrawingInfo *persistentInfo, Arena *listArena, Arena *tempArena)
 {
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1670,9 +1751,9 @@ internal void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo
     glDisable(GL_BLEND);
 }
 
-void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-               PersistentDrawingInfo *persistentInfo, u32 fbo, u32 quadTexture, HWND window, Arena *listArena,
-               Arena *tempArena, bool dynamicEnvPass, RenderPassType passType)
+void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
+               u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass,
+               RenderPassType passType)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
@@ -1705,13 +1786,12 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
 
     f32 nearPlaneDistance = .1f;
     f32 farPlaneDistance = 150.f;
-    glm::mat4 projectionMatrix = glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio,
-                                                  nearPlaneDistance, farPlaneDistance);
+    glm::mat4 projectionMatrix =
+        glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, nearPlaneDistance, farPlaneDistance);
     f32 spotLightNearPlaneDistance = .1f;
     f32 spotLightFarPlaneDistance = 150.f;
     glm::vec3 spotEye = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
-    glm::mat4 spotLightViewMatrix =
-        glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), cameraUpVec);
+    glm::mat4 spotLightViewMatrix = glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), cameraUpVec);
     glm::mat4 spotLightSpaceMatrix = projectionMatrix * spotLightViewMatrix;
 
     glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
@@ -1743,8 +1823,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
         RenderWithColorShader(transientInfo, persistentInfo);
 
         // Objects.
-        RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena,
-                               dynamicEnvPass);
+        RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, dynamicEnvPass);
         // RenderWithGeometryShader(transientInfo);
 
         // Textured cubes.
@@ -1770,8 +1849,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
     }
 }
 
-void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                     PersistentDrawingInfo *persistentInfo)
+void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo)
 {
     u32 id = 0;
     ImGui::Begin("Debug Window");
@@ -1880,8 +1958,7 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
                 ImGui::SliderFloat3("Ambient", glm::value_ptr(lights[index].ambient), 0.f, 1.f);
                 ImGui::SliderFloat3("Diffuse", glm::value_ptr(lights[index].diffuse), 0.f, 1.f);
                 ImGui::SliderFloat3("Specular", glm::value_ptr(lights[index].specular), 0.f, 1.f);
-                ImGui::SliderInt("Attenuation", &lights[index].attIndex, 0,
-                                 myArraySize(globalAttenuationTable) - 1);
+                ImGui::SliderInt("Attenuation", &lights[index].attIndex, 0, myArraySize(globalAttenuationTable) - 1);
                 ImGui::TreePop();
             }
             ImGui::PopID();
@@ -1927,8 +2004,8 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
 
 extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *running,
                                                  TransientDrawingInfo *transientInfo,
-                                                 PersistentDrawingInfo *persistentInfo,
-                                                 CameraInfo *cameraInfo, Arena *listArena, Arena *tempArena)
+                                                 PersistentDrawingInfo *persistentInfo, CameraInfo *cameraInfo,
+                                                 Arena *listArena, Arena *tempArena)
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
@@ -1952,13 +2029,11 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     glViewport(0, 0, DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE);
     glCullFace(GL_FRONT);
     DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->dirShadowMapFBO,
-              transientInfo->dirShadowMapQuad, window, listArena, tempArena, false,
-              RenderPassType::DirShadowMap);
+              transientInfo->dirShadowMapQuad, window, listArena, tempArena, false, RenderPassType::DirShadowMap);
 
     // Spot shadow map pass.
     DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->spotShadowMapFBO,
-              transientInfo->spotShadowMapQuad, window, listArena, tempArena, false,
-              RenderPassType::SpotShadowMap);
+              transientInfo->spotShadowMapQuad, window, listArena, tempArena, false, RenderPassType::SpotShadowMap);
     glCullFace(GL_BACK);
 
     // Point lights shadow map pass.
@@ -1966,8 +2041,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     f32 pointAspectRatio = 1.f;
     f32 pointNear = .1f;
     f32 pointFar = 50.f; // TODO: make this depend on the attenuation.
-    glm::mat4 pointShadowProjection =
-        glm::perspective(glm::radians(90.f), pointAspectRatio, pointNear, pointFar);
+    glm::mat4 pointShadowProjection = glm::perspective(glm::radians(90.f), pointAspectRatio, pointNear, pointFar);
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
         glm::mat4 pointShadowMatrices[6];
@@ -2016,8 +2090,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     glViewport(0, 0, width, height);
     // Main pass.
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, transientInfo->mainQuad,
-              window, listArena, tempArena);
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, transientInfo->mainQuad, window,
+              listArena, tempArena);
 
     CameraInfo rearViewCamera = *cameraInfo;
     rearViewCamera.yaw += PI;
@@ -2026,8 +2100,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     rearViewCamera.rightVector = GetCameraRightVector(&rearViewCamera);
 
     // Rear-view pass.
-    DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO,
-              transientInfo->rearViewQuad, window, listArena, tempArena);
+    DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, transientInfo->rearViewQuad,
+              window, listArena, tempArena);
 
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->postProcessingFBO);
     glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
