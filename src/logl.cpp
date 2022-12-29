@@ -138,7 +138,7 @@ internal bool CreateShaderProgram(ShaderProgram *program)
     char infoLog[1024];
     glGetProgramiv(*programID, GL_LINK_STATUS, &success);
     glGetProgramInfoLog(*programID, 1024, NULL, infoLog);
-    DebugPrintA("Shader program creation failed: %s\n", infoLog);
+    DebugPrintA("Shader program creation infolog: %s\n", infoLog);
     if (!success || strstr(infoLog, "Warning"))
     {
         return false;
@@ -1069,7 +1069,7 @@ internal void CalculateTangents(Vertex *vertices, u32 numVertices, u32 *indices,
         result.w = (dot(cross(tangent, bitangent), normal) > 0.f) ? 1.f : -1.f;
 
         // TODO: use a vec4 type for the tangent so we can forego storing the bitangent and can access
-        // the handedness in the shader.
+        // the handedness in the shader?
         vertices[i].tangent = tan;
         vertices[i].bitangent = bitangent;
     }

@@ -85,9 +85,32 @@ uniform float heightScale;
 
 vec2 GetDisplacedTexCoords(vec3 viewDir)
 {
-    float height = texture(material.displacement, texCoords).r;
-    vec2 p = (viewDir.xy / viewDir.z) * (height * heightScale);
-    return texCoords - p;
+    float minLayers = 8.f;
+    float maxLayers = 32.f;
+    float numLayers = mix(maxLayers, minLayers, max(dot(vec3(0.f, 0.f, 1.f), viewDir), 0.f));
+    float layerDepth = 1.f / numLayers;
+    float curLayerDepth = 0.f;
+    vec2 p = viewDir.xy * heightScale;
+    vec2 deltaTexCoords = p / numLayers;
+    
+    vec2 result = texCoords;
+    float curMapDepth = texture(material.displacement, result).r;
+    while (curLayerDepth < curMapDepth)
+    {
+        result -= deltaTexCoords;
+        curLayerDepth += layerDepth;
+        curMapDepth = texture(material.displacement, result).r;
+    }
+    
+    vec2 prevTexCoords = result + deltaTexCoords;
+    
+    float prevDist = texture(material.displacement, prevTexCoords).r - (curLayerDepth - layerDepth);
+    float curDist = curMapDepth - curLayerDepth;
+    
+    float weight = curDist / (curDist - prevDist);
+    result = prevTexCoords * weight + result * (1.f - weight);
+    
+    return result;
 }
 
 float CalcShadow(vec4 posLightSpace, vec3 nrm, vec3 lightDir, sampler2D depthMap)
@@ -147,6 +170,11 @@ void main()
 {
     vec3 cameraDir = normalize(cameraPosTS - fragPosTS);
     vec2 displacedTexCoords = displace ? GetDisplacedTexCoords(cameraDir) : texCoords;
+    if (displacedTexCoords.x > 1.f || displacedTexCoords.y > 1.f ||
+        displacedTexCoords.x < 0.f || displacedTexCoords.y < 0.f)
+    {
+        discard;
+    }
     vec3 norm = texture(material.normals, displacedTexCoords).rgb;
     norm = normalize(norm * 2.f - 1.f);
     vec3 dirContribution = CalcDirLight(dirLight, norm, cameraDir, displacedTexCoords);
