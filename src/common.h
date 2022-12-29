@@ -278,6 +278,7 @@ struct PersistentDrawingInfo
     bool blinn = true;
     
     f32 gamma = 2.2f;
+    f32 exposure = 1.f;
 };
 
 struct CameraInfo

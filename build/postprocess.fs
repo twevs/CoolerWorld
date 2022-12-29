@@ -5,6 +5,7 @@ in vec2 texCoords;
 out vec4 fragColor;
 
 uniform float gamma;
+uniform float exposure;
 uniform sampler2D tex;
 
 const float offset = 1.f / 300.f;
@@ -139,8 +140,10 @@ void main()
 	}
 	
 	// fragColor = vec4(color, 1.f);
-	fragColor = texture(tex, texCoords);
+	fragColor.rgb = texture(tex, texCoords).rgb;
+	fragColor.rgb = vec3(1.f) - exp(-fragColor.rgb * exposure);
 	fragColor.rgb = pow(fragColor.rgb, vec3(1.f / gamma));
+	fragColor.a = 1.f;
 	// float depthValue = texture(tex, texCoords).r;
 	// fragColor = vec4(vec3(depthValue), 1.f);
 }

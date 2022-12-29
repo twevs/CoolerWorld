@@ -74,12 +74,15 @@ vec3 CalcEnvironment(vec3 normal, vec3 cameraDir);
 
 uniform bool blinn;
 
+// Shadow maps.
 uniform sampler2D dirDepthMap;
 uniform sampler2D spotDepthMap;
 uniform samplerCube pointDepthMaps[NUM_POINTLIGHTS];
 
+// Point light shadow mapping.
 uniform float pointFar;
 
+// Displacement mapping.
 uniform bool displace;
 uniform float heightScale;
 
@@ -105,10 +108,10 @@ vec2 GetDisplacedTexCoords(vec3 viewDir)
     vec2 prevTexCoords = result + deltaTexCoords;
     
     float prevDist = texture(material.displacement, prevTexCoords).r - (curLayerDepth - layerDepth);
-    float curDist = curMapDepth - curLayerDepth;
+    float curDist = curLayerDepth - curMapDepth;
     
-    float weight = curDist / (curDist - prevDist);
-    result = prevTexCoords * weight + result * (1.f - weight);
+    float weight = prevDist / (curDist + prevDist);
+    result = mix(prevTexCoords, result, weight);
     
     return result;
 }

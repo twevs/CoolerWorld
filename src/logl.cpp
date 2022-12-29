@@ -676,7 +676,7 @@ internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u
 
     glGenTextures(1, quadTexture);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, *quadTexture);
-    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGB, width, height, GL_TRUE);
+    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGBA16F, width, height, GL_TRUE);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, *quadTexture, 0);
@@ -690,16 +690,19 @@ internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u
     return glCheckFramebufferStatus(GL_FRAMEBUFFER);
 }
 
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false)
+internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false, bool hdr = false)
 {
+    myAssert(!(depthMap && hdr));
+    
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
 
     glGenTextures(1, quadTexture);
     glBindTexture(GL_TEXTURE_2D, *quadTexture);
-    GLenum format = depthMap ? GL_DEPTH_COMPONENT : GL_RGB;
-    GLenum type = depthMap ? GL_FLOAT : GL_UNSIGNED_BYTE;
-    glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, type, NULL);
+    GLenum internalFormat = depthMap ? GL_DEPTH_COMPONENT : hdr ? GL_RGBA16F : GL_RGB;
+    GLenum type = (depthMap || hdr) ? GL_FLOAT : GL_UNSIGNED_BYTE;
+    GLenum format = hdr ? GL_RGBA : internalFormat;
+    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, NULL);
     GLint filteringMethod = depthMap ? GL_NEAREST : GL_LINEAR;
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filteringMethod);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filteringMethod);
@@ -894,7 +897,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     GLenum postProcessingFramebufferStatus =
         CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
-                          &transientInfo->postProcessingRBO);
+                          &transientInfo->postProcessingRBO, false, true);
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum dirDepthMapFramebufferStatus =
@@ -1189,7 +1192,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curTexCubeIndex);
-        AddObjectToShaderPass(&transientInfo->textureShader, curTexCubeIndex);
+        AddObjectToShaderPass(&transientInfo->objectShader, curTexCubeIndex);
     }
 
     for (u32 wallIndex = 0; wallIndex < NUM_OBJECTS; wallIndex++)
@@ -1591,7 +1594,7 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
-
+    
     // TODO: figure out the best place to assign textures.
     glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
@@ -1827,7 +1830,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         // RenderWithGeometryShader(transientInfo);
 
         // Textured cubes.
-        RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
+        // RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
 
         // Windows.
         // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
@@ -1866,6 +1869,7 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     ImGui::Separator();
 
     ImGui::SliderFloat("Gamma correction", &persistentInfo->gamma, 0.f, 5.f);
+    ImGui::SliderFloat("Exposure", &persistentInfo->exposure, 0.f, 5.f);
 
     ImGui::Separator();
 
@@ -2130,6 +2134,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glUseProgram(shaderProgram);
 
         SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
+        SetShaderUniformFloat(shaderProgram, "exposure", persistentInfo->exposure);
 
         glDisable(GL_DEPTH_TEST);
 
