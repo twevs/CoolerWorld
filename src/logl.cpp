@@ -676,7 +676,7 @@ internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u
 
     glGenTextures(1, quadTexture);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, *quadTexture);
-    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGB, width, height, GL_TRUE);
+    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGBA16F, width, height, GL_TRUE);
     glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
 
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, *quadTexture, 0);
@@ -1591,6 +1591,8 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
+    
+    SetShaderUniformFloat(shaderProgram, "exposure", persistentInfo->exposure);
 
     // TODO: figure out the best place to assign textures.
     glActiveTexture(GL_TEXTURE5);
@@ -1866,6 +1868,7 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     ImGui::Separator();
 
     ImGui::SliderFloat("Gamma correction", &persistentInfo->gamma, 0.f, 5.f);
+    ImGui::SliderFloat("Exposure", &persistentInfo->exposure, 0.f, 5.f);
 
     ImGui::Separator();
 

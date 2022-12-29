@@ -74,14 +74,20 @@ vec3 CalcEnvironment(vec3 normal, vec3 cameraDir);
 
 uniform bool blinn;
 
+// Shadow maps.
 uniform sampler2D dirDepthMap;
 uniform sampler2D spotDepthMap;
 uniform samplerCube pointDepthMaps[NUM_POINTLIGHTS];
 
+// Point light shadow mapping.
 uniform float pointFar;
 
+// Displacement mapping.
 uniform bool displace;
 uniform float heightScale;
+
+// Tone mapping.
+uniform float exposure;
 
 vec2 GetDisplacedTexCoords(vec3 viewDir)
 {
@@ -183,6 +189,7 @@ void main()
     vec3 envContribution = CalcEnvironment(norm, cameraDir);
     
     vec3 result = dirContribution + pointsContribution + spotContribution + envContribution;
+    result = vec3(1.f) - exp(-result * exposure);
     
     fragColor = vec4(result, 1.f);
 }
