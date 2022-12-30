@@ -53,8 +53,9 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
 
     if (persistentInfo->initialized)
     {
+        // TODO: move this code into the DLL.
         glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->mainQuad);
-        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGB, width, height,
+        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGBA16F, width, height,
                                 GL_TRUE);
         glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->mainRBO);
         glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples, GL_DEPTH24_STENCIL8,
@@ -75,7 +76,7 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
 
         glBindTexture(GL_TEXTURE_2D, transientInfo->postProcessingQuad);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 0, GL_RGB, GL_UNSIGNED_BYTE, NULL);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
         glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->postProcessingRBO);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
 

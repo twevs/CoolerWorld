@@ -86,9 +86,6 @@ uniform float pointFar;
 uniform bool displace;
 uniform float heightScale;
 
-// Tone mapping.
-uniform float exposure;
-
 vec2 GetDisplacedTexCoords(vec3 viewDir)
 {
     float minLayers = 8.f;
@@ -111,10 +108,10 @@ vec2 GetDisplacedTexCoords(vec3 viewDir)
     vec2 prevTexCoords = result + deltaTexCoords;
     
     float prevDist = texture(material.displacement, prevTexCoords).r - (curLayerDepth - layerDepth);
-    float curDist = curMapDepth - curLayerDepth;
+    float curDist = curLayerDepth - curMapDepth;
     
-    float weight = curDist / (curDist - prevDist);
-    result = prevTexCoords * weight + result * (1.f - weight);
+    float weight = prevDist / (curDist + prevDist);
+    result = mix(prevTexCoords, result, weight);
     
     return result;
 }
@@ -189,7 +186,6 @@ void main()
     vec3 envContribution = CalcEnvironment(norm, cameraDir);
     
     vec3 result = dirContribution + pointsContribution + spotContribution + envContribution;
-    result = vec3(1.f) - exp(-result * exposure);
     
     fragColor = vec4(result, 1.f);
 }
