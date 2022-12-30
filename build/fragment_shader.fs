@@ -43,6 +43,9 @@ struct SpotLight
     float outerCutoff;
 };
 
+layout (location = 0) out vec4 fragColor;
+layout (location = 1) out vec4 brightColor;
+
 #define NUM_POINTLIGHTS 4
 
 in vec2 texCoords;
@@ -55,8 +58,6 @@ in vec3 pointLightPosTS[NUM_POINTLIGHTS];
 in vec3 spotLightPosTS;
 in vec3 normalWS;
 in vec3 fragWorldPos;
-
-out vec4 fragColor;
 
 uniform Material material;
 
@@ -188,6 +189,16 @@ void main()
     vec3 result = dirContribution + pointsContribution + spotContribution + envContribution;
     
     fragColor = vec4(result, 1.f);
+    
+    float brightness = dot(fragColor.rgb, vec3(.2126f, .7152f, .0722f));
+    if (brightness > 1.f)
+    {
+        brightColor = fragColor;
+    }
+    else
+    {
+        brightColor = vec4(vec3(0.f), 1.f);
+    }
 }
 
 vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir, vec2 inTexCoords)

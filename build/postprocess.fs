@@ -6,7 +6,8 @@ out vec4 fragColor;
 
 uniform float gamma;
 uniform float exposure;
-uniform sampler2D tex;
+uniform sampler2D scene;
+uniform sampler2D bloomBlur;
 
 const float offset = 1.f / 300.f;
 
@@ -123,14 +124,14 @@ void main()
 	vec3 sampleTex[9];
 	for (int i = 0; i < 9; i++)
 	{
-		sampleTex[i] = vec3(texture(tex, texCoords.st + offsets3[i]));
+		sampleTex[i] = vec3(texture(scene, texCoords.st + offsets3[i]));
 	}
 	*/
 	
 	vec3 sampleTex[25];
 	for (int i = 0; i < 25; i++)
 	{
-		sampleTex[i] = vec3(texture(tex, texCoords.st + offsets5[i]));
+		sampleTex[i] = vec3(texture(scene, texCoords.st + offsets5[i]));
 	}
 	
 	vec3 color = vec3(0.f);
@@ -139,11 +140,13 @@ void main()
 		color += (sampleTex[i] * unsharpMasking5Kernel[i]);
 	}
 	
-	// fragColor = vec4(color, 1.f);
-	fragColor.rgb = texture(tex, texCoords).rgb;
+	fragColor.rgb = texture(scene, texCoords).rgb;
+	fragColor.rgb += texture(bloomBlur, texCoords).rgb;
+	
 	fragColor.rgb = vec3(1.f) - exp(-fragColor.rgb * exposure);
 	fragColor.rgb = pow(fragColor.rgb, vec3(1.f / gamma));
 	fragColor.a = 1.f;
-	// float depthValue = texture(tex, texCoords).r;
+	
+	// float depthValue = texture(scene, texCoords).r;
 	// fragColor = vec4(vec3(depthValue), 1.f);
 }

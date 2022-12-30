@@ -221,6 +221,7 @@ struct TransientDrawingInfo
     ShaderProgram postProcessShader;
     ShaderProgram skyboxShader;
     ShaderProgram geometryShader;
+    ShaderProgram gaussianShader;
     
     u32 matricesUBO;
 
@@ -232,7 +233,7 @@ struct TransientDrawingInfo
     
     u32 mainQuadVao;
     u32 mainFBO;
-    u32 mainQuad;
+    u32 mainQuads[2];
     u32 mainRBO;
 
     u32 rearViewQuadVao;
@@ -240,23 +241,24 @@ struct TransientDrawingInfo
     u32 rearViewQuad;
     u32 rearViewRBO;
     
-    u32 postProcessingQuadVao;
     u32 postProcessingFBO;
     u32 postProcessingQuad;
     u32 postProcessingRBO;
     
-    u32 dirShadowMapQuadVao;
     u32 dirShadowMapFBO;
     u32 dirShadowMapQuad;
     u32 dirShadowMapRBO;
     
-    u32 spotShadowMapQuadVao;
     u32 spotShadowMapFBO;
     u32 spotShadowMapQuad;
     u32 spotShadowMapRBO;
     
     u32 pointShadowMapQuad[NUM_POINTLIGHTS];
     u32 pointShadowMapFBO[NUM_POINTLIGHTS];
+    
+    u32 gaussianQuads[2];
+    u32 gaussianFBOs[2];
+    u32 gaussianRBOs[2];
 };
 
 struct PersistentDrawingInfo
@@ -269,7 +271,7 @@ struct PersistentDrawingInfo
     u32 numModels;
     glm::vec3 modelPositions[MAX_MODELS];
 
-    float clearColor[4] = {.1f, .1f, .1f, 1.f};
+    float clearColor[4] = {0.f, 0.f, 0.f, 1.f};
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;

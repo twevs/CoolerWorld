@@ -54,12 +54,16 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
     if (persistentInfo->initialized)
     {
         // TODO: move this code into the DLL.
-        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->mainQuad);
-        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGBA16F, width, height,
-                                GL_TRUE);
+        for (u32 i = 0; i < 2; i++)
+        {
+            glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->mainQuads[i]);
+            glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGBA16F, width, height,
+                                    GL_TRUE);
+            glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+        }
         glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->mainRBO);
-        glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples, GL_DEPTH24_STENCIL8,
-                                         width, height);
+        glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples, GL_DEPTH24_STENCIL8, width,
+                                         height);
 
         // See also: note about rear-view quad in DrawWindow().
         /*
@@ -83,6 +87,14 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
         glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, 0,
                      GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
+        
+        for (u32 i = 0; i < 2; i++)
+        {
+            glBindTexture(GL_TEXTURE_2D, transientInfo->gaussianQuads[i]);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
+            glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->gaussianRBOs[i]);
+            glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+        }
     }
 }
 
@@ -91,8 +103,8 @@ internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
-internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawingInfo *drawingInfo,
-                                   glm::vec3 *movement, CameraInfo *cameraInfo)
+internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawingInfo *drawingInfo, glm::vec3 *movement,
+                                   CameraInfo *cameraInfo)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
@@ -147,8 +159,7 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
                 s16 xCoord = originX + GET_X_LPARAM(message.lParam);
                 s16 yCoord = originY + GET_Y_LPARAM(message.lParam);
                 cameraInfo->yaw -= (xCoord - centreX) / 100.f;
-                cameraInfo->pitch =
-                    clampf(cameraInfo->pitch - (yCoord - centreY) / 100.f, -PI / 2, PI / 2, .01f);
+                cameraInfo->pitch = clampf(cameraInfo->pitch - (yCoord - centreY) / 100.f, -PI / 2, PI / 2, .01f);
 
                 SetCursorPos(centreX, centreY);
             }
@@ -361,8 +372,7 @@ internal int InitializeOpenGLExtensions(HINSTANCE hInstance)
     }
 
     wglChoosePixelFormatARB = (PFNWGLCHOOSEPIXELFORMATARBPROC)wglGetProcAddress("wglChoosePixelFormatARB");
-    wglCreateContextAttribsARB =
-        (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
+    wglCreateContextAttribsARB = (PFNWGLCREATECONTEXTATTRIBSARBPROC)wglGetProcAddress("wglCreateContextAttribsARB");
 
     wglMakeCurrent(dummyDC, 0);
     wglDeleteContext(dummyRenderingContext);
@@ -559,8 +569,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
         Arena *listArena = AllocArena(2048);
         Arena *tempArena = AllocArena(1920 * 1080 * 32);
-        if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo, texturesArena,
-                                   meshDataArena))
+        if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo, texturesArena, meshDataArena))
         {
             return -1;
         }
@@ -617,8 +626,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // OutputDebugStringW(frameTimeString);
 
             cameraInfo->pos += movementPerFrame * deltaTime;
-            DrawWindow(window, hdc, &appState.running, transientInfo, drawingInfo, cameraInfo, listArena,
-                       tempArena);
+            DrawWindow(window, hdc, &appState.running, transientInfo, drawingInfo, cameraInfo, listArena, tempArena);
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);

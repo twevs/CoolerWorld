@@ -277,6 +277,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
+    if (!CreateShaderProgram(&info->gaussianShader, info->gaussianShader.id, "vertex_shader.vs", "gaussian.fs"))
+    {
+        return false;
+    }
 
     glUseProgram(info->objectShader.id);
     SetShaderUniformSampler(info->objectShader.id, "material.diffuse", 0);
@@ -309,6 +313,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
 
     glUseProgram(info->textureShader.id);
     SetShaderUniformSampler(info->textureShader.id, "tex", 0);
+    
+    glUseProgram(info->postProcessShader.id);
+    SetShaderUniformSampler(info->postProcessShader.id, "scene", 0);
+    SetShaderUniformSampler(info->postProcessShader.id, "bloomBlur", 1);
 
     glUseProgram(info->glassShader.id);
     SetShaderUniformSampler(info->glassShader.id, "tex", 0);
@@ -668,18 +676,24 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
     return true;
 }
 
-internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo,
+internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTextures, u32 *rbo,
                                               s32 numSamples = 4)
 {
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
 
-    glGenTextures(1, quadTexture);
-    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, *quadTexture);
-    glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGBA16F, width, height, GL_TRUE);
-    glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
+    glGenTextures(2, quadTextures);
+    for (u32 i = 0; i < 2; i++)
+    {
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, quadTextures[i]);
+        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGBA16F, width, height, GL_TRUE);
+        // TODO: texture parameters?
+        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
 
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D_MULTISAMPLE, *quadTexture, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D_MULTISAMPLE, quadTextures[i], 0);
+    }
+    GLenum attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+    glDrawBuffers(2, attachments);
 
     glGenRenderbuffers(1, rbo);
     glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
@@ -690,10 +704,11 @@ internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u
     return glCheckFramebufferStatus(GL_FRAMEBUFFER);
 }
 
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false, bool hdr = false)
+internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false,
+                                  bool hdr = false)
 {
     myAssert(!(depthMap && hdr));
-    
+
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
 
@@ -713,6 +728,7 @@ internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadText
         f32 borderColor[] = {1.f, 1.f, 1.f, 1.f};
         glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
     }
+    // TODO: non-depth map texture wrapping parameters?
     glBindTexture(GL_TEXTURE_2D, 0);
 
     GLenum attachment = depthMap ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0;
@@ -887,7 +903,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     transientInfo->numSamples = 4;
 
     GLenum mainFramebufferStatus =
-        CreateMultisampledFramebuffer(width, height, &transientInfo->mainFBO, &transientInfo->mainQuad,
+        CreateMultisampledFramebuffer(width, height, &transientInfo->mainFBO, transientInfo->mainQuads,
                                       &transientInfo->mainRBO, transientInfo->numSamples);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
@@ -915,6 +931,14 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
         GLenum pointDepthCubemapStatus =
             CreateDepthCubemap(&transientInfo->pointShadowMapQuad[i], &transientInfo->pointShadowMapFBO[i]);
         myAssert(pointDepthCubemapStatus == GL_FRAMEBUFFER_COMPLETE);
+    }
+
+    for (u32 i = 0; i < 2; i++)
+    {
+        GLenum gaussianFramebufferStatus =
+            CreateFramebuffer(width, height, &transientInfo->gaussianFBOs[i], &transientInfo->gaussianQuads[i],
+                              &transientInfo->gaussianRBOs[i], false, true);
+        myAssert(gaussianFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     }
 }
 
@@ -1156,9 +1180,6 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     u32 mainQuadVao = CreateVAO((f32 *)quadVertices, sizeof(quadVertices), bitangentElemCounts,
                                 myArraySize(bitangentElemCounts), quadIndices, sizeof(quadIndices));
     transientInfo->mainQuadVao = mainQuadVao;
-    transientInfo->postProcessingQuadVao = mainQuadVao;
-    transientInfo->dirShadowMapQuadVao = mainQuadVao;
-    transientInfo->spotShadowMapQuadVao = mainQuadVao;
 
     f32 rearViewQuadVertices[] = {.5f,  1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f, .5f,  .7f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
                                   -.5f, .7f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -.5f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
@@ -1376,7 +1397,7 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
         HasNewVersion(&info->colorShader) || HasNewVersion(&info->outlineShader) ||
         HasNewVersion(&info->textureShader) || HasNewVersion(&info->glassShader) ||
         HasNewVersion(&info->postProcessShader) || HasNewVersion(&info->skyboxShader) ||
-        HasNewVersion(&info->geometryShader))
+        HasNewVersion(&info->geometryShader) || HasNewVersion(&info->gaussianShader))
     {
         bool reloadedShaders = CreateShaderPrograms(info);
         myAssert(reloadedShaders);
@@ -1460,7 +1481,7 @@ enum class RenderPassType
 };
 
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
-               u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false,
+               u32 fbo, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false,
                RenderPassType passType = RenderPassType::Normal);
 
 internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 numInstances = 1)
@@ -1594,7 +1615,7 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
-    
+
     // TODO: figure out the best place to assign textures.
     glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
@@ -1755,8 +1776,7 @@ internal void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo
 }
 
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
-               u32 fbo, u32 quadTexture, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass,
-               RenderPassType passType)
+               u32 fbo, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass, RenderPassType passType)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 
@@ -2032,12 +2052,12 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // some objects.
     glViewport(0, 0, DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE);
     glCullFace(GL_FRONT);
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->dirShadowMapFBO,
-              transientInfo->dirShadowMapQuad, window, listArena, tempArena, false, RenderPassType::DirShadowMap);
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->dirShadowMapFBO, window, listArena, tempArena,
+              false, RenderPassType::DirShadowMap);
 
     // Spot shadow map pass.
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->spotShadowMapFBO,
-              transientInfo->spotShadowMapQuad, window, listArena, tempArena, false, RenderPassType::SpotShadowMap);
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->spotShadowMapFBO, window, listArena, tempArena,
+              false, RenderPassType::SpotShadowMap);
     glCullFace(GL_BACK);
 
     // Point lights shadow map pass.
@@ -2087,15 +2107,13 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glUseProgram(instancedObjectShaderProgram);
         SetShaderUniformFloat(instancedObjectShaderProgram, "pointFar", pointFar);
 
-        DrawScene(&pointCameraInfo, transientInfo, persistentInfo, transientInfo->pointShadowMapFBO[i],
-                  transientInfo->pointShadowMapQuad[i], window, listArena, tempArena, false,
-                  RenderPassType::PointShadowMap);
+        DrawScene(&pointCameraInfo, transientInfo, persistentInfo, transientInfo->pointShadowMapFBO[i], window,
+                  listArena, tempArena, false, RenderPassType::PointShadowMap);
     }
 
     glViewport(0, 0, width, height);
     // Main pass.
-    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, transientInfo->mainQuad, window,
-              listArena, tempArena);
+    DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFBO, window, listArena, tempArena);
 
     CameraInfo rearViewCamera = *cameraInfo;
     rearViewCamera.yaw += PI;
@@ -2104,11 +2122,47 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     rearViewCamera.rightVector = GetCameraRightVector(&rearViewCamera);
 
     // Rear-view pass.
-    DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, transientInfo->rearViewQuad,
-              window, listArena, tempArena);
+    DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, window, listArena, tempArena);
 
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->postProcessingFBO);
+    // Setup for rendering quads.
+    glDisable(GL_DEPTH_TEST);
+    glm::mat4 identity = glm::mat4(1.f);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
+    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
+    glm::mat4 modelMatrix = glm::mat4(1.f);
+    modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+
+    // Apply Gaussian blur to brightness texture to generate bloom.
     glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
+    glReadBuffer(GL_COLOR_ATTACHMENT1);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->gaussianFBOs[0]);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glClearColor(1.f, 1.f, 1.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    bool horizontal = true;
+    u32 gaussianShader = transientInfo->gaussianShader.id;
+    u32 gaussianQuad = transientInfo->gaussianQuads[0];
+    glUseProgram(gaussianShader);
+    for (u32 i = 0; i < 10; i++)
+    {
+        glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->gaussianFBOs[horizontal]);
+        SetShaderUniformInt(gaussianShader, "horizontal", horizontal);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, gaussianQuad);
+        horizontal = !horizontal;
+
+        glBindVertexArray(transientInfo->mainQuadVao);
+
+        SetShaderUniformMat4(gaussianShader, "modelMatrix", &modelMatrix);
+        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+        gaussianQuad = transientInfo->gaussianQuads[!horizontal];
+    }
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
+    glReadBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->postProcessingFBO);
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     // NOTE: in the case of the rear-view mirror, since a multisampled framebuffer cannot be blitted
     // to only a portion of a non-multisampled framebuffer, there are 3 options:
@@ -2128,62 +2182,40 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     glClearColor(1.f, 1.f, 1.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
 
+    u32 shaderProgram = transientInfo->postProcessShader.id;
+    glUseProgram(shaderProgram);
+
+    SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
+    SetShaderUniformFloat(shaderProgram, "exposure", persistentInfo->exposure);
+    
     // Main quad.
     {
-        u32 shaderProgram = transientInfo->postProcessShader.id;
-        glUseProgram(shaderProgram);
-
-        SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
-        SetShaderUniformFloat(shaderProgram, "exposure", persistentInfo->exposure);
-
-        glDisable(GL_DEPTH_TEST);
-
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, transientInfo->postProcessingQuad);
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, transientInfo->gaussianQuads[0]);
 
-        glm::mat4 identity = glm::mat4(1.f);
-        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
-        glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
-
-        glBindVertexArray(transientInfo->postProcessingQuadVao);
-
-        // Model matrix: transforms vertices from local to world space.
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+        glBindVertexArray(transientInfo->mainQuadVao);
 
         SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-        glEnable(GL_DEPTH_TEST);
     }
 
     // Rear-view quad.
     {
-        u32 shaderProgram = transientInfo->postProcessShader.id;
-        glUseProgram(shaderProgram);
-
-        SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
-
-        glDisable(GL_DEPTH_TEST);
-
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
-
-        glm::mat4 identity = glm::mat4(1.f);
-        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
-        glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
+        // NOTE: for now we don't bother with bloom in the rear-view mirror, since our bloom blur buffer
+        // is of the same size as the main framebuffer.
+        glActiveTexture(GL_TEXTURE1);
+        glBindTexture(GL_TEXTURE_2D, 0);
 
         glBindVertexArray(transientInfo->rearViewQuadVao);
 
-        // Model matrix: transforms vertices from local to world space.
-        glm::mat4 modelMatrix = glm::mat4(1.f);
-        modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
-
         SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-
-        glEnable(GL_DEPTH_TEST);
     }
+    glEnable(GL_DEPTH_TEST);
 
     DrawDebugWindow(cameraInfo, transientInfo, persistentInfo);
 
