@@ -195,7 +195,7 @@ internal void SetShaderUniformMat4(u32 shaderProgram, const char *uniformName, g
     glUniformMatrix4fv(glGetUniformLocation(shaderProgram, uniformName), 1, GL_FALSE, glm::value_ptr(*matrix));
 }
 
-internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *vertexShaderFilename,
+internal bool CreateShaderProgram(ShaderProgram *program, const char *vertexShaderFilename,
                                   const char *fragmentShaderFilename, const char *geometryShaderFilename = "")
 {
     ShaderProgram newShaderProgram = {};
@@ -209,13 +209,13 @@ internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *ve
     {
         return false;
     }
-    if (glIsProgram(id))
+    if (glIsProgram(program->id))
     {
         memcpy(newShaderProgram.objectIndices, program->objectIndices, program->numObjects * sizeof(u32));
         newShaderProgram.numObjects = program->numObjects;
         memcpy(newShaderProgram.modelIndices, program->modelIndices, program->numModels * sizeof(u32));
         newShaderProgram.numModels = program->numModels;
-        glDeleteProgram(id);
+        glDeleteProgram(program->id);
     }
 
     *program = newShaderProgram;
@@ -224,96 +224,99 @@ internal bool CreateShaderProgram(ShaderProgram *program, u32 id, const char *ve
 
 internal bool CreateShaderPrograms(TransientDrawingInfo *info)
 {
-    if (!CreateShaderProgram(&info->dirDepthMapShader, info->dirDepthMapShader.id, "depth_map.vs", "depth_map.fs"))
+    if (!CreateShaderProgram(&info->gBufferShader, "gbuffer.vs", "gbuffer.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->spotDepthMapShader, info->spotDepthMapShader.id, "spot_depth_map.vs",
-                             "depth_map.fs"))
+    if (!CreateShaderProgram(&info->dirDepthMapShader, "depth_map.vs", "depth_map.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->pointDepthMapShader, info->pointDepthMapShader.id, "depth_cube_map.vs",
-                             "depth_cube_map.fs", "depth_cube_map.gs"))
+    if (!CreateShaderProgram(&info->spotDepthMapShader, "spot_depth_map.vs", "depth_map.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->objectShader, info->objectShader.id, "vertex_shader.vs", "fragment_shader.fs"))
+    if (!CreateShaderProgram(&info->pointDepthMapShader, "depth_cube_map.vs", "depth_cube_map.fs", "depth_cube_map.gs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->instancedObjectShader, info->instancedObjectShader.id, "instanced.vs",
-                             "fragment_shader.fs"))
+    if (!CreateShaderProgram(&info->lightingShader, "vertex_shader.vs", "fragment_shader.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->colorShader, info->colorShader.id, "vertex_shader.vs", "color.fs"))
+    if (!CreateShaderProgram(&info->instancedObjectShader, "instanced.vs", "fragment_shader.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->outlineShader, info->outlineShader.id, "vertex_shader.vs", "outline.fs"))
+    if (!CreateShaderProgram(&info->colorShader, "vertex_shader.vs", "color.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->textureShader, info->textureShader.id, "vertex_shader.vs", "texture.fs"))
+    if (!CreateShaderProgram(&info->outlineShader, "vertex_shader.vs", "outline.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->glassShader, info->glassShader.id, "vertex_shader.vs", "glass.fs"))
+    if (!CreateShaderProgram(&info->textureShader, "vertex_shader.vs", "texture.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->postProcessShader, info->postProcessShader.id, "vertex_shader.vs",
-                             "postprocess.fs"))
+    if (!CreateShaderProgram(&info->glassShader, "vertex_shader.vs", "glass.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->skyboxShader, info->skyboxShader.id, "cubemap.vs", "cubemap.fs"))
+    if (!CreateShaderProgram(&info->postProcessShader, "vertex_shader.vs", "postprocess.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->geometryShader, info->geometryShader.id, "vertex_shader_geometry.vs", "color.fs",
-                             "vis_normals.gs"))
+    if (!CreateShaderProgram(&info->skyboxShader, "cubemap.vs", "cubemap.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->gaussianShader, info->gaussianShader.id, "vertex_shader.vs", "gaussian.fs"))
+    if (!CreateShaderProgram(&info->geometryShader, "vertex_shader_geometry.vs", "color.fs", "vis_normals.gs"))
+    {
+        return false;
+    }
+    if (!CreateShaderProgram(&info->gaussianShader, "vertex_shader.vs", "gaussian.fs"))
     {
         return false;
     }
 
-    glUseProgram(info->objectShader.id);
-    SetShaderUniformSampler(info->objectShader.id, "material.diffuse", 0);
-    SetShaderUniformSampler(info->objectShader.id, "material.specular", 1);
-    SetShaderUniformSampler(info->objectShader.id, "material.normals", 2);
-    SetShaderUniformSampler(info->objectShader.id, "material.displacement", 3);
-    SetShaderUniformSampler(info->objectShader.id, "skybox", 4);
-    SetShaderUniformSampler(info->objectShader.id, "dirDepthMap", 5);
-    SetShaderUniformSampler(info->objectShader.id, "spotDepthMap", 6);
+    glUseProgram(info->gBufferShader.id);
+    SetShaderUniformSampler(info->gBufferShader.id, "material.diffuse", 0);
+    SetShaderUniformSampler(info->gBufferShader.id, "material.specular", 1);
+    SetShaderUniformSampler(info->gBufferShader.id, "material.normals", 2);
+    SetShaderUniformSampler(info->gBufferShader.id, "material.displacement", 3);
+
+    glUseProgram(info->lightingShader.id);
+    SetShaderUniformSampler(info->lightingShader.id, "gBuffer.position", 0);
+    SetShaderUniformSampler(info->lightingShader.id, "gBuffer.normal", 1);
+    SetShaderUniformSampler(info->lightingShader.id, "gBuffer.albedo", 2);
+    SetShaderUniformSampler(info->lightingShader.id, "skybox", 3);
+    SetShaderUniformSampler(info->lightingShader.id, "dirDepthMap", 4);
+    SetShaderUniformSampler(info->lightingShader.id, "spotDepthMap", 5);
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
         char uniformName[32];
         sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->objectShader.id, uniformName, 7 + i);
+        SetShaderUniformSampler(info->lightingShader.id, uniformName, 6 + i);
     }
     glUseProgram(info->instancedObjectShader.id);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "material.diffuse", 0);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "material.specular", 1);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "material.normals", 2);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "material.displacement", 3);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 4);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "dirDepthMap", 5);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "spotDepthMap", 6);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "gBuffer.position", 0);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "gBuffer.normal", 1);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "gBuffer.albedo", 2);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 3);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "dirDepthMap", 4);
+    SetShaderUniformSampler(info->instancedObjectShader.id, "spotDepthMap", 5);
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
         char uniformName[32];
         sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->instancedObjectShader.id, uniformName, 7 + i);
+        SetShaderUniformSampler(info->instancedObjectShader.id, uniformName, 6 + i);
     }
 
     glUseProgram(info->textureShader.id);
     SetShaderUniformSampler(info->textureShader.id, "tex", 0);
-    
+
     glUseProgram(info->postProcessShader.id);
     SetShaderUniformSampler(info->postProcessShader.id, "scene", 0);
     SetShaderUniformSampler(info->postProcessShader.id, "bloomBlur", 1);
@@ -660,7 +663,6 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
     LoadShaderPass(file, &transientInfo->dirDepthMapShader);
     LoadShaderPass(file, &transientInfo->spotDepthMapShader);
     LoadShaderPass(file, &transientInfo->pointDepthMapShader);
-    LoadShaderPass(file, &transientInfo->objectShader);
     LoadShaderPass(file, &transientInfo->instancedObjectShader);
     LoadShaderPass(file, &transientInfo->colorShader);
     LoadShaderPass(file, &transientInfo->outlineShader);
@@ -676,63 +678,46 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
     return true;
 }
 
-internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTextures, u32 *rbo,
-                                              s32 numSamples = 4)
-{
-    glGenFramebuffers(1, fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+#define MAX_ATTACHMENTS 4
 
-    glGenTextures(2, quadTextures);
-    for (u32 i = 0; i < 2; i++)
-    {
-        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, quadTextures[i]);
-        glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGBA16F, width, height, GL_TRUE);
-        // TODO: texture parameters?
-        glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, 0);
-
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D_MULTISAMPLE, quadTextures[i], 0);
-    }
-    GLenum attachments[2] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
-    glDrawBuffers(2, attachments);
-
-    glGenRenderbuffers(1, rbo);
-    glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
-    glRenderbufferStorageMultisample(GL_RENDERBUFFER, numSamples, GL_DEPTH24_STENCIL8, width, height);
-    glBindRenderbuffer(GL_RENDERBUFFER, 0);
-    glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
-
-    return glCheckFramebufferStatus(GL_FRAMEBUFFER);
-}
-
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false,
-                                  bool hdr = false)
+internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTextures, u32 numTextures, u32 *rbo,
+                                  bool depthMap = false, bool hdr = false)
 {
     myAssert(!(depthMap && hdr));
+    myAssert(!(depthMap && (numTextures > 1)));
+    myAssert(numTextures <= MAX_ATTACHMENTS);
 
     glGenFramebuffers(1, fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
 
-    glGenTextures(1, quadTexture);
-    glBindTexture(GL_TEXTURE_2D, *quadTexture);
-    GLenum internalFormat = depthMap ? GL_DEPTH_COMPONENT : hdr ? GL_RGBA16F : GL_RGB;
-    GLenum type = (depthMap || hdr) ? GL_FLOAT : GL_UNSIGNED_BYTE;
-    GLenum format = hdr ? GL_RGBA : internalFormat;
-    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, NULL);
-    GLint filteringMethod = depthMap ? GL_NEAREST : GL_LINEAR;
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filteringMethod);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filteringMethod);
-    if (depthMap)
+    glGenTextures(numTextures, quadTextures);
+    GLenum attachments[MAX_ATTACHMENTS] = {};
+    for (u32 i = 0; i < numTextures; i++)
     {
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-        f32 borderColor[] = {1.f, 1.f, 1.f, 1.f};
-        glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
-    }
-    // TODO: non-depth map texture wrapping parameters?
-    glBindTexture(GL_TEXTURE_2D, 0);
+        glBindTexture(GL_TEXTURE_2D, quadTextures[i]);
+        GLenum internalFormat = depthMap ? GL_DEPTH_COMPONENT : hdr ? GL_RGBA16F : GL_RGB;
+        GLenum type = (depthMap || hdr) ? GL_FLOAT : GL_UNSIGNED_BYTE;
+        GLenum format = hdr ? GL_RGBA : internalFormat;
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, NULL);
+        GLint filteringMethod = depthMap ? GL_NEAREST : GL_LINEAR;
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filteringMethod);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filteringMethod);
+        if (depthMap)
+        {
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+            f32 borderColor[] = {1.f, 1.f, 1.f, 1.f};
+            glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+        }
+        // TODO: non-depth map texture wrapping parameters?
+        glBindTexture(GL_TEXTURE_2D, 0);
 
-    GLenum attachment = depthMap ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0;
-    glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, *quadTexture, 0);
+        GLenum attachment = depthMap ? GL_DEPTH_ATTACHMENT : (GL_COLOR_ATTACHMENT0 + i);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, quadTextures[i], 0);
+
+        attachments[i] = attachment;
+    }
+
     if (depthMap)
     {
         glDrawBuffer(GL_NONE);
@@ -740,6 +725,7 @@ internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadText
     }
     else
     {
+        glDrawBuffers(numTextures, attachments);
         glGenRenderbuffers(1, rbo);
         glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
@@ -902,28 +888,34 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     transientInfo->numSamples = 4;
 
-    GLenum mainFramebufferStatus =
-        CreateMultisampledFramebuffer(width, height, &transientInfo->mainFBO, transientInfo->mainQuads,
-                                      &transientInfo->mainRBO, transientInfo->numSamples);
+    // TODO: make only the position buffer an HDR buffer, the normal and albedo buffers don't need the
+    // extra capacity.
+    GLenum mainFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->mainFBO, transientInfo->mainQuads,
+                                                     3, &transientInfo->mainRBO, false, true);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO,
-                                                         &transientInfo->rearViewQuad, &transientInfo->rearViewRBO);
+                                                         &transientInfo->rearViewQuad, 1, &transientInfo->rearViewRBO);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
+    GLenum lightingFramebufferStatus =
+        CreateFramebuffer(width, height, &transientInfo->lightingFBO, transientInfo->lightingQuads, 2,
+                          &transientInfo->lightingRBO, false, true);
+    myAssert(lightingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
     GLenum postProcessingFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
+        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad, 1,
                           &transientInfo->postProcessingRBO, false, true);
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum dirDepthMapFramebufferStatus =
         CreateFramebuffer(DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO,
-                          &transientInfo->dirShadowMapQuad, &transientInfo->dirShadowMapRBO, true);
+                          &transientInfo->dirShadowMapQuad, 1, &transientInfo->dirShadowMapRBO, true);
     myAssert(dirDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum spotDepthMapFramebufferStatus =
         CreateFramebuffer(DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO,
-                          &transientInfo->spotShadowMapQuad, &transientInfo->spotShadowMapRBO, true);
+                          &transientInfo->spotShadowMapQuad, 1, &transientInfo->spotShadowMapRBO, true);
     myAssert(spotDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
@@ -936,7 +928,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     for (u32 i = 0; i < 2; i++)
     {
         GLenum gaussianFramebufferStatus =
-            CreateFramebuffer(width, height, &transientInfo->gaussianFBOs[i], &transientInfo->gaussianQuads[i],
+            CreateFramebuffer(width, height, &transientInfo->gaussianFBOs[i], &transientInfo->gaussianQuads[i], 1,
                               &transientInfo->gaussianRBOs[i], false, true);
         myAssert(gaussianFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     }
@@ -1128,7 +1120,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->pointDepthMapShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->objectShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->gBufferShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
 
     FILE *rectFile;
@@ -1213,7 +1205,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curTexCubeIndex);
-        AddObjectToShaderPass(&transientInfo->objectShader, curTexCubeIndex);
+        AddObjectToShaderPass(&transientInfo->gBufferShader, curTexCubeIndex);
     }
 
     for (u32 wallIndex = 0; wallIndex < NUM_OBJECTS; wallIndex++)
@@ -1223,7 +1215,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curWallIndex);
-        AddObjectToShaderPass(&transientInfo->objectShader, curWallIndex);
+        AddObjectToShaderPass(&transientInfo->gBufferShader, curWallIndex);
     }
 
     drawingInfo->dirLight.direction =
@@ -1323,7 +1315,6 @@ extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *tran
     SaveShaderPass(file, &transientInfo->dirDepthMapShader);
     SaveShaderPass(file, &transientInfo->spotDepthMapShader);
     SaveShaderPass(file, &transientInfo->pointDepthMapShader);
-    SaveShaderPass(file, &transientInfo->objectShader);
     SaveShaderPass(file, &transientInfo->instancedObjectShader);
     SaveShaderPass(file, &transientInfo->colorShader);
     SaveShaderPass(file, &transientInfo->outlineShader);
@@ -1393,7 +1384,7 @@ internal bool HasNewVersion(ShaderProgram *program)
 
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
-    if (HasNewVersion(&info->objectShader) || HasNewVersion(&info->instancedObjectShader) ||
+    if (HasNewVersion(&info->lightingShader) || HasNewVersion(&info->instancedObjectShader) ||
         HasNewVersion(&info->colorShader) || HasNewVersion(&info->outlineShader) ||
         HasNewVersion(&info->textureShader) || HasNewVersion(&info->glassShader) ||
         HasNewVersion(&info->postProcessShader) || HasNewVersion(&info->skyboxShader) ||
@@ -1569,8 +1560,26 @@ internal void FlipImage(u8 *data, s32 width, s32 height, u32 bytesPerPixel, Aren
     ArenaPop(tempArena, stride);
 }
 
-internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                                      PersistentDrawingInfo *persistentInfo)
+internal void SetGBufferUniforms(u32 shaderProgram, PersistentDrawingInfo *persistentInfo, CameraInfo *cameraInfo)
+{
+    glUseProgram(shaderProgram);
+
+    SetShaderUniformFloat(shaderProgram, "material.shininess", persistentInfo->materialShininess);
+    SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
+    SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
+}
+
+internal void FillGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                          PersistentDrawingInfo *persistentInfo)
+{
+    u32 shaderProgram = transientInfo->gBufferShader.id;
+    SetGBufferUniforms(shaderProgram, persistentInfo, cameraInfo);
+
+    RenderShaderPass(&transientInfo->gBufferShader, transientInfo);
+}
+
+internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                                        PersistentDrawingInfo *persistentInfo)
 {
     glUseProgram(shaderProgram);
 
@@ -1617,23 +1626,23 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
 
     // TODO: figure out the best place to assign textures.
-    glActiveTexture(GL_TEXTURE5);
+    glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
 
-    glActiveTexture(GL_TEXTURE6);
+    glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, transientInfo->spotShadowMapQuad);
 
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
-        glActiveTexture(GL_TEXTURE7 + i);
+        glActiveTexture(GL_TEXTURE6 + i);
         glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->pointShadowMapQuad[i]);
     }
 }
 
-internal void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                                     PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
-                                     Arena *tempArena, bool dynamicEnvPass = false)
-{
+internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                                  PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
+                                  Arena *tempArena, bool dynamicEnvPass = false)
+{    
     // TODO: find a proper way to parameterize dynamic environment mapping. We only want certain
     // objects to reflect the environment, not all of them. It should depend on their shininess.
     local_persist EnvironmentMap dynamicEnvMap;
@@ -1712,10 +1721,27 @@ internal void RenderWithObjectShader(CameraInfo *cameraInfo, TransientDrawingInf
     }
 #endif
 
-    u32 shaderProgram = transientInfo->objectShader.id;
-    SetObjectShaderUniforms(shaderProgram, cameraInfo, transientInfo, persistentInfo);
+    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->lightingFBO);
+    glClearColor(1.f, 1.f, 1.f, 1.f);
+    glClear(GL_COLOR_BUFFER_BIT);
 
-    RenderShaderPass(&transientInfo->objectShader, transientInfo);
+    u32 shaderProgram = transientInfo->lightingShader.id;
+    glUseProgram(shaderProgram);
+    SetLightingShaderUniforms(shaderProgram, cameraInfo, transientInfo, persistentInfo);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[0]);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[1]);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[2]);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+
+    glm::mat4 modelMatrix = glm::mat4(1.f);
+    SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+    glBindVertexArray(transientInfo->mainQuadVao);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }
 
 internal void RenderWithGeometryShader(TransientDrawingInfo *transientInfo)
@@ -1845,8 +1871,9 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         // Point lights.
         RenderWithColorShader(transientInfo, persistentInfo);
 
-        // Objects.
-        RenderWithObjectShader(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, dynamicEnvPass);
+        // G-buffer pass.
+        FillGBuffer(cameraInfo, transientInfo, persistentInfo);
+
         // RenderWithGeometryShader(transientInfo);
 
         // Textured cubes.
@@ -2100,9 +2127,9 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glUseProgram(pointShaderProgram);
         SetShaderUniformVec3(pointShaderProgram, "lightPos", pointCameraInfo.pos);
         SetShaderUniformFloat(pointShaderProgram, "farPlane", pointFar);
-        u32 objectShaderProgram = transientInfo->objectShader.id;
-        glUseProgram(objectShaderProgram);
-        SetShaderUniformFloat(objectShaderProgram, "pointFar", pointFar);
+        u32 lightingShaderProgram = transientInfo->lightingShader.id;
+        glUseProgram(lightingShaderProgram);
+        SetShaderUniformFloat(lightingShaderProgram, "pointFar", pointFar);
         u32 instancedObjectShaderProgram = transientInfo->instancedObjectShader.id;
         glUseProgram(instancedObjectShaderProgram);
         SetShaderUniformFloat(instancedObjectShaderProgram, "pointFar", pointFar);
@@ -2130,10 +2157,13 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
     glm::mat4 modelMatrix = glm::mat4(1.f);
-    modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+
+    // Lighting pass.
+    ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena);
 
     // Apply Gaussian blur to brightness texture to generate bloom.
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
+    // TODO: review blitting since we are no longer using MSAA?
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->lightingFBO);
     glReadBuffer(GL_COLOR_ATTACHMENT1);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->gaussianFBOs[0]);
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -2160,7 +2190,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         gaussianQuad = transientInfo->gaussianQuads[!horizontal];
     }
 
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->lightingFBO);
     glReadBuffer(GL_COLOR_ATTACHMENT0);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->postProcessingFBO);
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -2187,7 +2217,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     SetShaderUniformFloat(shaderProgram, "gamma", persistentInfo->gamma);
     SetShaderUniformFloat(shaderProgram, "exposure", persistentInfo->exposure);
-    
+
     // Main quad.
     {
         glActiveTexture(GL_TEXTURE0);

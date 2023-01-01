@@ -188,7 +188,7 @@ struct Object
 
 struct ShaderProgram
 {
-    u32 id;
+    u32 id = 0;
     char vertexShaderFilename[64];
     FILETIME vertexShaderTime;
     char geometryShaderFilename[64];
@@ -209,10 +209,11 @@ struct TransientDrawingInfo
     Model models[MAX_MODELS];
     u32 numModels;
     
+    ShaderProgram gBufferShader;
+    ShaderProgram lightingShader;
     ShaderProgram dirDepthMapShader;
     ShaderProgram spotDepthMapShader;
     ShaderProgram pointDepthMapShader;
-    ShaderProgram objectShader;
     ShaderProgram instancedObjectShader;
     ShaderProgram colorShader;
     ShaderProgram outlineShader;
@@ -233,13 +234,17 @@ struct TransientDrawingInfo
     
     u32 mainQuadVao;
     u32 mainFBO;
-    u32 mainQuads[2];
+    u32 mainQuads[3];
     u32 mainRBO;
 
     u32 rearViewQuadVao;
     u32 rearViewFBO;
     u32 rearViewQuad;
     u32 rearViewRBO;
+    
+    u32 lightingQuads[2];
+    u32 lightingFBO;
+    u32 lightingRBO;
     
     u32 postProcessingFBO;
     u32 postProcessingQuad;

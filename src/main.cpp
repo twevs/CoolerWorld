@@ -87,7 +87,7 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
         glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT, DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, 0,
                      GL_DEPTH_COMPONENT, GL_FLOAT, NULL);
-        
+
         for (u32 i = 0; i < 2; i++)
         {
             glBindTexture(GL_TEXTURE_2D, transientInfo->gaussianQuads[i]);

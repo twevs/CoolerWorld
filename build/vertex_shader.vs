@@ -45,13 +45,6 @@ layout (location = 4) in vec3 aBitangent;
 out vec2 texCoords;
 out vec4 fragPosDirLightSpace;
 out vec4 fragPosSpotLightSpace;
-out vec3 cameraPosTS;
-out vec3 fragPosTS;
-out vec3 dirLightDirectionTS;
-out vec3 pointLightPosTS[NUM_POINTLIGHTS];
-out vec3 spotLightPosTS;
-out vec3 normalWS;
-out vec3 fragWorldPos;
 
 layout (std140, binding = 0) uniform Matrices
 {
@@ -71,7 +64,6 @@ uniform SpotLight spotLight;
 void main()
 {
     gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(aPos, 1.f);
-    normalWS = normalMatrix * aNormal;
     texCoords = aTexCoords;
 	fragPosDirLightSpace = dirLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
 	fragPosSpotLightSpace = spotLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
@@ -83,14 +75,4 @@ void main()
 	// vec3 bitangent = normalize(vec3(modelMatrix * vec4(aBitangent, 0.f)));
 	vec3 bitangent = cross(norm, tangent);
 	mat3 tbn = transpose(mat3(tangent, bitangent, norm));
-	
-	cameraPosTS = tbn * cameraPos;
-    fragWorldPos = vec3(modelMatrix * vec4(aPos, 1.f));
-	fragPosTS = tbn * fragWorldPos;
-	dirLightDirectionTS = tbn * dirLight.direction;
-	for (int i = 0; i < NUM_POINTLIGHTS; i++)
-	{
-		pointLightPosTS[i] = tbn * pointLights[i].position;
-	}
-	spotLightPosTS = tbn * spotLight.position;
 }

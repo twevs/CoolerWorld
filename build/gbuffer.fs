@@ -10,8 +10,8 @@ struct Material
 };
 
 layout (location = 0) out vec4 positionBuffer; // Alpha = specular.
-layout (location = 1) out vec4 normalBuffer; // Alpha reserved for handedness.
-layout (location = 2) out vec4 albedoBuffer; // Alpha = shininess.
+layout (location = 1) out vec4 normalBuffer;   // Alpha reserved for handedness.
+layout (location = 2) out vec4 albedoBuffer;   // Alpha = shininess.
 
 #define NUM_POINTLIGHTS 4
 

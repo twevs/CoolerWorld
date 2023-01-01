@@ -25,9 +25,6 @@ layout (std140, binding = 0) uniform Matrices
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;
 uniform vec3 cameraPos;
-uniform DirLight dirLight;
-uniform PointLight pointLights[NUM_POINTLIGHTS];
-uniform SpotLight spotLight;
 
 void main()
 {
