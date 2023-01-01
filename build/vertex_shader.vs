@@ -43,8 +43,6 @@ layout (location = 4) in vec3 aBitangent;
 #define NUM_POINTLIGHTS 4
 
 out vec2 texCoords;
-out vec4 fragPosDirLightSpace;
-out vec4 fragPosSpotLightSpace;
 
 layout (std140, binding = 0) uniform Matrices
 {
@@ -65,8 +63,6 @@ void main()
 {
     gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(aPos, 1.f);
     texCoords = aTexCoords;
-	fragPosDirLightSpace = dirLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
-	fragPosSpotLightSpace = spotLightSpaceMatrix * modelMatrix * vec4(aPos, 1.f);
 	
 	// NOTE: Assimp's aiProcess_CalcTangentSpace produces unit vectors.
 	vec3 tangent = normalize(vec3(modelMatrix * vec4(aTangent, 0.f)));

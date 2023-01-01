@@ -1401,24 +1401,16 @@ internal void RenderObject(Object *object, u32 shaderProgram, f32 yRot = 0.f, fl
 
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, object->textures.diffuse.id);
-
     glActiveTexture(GL_TEXTURE1);
     glBindTexture(GL_TEXTURE_2D, object->textures.specular.id);
-
     glActiveTexture(GL_TEXTURE2);
     glBindTexture(GL_TEXTURE_2D, object->textures.normals.id);
-
     glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_2D, object->textures.displacement.id);
     if (object->textures.displacement.id > 0)
     {
-        glBindTexture(GL_TEXTURE_2D, object->textures.displacement.id);
         SetShaderUniformInt(shaderProgram, "displace", 1);
     }
-    else
-    {
-        glBindTexture(GL_TEXTURE_2D, 0);
-    }
-    // TODO: skybox.
 
     // Model matrix: transforms vertices from local to world space.
     glm::mat4 modelMatrix = glm::mat4(1.f);
@@ -1498,13 +1490,6 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
         {
             glActiveTexture(GL_TEXTURE3);
             glBindTexture(GL_TEXTURE_2D, 0);
-        }
-
-        if (skyboxTexture > 0)
-        {
-            // Skybox contribution.
-            glActiveTexture(GL_TEXTURE4);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
         }
 
         if (numInstances == 1)
@@ -1624,14 +1609,19 @@ internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInf
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
-
-    // TODO: figure out the best place to assign textures.
+    
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[0]);
+    glActiveTexture(GL_TEXTURE1);
+    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[1]);
+    glActiveTexture(GL_TEXTURE2);
+    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[2]);
+    glActiveTexture(GL_TEXTURE3);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
     glActiveTexture(GL_TEXTURE4);
     glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
-
     glActiveTexture(GL_TEXTURE5);
     glBindTexture(GL_TEXTURE_2D, transientInfo->spotShadowMapQuad);
-
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
         glActiveTexture(GL_TEXTURE6 + i);
@@ -1728,15 +1718,6 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     u32 shaderProgram = transientInfo->lightingShader.id;
     glUseProgram(shaderProgram);
     SetLightingShaderUniforms(shaderProgram, cameraInfo, transientInfo, persistentInfo);
-
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[0]);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[1]);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[2]);
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
 
     glm::mat4 modelMatrix = glm::mat4(1.f);
     SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);

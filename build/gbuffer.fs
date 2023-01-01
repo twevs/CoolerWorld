@@ -61,8 +61,8 @@ void main()
 {    
     vec3 cameraDir = normalize(cameraPosTS - fragPosTS);
     vec2 displacedTexCoords = displace ? GetDisplacedTexCoords(cameraDir) : texCoords;
-    if (displacedTexCoords.x > 1.f || displacedTexCoords.y > 1.f ||
-        displacedTexCoords.x < 0.f || displacedTexCoords.y < 0.f)
+    if (any(lessThan(displacedTexCoords, vec2(0.f)))
+        || any(greaterThan(displacedTexCoords, vec2(1.f))))
     {
         discard;
     }

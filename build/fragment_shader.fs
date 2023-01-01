@@ -47,13 +47,20 @@ layout (location = 1) out vec4 brightColor;
 #define NUM_POINTLIGHTS 4
 
 in vec2 texCoords;
-in vec4 fragPosDirLightSpace;
-in vec4 fragPosSpotLightSpace;
+
+layout (std140, binding = 0) uniform Matrices
+{
+	mat4 viewMatrix;
+	mat4 projectionMatrix;
+	mat4 dirLightSpaceMatrix;
+	mat4 spotLightSpaceMatrix;
+    mat4 pointShadowMatrices[6];
+};
 
 uniform GBuffer gBuffer;
 
 uniform DirLight dirLight;
-vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir, vec2 inTexCoords);
+vec3 CalcDirLight(DirLight light, vec3 fragPos, vec3 normal, vec3 cameraDir, vec2 inTexCoords);
 
 uniform PointLight pointLights[NUM_POINTLIGHTS];
 vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 fragPos, vec3 normal, vec3 cameraDir, vec2 inTexCoords);
@@ -139,7 +146,7 @@ void main()
     vec3 cameraDir = normalize(cameraPos - fragPos);
     
     vec3 norm = texture(gBuffer.normal, texCoords).rgb;
-    vec3 dirContribution = CalcDirLight(dirLight, norm, cameraDir, texCoords);
+    vec3 dirContribution = CalcDirLight(dirLight, fragPos, norm, cameraDir, texCoords);
     vec3 pointsContribution = CalcPointLights(pointLights, fragPos, norm, cameraDir, texCoords);
     vec3 spotContribution = CalcSpotLight(spotLight, fragPos, norm, cameraDir, texCoords);
     vec3 envContribution = CalcEnvironment(norm, cameraDir);
@@ -159,7 +166,7 @@ void main()
     }
 }
 
-vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir, vec2 inTexCoords)
+vec3 CalcDirLight(DirLight light, vec3 fragPos, vec3 normal, vec3 cameraDir, vec2 inTexCoords)
 {
     // Ambient contribution.
     vec3 ambient = texture(gBuffer.albedo, inTexCoords).rgb * light.ambient;
@@ -178,6 +185,7 @@ vec3 CalcDirLight(DirLight light, vec3 normal, vec3 cameraDir, vec2 inTexCoords)
     float spec = pow(max(dot(specVec1, specVec2), 0.f), shininess);
     vec3 specular = texture(gBuffer.position, inTexCoords).a * spec * light.specular;
 
+	vec4 fragPosDirLightSpace = dirLightSpaceMatrix * vec4(fragPos, 1.f);
     return ambient + (1.f - CalcShadow(fragPosDirLightSpace, normal, lightDir, dirDepthMap)) * (diffuse + specular);
 }
 
@@ -240,6 +248,7 @@ vec3 CalcSpotLight(SpotLight light, vec3 fragPos, vec3 normal, vec3 cameraDir, v
     float spec = pow(max(dot(specVec1, specVec2), 0.f), shininess);
     vec3 specular = texture(gBuffer.position, inTexCoords).a * spec * light.specular;
 
+	vec4 fragPosSpotLightSpace = spotLightSpaceMatrix * vec4(fragPos, 1.f);
     return intensity * (1.f - CalcShadow(fragPosSpotLightSpace, normal, lightDir, spotDepthMap)) * (diffuse + specular);
 }
 
