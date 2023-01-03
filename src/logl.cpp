@@ -1353,7 +1353,7 @@ internal glm::vec3 GetCameraForwardVector(CameraInfo *cameraInfo)
 {
     glm::vec4 cameraForwardVec = GetCameraWorldRotation(cameraInfo) * glm::vec4(0.f, 0.f, -1.f, 0.f);
 
-    return glm::vec3(cameraForwardVec);
+    return glm::normalize(glm::vec3(cameraForwardVec));
 }
 
 extern "C" __declspec(dllexport) void ProvideCameraVectors(CameraInfo *cameraInfo)
@@ -1782,6 +1782,29 @@ internal void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo
     glDisable(GL_BLEND);
 }
 
+internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
+{
+    glm::vec3 cameraForwardVec = GetCameraForwardVector(cameraInfo);
+    glm::vec3 cameraTarget = cameraInfo->pos + cameraForwardVec;
+
+    glm::vec3 cameraDirection = glm::normalize(cameraInfo->pos - cameraTarget);
+
+    glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
+    glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
+    return glm::normalize(glm::cross(cameraDirection, cameraRightVec));
+}
+
+internal void GetRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 *outViewMatrix, glm::mat4 *outProjectionMatrix)
+{
+    glm::vec3 cameraTarget = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
+    glm::vec3 cameraUpVec = GetCameraUpVector(cameraInfo);
+    f32 nearPlaneDistance = .1f;
+    f32 farPlaneDistance = 150.f;
+    *outProjectionMatrix =
+        glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, nearPlaneDistance, farPlaneDistance);
+    *outViewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
+}
+
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                u32 fbo, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass, RenderPassType passType)
 {
@@ -1792,15 +1815,6 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glStencilMask(0xff);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     glStencilMask(0x00);
-
-    glm::vec3 cameraForwardVec = glm::normalize(GetCameraForwardVector(cameraInfo));
-    glm::vec3 cameraTarget = cameraInfo->pos + cameraForwardVec;
-
-    glm::vec3 cameraDirection = glm::normalize(cameraInfo->pos - cameraTarget);
-
-    glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
-    glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
-    glm::vec3 cameraUpVec = glm::normalize(glm::cross(cameraDirection, cameraRightVec));
 
     // TODO: move these calculations out since they don't depend on camera placement so we don't
     // need to do them every time the scene is drawn? Also it means the buffer data gets overwritten
@@ -1814,17 +1828,14 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         glm::ortho(-10.f, 10.f, -10.f, 10.f, dirLightNearPlaneDistance, dirLightFarPlaneDistance);
     glm::mat4 dirLightSpaceMatrix = dirLightProjectionMatrix * dirLightViewMatrix;
 
-    f32 nearPlaneDistance = .1f;
-    f32 farPlaneDistance = 150.f;
-    glm::mat4 projectionMatrix =
-        glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, nearPlaneDistance, farPlaneDistance);
+    glm::mat4 viewMatrix, projectionMatrix;
+    GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+
     f32 spotLightNearPlaneDistance = .1f;
     f32 spotLightFarPlaneDistance = 150.f;
     glm::vec3 spotEye = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
-    glm::mat4 spotLightViewMatrix = glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), cameraUpVec);
+    glm::mat4 spotLightViewMatrix = glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), GetCameraUpVector(cameraInfo));
     glm::mat4 spotLightSpaceMatrix = projectionMatrix * spotLightViewMatrix;
-
-    glm::mat4 viewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
@@ -1852,31 +1863,27 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         // Point lights.
         RenderWithColorShader(transientInfo, persistentInfo);
 
+        // Deferred skybox rendering is achieved thus:
+        // 1. When drawing geometry, set stencil value to 1.
+        // 2. Execute lighting pass on geometry.
+        // 3. Render skybox where stencil value is 0.
+        glEnable(GL_STENCIL_TEST);
+        glStencilMask(0xff);
+        glStencilFunc(GL_ALWAYS, 1, 0xff);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        
         // G-buffer pass.
         FillGBuffer(cameraInfo, transientInfo, persistentInfo);
-
+        
+        glDisable(GL_STENCIL_TEST);
+        
         // RenderWithGeometryShader(transientInfo);
 
         // Textured cubes.
         // RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
 
         // Windows.
-        // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
-
-        // Skybox.
-        {
-            u32 shaderProgram = transientInfo->skyboxShader.id;
-            glUseProgram(shaderProgram);
-
-            glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
-            glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
-
-            glBindVertexArray(transientInfo->cubeVao);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
-
-            glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-        }
+        // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);        
     }
 }
 
@@ -2034,6 +2041,13 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
+internal void SetQuadProjectionViewMatrix()
+{
+    glm::mat4 identity = glm::mat4(1.f);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
+    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
+}
+
 extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *running,
                                                  TransientDrawingInfo *transientInfo,
                                                  PersistentDrawingInfo *persistentInfo, CameraInfo *cameraInfo,
@@ -2132,15 +2146,44 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // Rear-view pass.
     DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, window, listArena, tempArena);
 
-    // Setup for rendering quads.
     glDisable(GL_DEPTH_TEST);
-    glm::mat4 identity = glm::mat4(1.f);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
-    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
-    glm::mat4 modelMatrix = glm::mat4(1.f);
-
+    SetQuadProjectionViewMatrix();
+    
     // Lighting pass.
     ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena);
+    
+    // Draw skybox where geometry rendering pass did not set stencil value to 1.
+    {
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->lightingFBO);
+        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+        
+        glEnable(GL_STENCIL_TEST);
+        glStencilMask(0x00);
+        glStencilFunc(GL_NOTEQUAL, 1, 0xff);
+        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+        
+        u32 shaderProgram = transientInfo->skyboxShader.id;
+        glUseProgram(shaderProgram);
+
+        glm::mat4 viewMatrix, projectionMatrix;
+        GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+        glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
+        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
+        glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
+
+        glBindVertexArray(transientInfo->cubeVao);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+
+        glDrawBuffer(GL_COLOR_ATTACHMENT0);
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    
+        glDisable(GL_STENCIL_TEST);
+    }
+    
+    SetQuadProjectionViewMatrix();
+    glm::mat4 modelMatrix = glm::mat4(1.f);
 
     // Apply Gaussian blur to brightness texture to generate bloom.
     // TODO: review blitting since we are no longer using MSAA?
