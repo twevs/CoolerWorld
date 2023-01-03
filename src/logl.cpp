@@ -282,20 +282,7 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
         return false;
     }
 
-    glUseProgram(info->objectShader.id);
-    SetShaderUniformSampler(info->objectShader.id, "material.diffuse", 0);
-    SetShaderUniformSampler(info->objectShader.id, "material.specular", 1);
-    SetShaderUniformSampler(info->objectShader.id, "material.normals", 2);
-    SetShaderUniformSampler(info->objectShader.id, "material.displacement", 3);
-    SetShaderUniformSampler(info->objectShader.id, "skybox", 4);
-    SetShaderUniformSampler(info->objectShader.id, "dirDepthMap", 5);
-    SetShaderUniformSampler(info->objectShader.id, "spotDepthMap", 6);
-    for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
-    {
-        char uniformName[32];
-        sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->objectShader.id, uniformName, 7 + i);
-    }
+    // TODO: update instanced rendering.
     glUseProgram(info->instancedObjectShader.id);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.diffuse", 0);
     SetShaderUniformSampler(info->instancedObjectShader.id, "material.specular", 1);
@@ -314,17 +301,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     glUseProgram(info->textureShader.id);
     SetShaderUniformSampler(info->textureShader.id, "tex", 0);
     
-    glUseProgram(info->postProcessShader.id);
-    SetShaderUniformSampler(info->postProcessShader.id, "scene", 0);
-    SetShaderUniformSampler(info->postProcessShader.id, "bloomBlur", 1);
-
     glUseProgram(info->glassShader.id);
     SetShaderUniformSampler(info->glassShader.id, "tex", 0);
     SetShaderUniformSampler(info->glassShader.id, "skybox", 1);
-
-    glUseProgram(info->skyboxShader.id);
-    SetShaderUniformSampler(info->skyboxShader.id, "skybox", 0);
-
+    
     return true;
 }
 
@@ -369,6 +349,7 @@ internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrap
 
     u32 texture;
     glGenTextures(1, &texture);
+    glObjectLabel(GL_TEXTURE, texture, (s32)strlen(filename), filename);
     glBindTexture(GL_TEXTURE_2D, texture);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
@@ -685,6 +666,9 @@ internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u
     glGenTextures(2, quadTextures);
     for (u32 i = 0; i < 2; i++)
     {
+        char label[32];
+        sprintf_s(label, "Multisampled framebuffer %i", i);
+        glObjectLabel(GL_TEXTURE, quadTextures[i], (s32)strlen(label), label);
         glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, quadTextures[i]);
         glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, numSamples, GL_RGBA16F, width, height, GL_TRUE);
         // TODO: texture parameters?
@@ -704,7 +688,7 @@ internal GLenum CreateMultisampledFramebuffer(s32 width, s32 height, u32 *fbo, u
     return glCheckFramebufferStatus(GL_FRAMEBUFFER);
 }
 
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false,
+internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 *fbo, u32 *quadTexture, u32 *rbo, bool depthMap = false,
                                   bool hdr = false)
 {
     myAssert(!(depthMap && hdr));
@@ -713,6 +697,7 @@ internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadText
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
 
     glGenTextures(1, quadTexture);
+    glObjectLabel(GL_TEXTURE, *quadTexture, (s32)strlen(label), label);
     glBindTexture(GL_TEXTURE_2D, *quadTexture);
     GLenum internalFormat = depthMap ? GL_DEPTH_COMPONENT : hdr ? GL_RGBA16F : GL_RGB;
     GLenum type = (depthMap || hdr) ? GL_FLOAT : GL_UNSIGNED_BYTE;
@@ -872,6 +857,8 @@ internal void SetUpAsteroids(Model *asteroid)
 internal GLenum CreateDepthCubemap(u32 *depthCubemap, u32 *depthCubemapFBO)
 {
     glGenTextures(1, depthCubemap);
+    char label[] = "Depth cubemap";
+    glObjectLabel(GL_TEXTURE, *depthCubemap, (s32)strlen(label), label);
     glBindTexture(GL_TEXTURE_CUBE_MAP, *depthCubemap);
     for (u32 i = 0; i < 6; i++)
     {
@@ -907,22 +894,22 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
                                       &transientInfo->mainRBO, transientInfo->numSamples);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO,
+    GLenum rearViewFramebufferStatus = CreateFramebuffer("Rear view", width, height, &transientInfo->rearViewFBO,
                                                          &transientInfo->rearViewQuad, &transientInfo->rearViewRBO);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum postProcessingFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
+        CreateFramebuffer("Post-process", width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad,
                           &transientInfo->postProcessingRBO, false, true);
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum dirDepthMapFramebufferStatus =
-        CreateFramebuffer(DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO,
+        CreateFramebuffer("Directioanl shadow map", DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO,
                           &transientInfo->dirShadowMapQuad, &transientInfo->dirShadowMapRBO, true);
     myAssert(dirDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum spotDepthMapFramebufferStatus =
-        CreateFramebuffer(DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO,
+        CreateFramebuffer("Spot shadow map", DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO,
                           &transientInfo->spotShadowMapQuad, &transientInfo->spotShadowMapRBO, true);
     myAssert(spotDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
@@ -936,7 +923,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     for (u32 i = 0; i < 2; i++)
     {
         GLenum gaussianFramebufferStatus =
-            CreateFramebuffer(width, height, &transientInfo->gaussianFBOs[i], &transientInfo->gaussianQuads[i],
+            CreateFramebuffer("Gaussian", width, height, &transientInfo->gaussianFBOs[i], &transientInfo->gaussianQuads[i],
                               &transientInfo->gaussianRBOs[i], false, true);
         myAssert(gaussianFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     }
@@ -946,6 +933,8 @@ internal void CreateSkybox(TransientDrawingInfo *transientInfo)
 {
     u32 skyboxTexture;
     glGenTextures(1, &skyboxTexture);
+    char skyboxName[] = "Skybox";
+    glObjectLabel(GL_TEXTURE, transientInfo->skyboxTexture, (s32)strlen(skyboxName), skyboxName);
     glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
 
     const char *skyboxImages[] = {"space_skybox/right.png",  "space_skybox/left.png",  "space_skybox/top.png",
@@ -1408,24 +1397,18 @@ internal void RenderObject(Object *object, u32 shaderProgram, f32 yRot = 0.f, fl
 {
     glBindVertexArray(object->VAO);
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, object->textures.diffuse.id);
+    glBindTextureUnit(10, object->textures.diffuse.id);
+    glBindTextureUnit(11, object->textures.specular.id);
+    glBindTextureUnit(12, object->textures.normals.id);
 
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, object->textures.specular.id);
-
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, object->textures.normals.id);
-
-    glActiveTexture(GL_TEXTURE3);
     if (object->textures.displacement.id > 0)
     {
-        glBindTexture(GL_TEXTURE_2D, object->textures.displacement.id);
+        glBindTextureUnit(13, object->textures.displacement.id);
         SetShaderUniformInt(shaderProgram, "displace", 1);
     }
     else
     {
-        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindTextureUnit(13, 0);
     }
     // TODO: skybox.
 
@@ -1496,8 +1479,7 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
         u32 textureSlot = 0;
         for (; textureSlot < mesh->numTextures; textureSlot++)
         {
-            glActiveTexture(GL_TEXTURE0 + textureSlot);
-            glBindTexture(GL_TEXTURE_2D, mesh->textures[textureSlot].id);
+            glBindTextureUnit(10 + textureSlot, mesh->textures[textureSlot].id);
         }
         if (textureSlot == 4)
         {
@@ -1505,15 +1487,13 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
         }
         else
         {
-            glActiveTexture(GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            glBindTextureUnit(13, 0);
         }
 
         if (skyboxTexture > 0)
         {
             // Skybox contribution.
-            glActiveTexture(GL_TEXTURE4);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
+            glBindTextureUnit(14, skyboxTexture);
         }
 
         if (numInstances == 1)
@@ -1617,16 +1597,12 @@ internal void SetObjectShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo,
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
 
     // TODO: figure out the best place to assign textures.
-    glActiveTexture(GL_TEXTURE5);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
-
-    glActiveTexture(GL_TEXTURE6);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->spotShadowMapQuad);
+    glBindTextureUnit(15, transientInfo->dirShadowMapQuad);
+    glBindTextureUnit(16, transientInfo->spotShadowMapQuad);
 
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
-        glActiveTexture(GL_TEXTURE7 + i);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->pointShadowMapQuad[i]);
+        glBindTextureUnit(17 + i, transientInfo->pointShadowMapQuad[i]);
     }
 }
 
@@ -1751,8 +1727,8 @@ internal void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo
     u32 shaderProgram = transientInfo->glassShader.id;
     glUseProgram(shaderProgram);
 
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+    // TODO: set binding index in glass shader.
+    glBindTextureUnit(GL_TEXTURE1, transientInfo->skyboxTexture);
 
     SkipList list = CreateNewList(listArena);
     // TODO: account for in refactor.
@@ -1864,8 +1840,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
             glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
 
             glBindVertexArray(transientInfo->cubeVao);
-            glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+            glBindTextureUnit(10, transientInfo->skyboxTexture);
 
             glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
         }
@@ -2148,8 +2123,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->gaussianFBOs[horizontal]);
         SetShaderUniformInt(gaussianShader, "horizontal", horizontal);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, gaussianQuad);
+        glBindTextureUnit(10, gaussianQuad);
         horizontal = !horizontal;
 
         glBindVertexArray(transientInfo->mainQuadVao);
@@ -2190,10 +2164,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     
     // Main quad.
     {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, transientInfo->postProcessingQuad);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, transientInfo->gaussianQuads[0]);
+        glBindTextureUnit(10, transientInfo->postProcessingQuad);
+        glBindTextureUnit(11, transientInfo->gaussianQuads[0]);
 
         glBindVertexArray(transientInfo->mainQuadVao);
 
@@ -2203,12 +2175,10 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     // Rear-view quad.
     {
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
+        glBindTextureUnit(10, transientInfo->rearViewQuad);
         // NOTE: for now we don't bother with bloom in the rear-view mirror, since our bloom blur buffer
         // is of the same size as the main framebuffer.
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindTextureUnit(11, 0);
 
         glBindVertexArray(transientInfo->rearViewQuadVao);
 
