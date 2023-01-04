@@ -691,16 +691,20 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
     myAssert(numTextures <= MAX_ATTACHMENTS);
 
     glGenFramebuffers(1, fbo);
-    char objectLabel[64];
-    sprintf_s(objectLabel, "Framebuffer: %s", label);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
-    glObjectLabel(GL_FRAMEBUFFER, *fbo, -1, objectLabel);
+    char framebufferLabel[64];
+    sprintf_s(framebufferLabel, "Framebuffer: %s", label);
+    glObjectLabel(GL_FRAMEBUFFER, *fbo, -1, framebufferLabel);
 
     glGenTextures(numTextures, quadTextures);
     GLenum attachments[MAX_ATTACHMENTS] = {};
     for (u32 i = 0; i < numTextures; i++)
     {
         glBindTexture(GL_TEXTURE_2D, quadTextures[i]);
+        char textureLabel[64];
+        sprintf_s(textureLabel, "Framebuffer: %s - Attached texture %i", label, i);
+        glObjectLabel(GL_TEXTURE, quadTextures[i], -1, textureLabel);
+
         GLenum internalFormat = depthMap ? GL_DEPTH_COMPONENT : hdr ? GL_RGBA16F : GL_RGB;
         GLenum type = (depthMap || hdr) ? GL_FLOAT : GL_UNSIGNED_BYTE;
         GLenum format = hdr ? GL_RGBA : internalFormat;
@@ -734,6 +738,9 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
         glDrawBuffers(numTextures, attachments);
         glGenRenderbuffers(1, rbo);
         glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
+        char renderbufferLabel[64];
+        sprintf_s(renderbufferLabel, "Renderbuffer: %s", label);
+        glObjectLabel(GL_RENDERBUFFER, *rbo, -1, renderbufferLabel);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
         glBindRenderbuffer(GL_RENDERBUFFER, 0);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
@@ -864,9 +871,9 @@ internal void SetUpAsteroids(Model *asteroid)
 internal GLenum CreateDepthCubemap(const char *label, u32 *depthCubemap, u32 *depthCubemapFBO)
 {
     glGenTextures(1, depthCubemap);
+    glBindTexture(GL_TEXTURE_CUBE_MAP, *depthCubemap);
     char textureLabel[64];
     sprintf_s(textureLabel, "Texture (cube map): %s", label);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, *depthCubemap);
     glObjectLabel(GL_TEXTURE, *depthCubemap, -1, textureLabel);
     for (u32 i = 0; i < 6; i++)
     {
@@ -880,9 +887,9 @@ internal GLenum CreateDepthCubemap(const char *label, u32 *depthCubemap, u32 *de
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     glGenFramebuffers(1, depthCubemapFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, *depthCubemapFBO);
     char framebufferLabel[64];
     sprintf_s(framebufferLabel, "Framebuffer (cube map): %s", label);
-    glBindFramebuffer(GL_FRAMEBUFFER, *depthCubemapFBO);
     glObjectLabel(GL_FRAMEBUFFER, *depthCubemapFBO, -1, framebufferLabel);
     glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, *depthCubemap, 0);
     glDrawBuffer(GL_NONE);
@@ -954,8 +961,8 @@ internal void CreateSkybox(TransientDrawingInfo *transientInfo)
 {
     u32 skyboxTexture;
     glGenTextures(1, &skyboxTexture);
-    char label[] = "Texture (cube map): skybox";
     glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
+    char label[] = "Texture (cube map): skybox";
     glObjectLabel(GL_TEXTURE, skyboxTexture, -1, label);
 
     const char *skyboxImages[] = {"space_skybox/right.png",  "space_skybox/left.png",  "space_skybox/top.png",
@@ -1250,8 +1257,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     drawingInfo->initialized = true;
 
     glGenBuffers(1, &transientInfo->matricesUBO);
-    char label[] = "UBO: matrices";
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
+    char label[] = "UBO: matrices";
     glObjectLabel(GL_BUFFER, transientInfo->matricesUBO, -1, label);
     glBufferData(GL_UNIFORM_BUFFER, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
@@ -1653,6 +1660,8 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
                                   PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
                                   Arena *tempArena, bool dynamicEnvPass = false)
 {
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Lighting pass");
+
     // TODO: find a proper way to parameterize dynamic environment mapping. We only want certain
     // objects to reflect the environment, not all of them. It should depend on their shininess.
     local_persist EnvironmentMap dynamicEnvMap;
@@ -1672,6 +1681,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
 
             glGenTextures(1, &dynamicEnvMap.skyboxTexture);
             glBindTexture(GL_TEXTURE_CUBE_MAP, dynamicEnvMap.skyboxTexture);
+            glObjectLabel(GL_TEXTURE, dynamicEnvMap.skyboxTexture, -1, "Texture (cube map): dynamic environment map");
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
             glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1743,6 +1753,8 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
     glBindVertexArray(transientInfo->mainQuadVao);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+    glPopDebugGroup();
 }
 
 internal void RenderWithGeometryShader(TransientDrawingInfo *transientInfo)
@@ -1825,10 +1837,33 @@ internal void GetRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 *outViewMat
     *outViewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 }
 
+internal void GetPassTypeAsString(RenderPassType type, u32 bufSize, char *outString)
+{
+    switch (type)
+    {
+    case RenderPassType::Normal:
+        sprintf_s(outString, bufSize, "Geometry pass");
+        return;
+    case RenderPassType::DirShadowMap:
+        sprintf_s(outString, bufSize, "Directional shadow map pass");
+        return;
+    case RenderPassType::SpotShadowMap:
+        sprintf_s(outString, bufSize, "Spot shadow map pass");
+        return;
+    case RenderPassType::PointShadowMap:
+        sprintf_s(outString, bufSize, "Point shadow map pass");
+        return;
+    }
+    myAssert(false);
+}
+
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                u32 fbo, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass, RenderPassType passType)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    char passTypeAsString[32];
+    GetPassTypeAsString(passType, 32, passTypeAsString);
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, passTypeAsString);
 
     float *cc = persistentInfo->clearColor;
     glClearColor(cc[0], cc[1], cc[2], cc[3]);
@@ -1906,6 +1941,8 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         // Windows.
         // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
     }
+
+    glPopDebugGroup();
 }
 
 void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo)
@@ -2175,6 +2212,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     // Draw skybox where geometry rendering pass did not set stencil value to 1.
     {
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Skybox pass");
+
         glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->lightingFBO);
         glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_STENCIL_BUFFER_BIT, GL_NEAREST);
@@ -2201,12 +2240,15 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
 
         glDisable(GL_STENCIL_TEST);
+
+        glPopDebugGroup();
     }
 
     SetQuadProjectionViewMatrix();
     glm::mat4 modelMatrix = glm::mat4(1.f);
 
     // Apply Gaussian blur to brightness texture to generate bloom.
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Gaussian blur for bloom");
     // TODO: review blitting since we are no longer using MSAA?
     glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->lightingFBO);
     glReadBuffer(GL_COLOR_ATTACHMENT1);
@@ -2234,6 +2276,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
         gaussianQuad = transientInfo->gaussianQuads[!horizontal];
     }
+    glPopDebugGroup();
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->lightingFBO);
     glReadBuffer(GL_COLOR_ATTACHMENT0);
@@ -2265,6 +2308,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     // Main quad.
     {
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Main quad post-processing");
+
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, transientInfo->postProcessingQuad);
         glActiveTexture(GL_TEXTURE1);
@@ -2274,10 +2319,14 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
         SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+        glPopDebugGroup();
     }
 
     // Rear-view quad.
     {
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Rear-view post-processing");
+
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
         // NOTE: for now we don't bother with bloom in the rear-view mirror, since our bloom blur buffer
@@ -2289,6 +2338,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
         SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+
+        glPopDebugGroup();
     }
     glEnable(GL_DEPTH_TEST);
 

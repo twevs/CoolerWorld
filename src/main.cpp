@@ -423,6 +423,10 @@ void CheckForNewDLL(HWND window, FILETIME *lastFileTime)
 void GLAPIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
                               const GLchar *message, const void *userParam)
 {
+    if (source == GL_DEBUG_SOURCE_APPLICATION)
+    {
+        return;
+    }
     DebugPrintA(message);
     myAssert(false);
 }
