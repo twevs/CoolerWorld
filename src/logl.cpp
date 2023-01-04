@@ -1222,10 +1222,10 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
     }
 
+    Textures cubeTextures = {};
+    cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
     for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
     {
-        Textures cubeTextures = {};
-        cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
         u32 curTexCubeIndex = AddObject(transientInfo, transientInfo->cubeVao, 36, CreateRandomVec3(), &cubeTextures);
         AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
@@ -1233,9 +1233,9 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->gBufferShader, curTexCubeIndex);
     }
 
+    Textures wallTextures = CreateTextures("bricks2.jpg", "", "bricks2_normal.jpg", "bricks2_disp.jpg");
     for (u32 wallIndex = 0; wallIndex < NUM_OBJECTS; wallIndex++)
     {
-        Textures wallTextures = CreateTextures("bricks2.jpg", "", "bricks2_normal.jpg", "bricks2_disp.jpg");
         u32 curWallIndex = AddObject(transientInfo, transientInfo->mainQuadVao, 6, CreateRandomVec3(), &wallTextures);
         AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curWallIndex);
