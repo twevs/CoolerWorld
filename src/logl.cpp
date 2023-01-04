@@ -373,6 +373,9 @@ internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrap
     u32 texture;
     glGenTextures(1, &texture);
     glBindTexture(GL_TEXTURE_2D, texture);
+    char label[64];
+    sprintf_s(label, "Texture: %s", filename);
+    glObjectLabel(GL_TEXTURE, texture, -1, label);
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
@@ -680,15 +683,18 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
 
 #define MAX_ATTACHMENTS 4
 
-internal GLenum CreateFramebuffer(s32 width, s32 height, u32 *fbo, u32 *quadTextures, u32 numTextures, u32 *rbo,
-                                  bool depthMap = false, bool hdr = false)
+internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 *fbo, u32 *quadTextures,
+                                  u32 numTextures, u32 *rbo, bool depthMap = false, bool hdr = false)
 {
     myAssert(!(depthMap && hdr));
     myAssert(!(depthMap && (numTextures > 1)));
     myAssert(numTextures <= MAX_ATTACHMENTS);
 
     glGenFramebuffers(1, fbo);
+    char objectLabel[64];
+    sprintf_s(objectLabel, "Framebuffer: %s", label);
     glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+    glObjectLabel(GL_FRAMEBUFFER, *fbo, -1, objectLabel);
 
     glGenTextures(numTextures, quadTextures);
     GLenum attachments[MAX_ATTACHMENTS] = {};
@@ -855,10 +861,13 @@ internal void SetUpAsteroids(Model *asteroid)
     FreeArena(tempArena);
 }
 
-internal GLenum CreateDepthCubemap(u32 *depthCubemap, u32 *depthCubemapFBO)
+internal GLenum CreateDepthCubemap(const char *label, u32 *depthCubemap, u32 *depthCubemapFBO)
 {
     glGenTextures(1, depthCubemap);
+    char textureLabel[64];
+    sprintf_s(textureLabel, "Texture (cube map): %s", label);
     glBindTexture(GL_TEXTURE_CUBE_MAP, *depthCubemap);
+    glObjectLabel(GL_TEXTURE, *depthCubemap, -1, textureLabel);
     for (u32 i = 0; i < 6; i++)
     {
         glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + i, 0, GL_DEPTH_COMPONENT, POINT_SHADOW_MAP_SIZE,
@@ -871,7 +880,10 @@ internal GLenum CreateDepthCubemap(u32 *depthCubemap, u32 *depthCubemapFBO)
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
     glGenFramebuffers(1, depthCubemapFBO);
+    char framebufferLabel[64];
+    sprintf_s(framebufferLabel, "Framebuffer (cube map): %s", label);
     glBindFramebuffer(GL_FRAMEBUFFER, *depthCubemapFBO);
+    glObjectLabel(GL_FRAMEBUFFER, *depthCubemapFBO, -1, framebufferLabel);
     glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, *depthCubemap, 0);
     glDrawBuffer(GL_NONE);
     glReadBuffer(GL_NONE);
@@ -890,46 +902,50 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     // TODO: make only the position buffer an HDR buffer, the normal and albedo buffers don't need the
     // extra capacity.
-    GLenum mainFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->mainFBO, transientInfo->mainQuads,
-                                                     3, &transientInfo->mainRBO, false, true);
+    GLenum mainFramebufferStatus = CreateFramebuffer("Main", width, height, &transientInfo->mainFBO,
+                                                     transientInfo->mainQuads, 3, &transientInfo->mainRBO, false, true);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum rearViewFramebufferStatus = CreateFramebuffer(width, height, &transientInfo->rearViewFBO,
+    GLenum rearViewFramebufferStatus = CreateFramebuffer("Rear-view", width, height, &transientInfo->rearViewFBO,
                                                          &transientInfo->rearViewQuad, 1, &transientInfo->rearViewRBO);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum lightingFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->lightingFBO, transientInfo->lightingQuads, 2,
+        CreateFramebuffer("Lighting pass", width, height, &transientInfo->lightingFBO, transientInfo->lightingQuads, 2,
                           &transientInfo->lightingRBO, false, true);
     myAssert(lightingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum postProcessingFramebufferStatus =
-        CreateFramebuffer(width, height, &transientInfo->postProcessingFBO, &transientInfo->postProcessingQuad, 1,
-                          &transientInfo->postProcessingRBO, false, true);
+        CreateFramebuffer("Post-processing", width, height, &transientInfo->postProcessingFBO,
+                          &transientInfo->postProcessingQuad, 1, &transientInfo->postProcessingRBO, false, true);
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum dirDepthMapFramebufferStatus =
-        CreateFramebuffer(DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO,
-                          &transientInfo->dirShadowMapQuad, 1, &transientInfo->dirShadowMapRBO, true);
+    GLenum dirDepthMapFramebufferStatus = CreateFramebuffer(
+        "Directional light shadow map", DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO,
+        &transientInfo->dirShadowMapQuad, 1, &transientInfo->dirShadowMapRBO, true);
     myAssert(dirDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum spotDepthMapFramebufferStatus =
-        CreateFramebuffer(DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO,
-                          &transientInfo->spotShadowMapQuad, 1, &transientInfo->spotShadowMapRBO, true);
+    GLenum spotDepthMapFramebufferStatus = CreateFramebuffer(
+        "Spot light shadow map", DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO,
+        &transientInfo->spotShadowMapQuad, 1, &transientInfo->spotShadowMapRBO, true);
     myAssert(spotDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
+        char label[32];
+        sprintf_s(label, "Point light depth map %i", i);
         GLenum pointDepthCubemapStatus =
-            CreateDepthCubemap(&transientInfo->pointShadowMapQuad[i], &transientInfo->pointShadowMapFBO[i]);
+            CreateDepthCubemap(label, &transientInfo->pointShadowMapQuad[i], &transientInfo->pointShadowMapFBO[i]);
         myAssert(pointDepthCubemapStatus == GL_FRAMEBUFFER_COMPLETE);
     }
 
     for (u32 i = 0; i < 2; i++)
     {
+        char label[32];
+        sprintf_s(label, "Gaussian ping-pong buffer %i", i);
         GLenum gaussianFramebufferStatus =
-            CreateFramebuffer(width, height, &transientInfo->gaussianFBOs[i], &transientInfo->gaussianQuads[i], 1,
-                              &transientInfo->gaussianRBOs[i], false, true);
+            CreateFramebuffer(label, width, height, &transientInfo->gaussianFBOs[i], &transientInfo->gaussianQuads[i],
+                              1, &transientInfo->gaussianRBOs[i], false, true);
         myAssert(gaussianFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     }
 }
@@ -938,7 +954,9 @@ internal void CreateSkybox(TransientDrawingInfo *transientInfo)
 {
     u32 skyboxTexture;
     glGenTextures(1, &skyboxTexture);
+    char label[] = "Texture (cube map): skybox";
     glBindTexture(GL_TEXTURE_CUBE_MAP, skyboxTexture);
+    glObjectLabel(GL_TEXTURE, skyboxTexture, -1, label);
 
     const char *skyboxImages[] = {"space_skybox/right.png",  "space_skybox/left.png",  "space_skybox/top.png",
                                   "space_skybox/bottom.png", "space_skybox/front.png", "space_skybox/back.png"};
@@ -1232,7 +1250,9 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     drawingInfo->initialized = true;
 
     glGenBuffers(1, &transientInfo->matricesUBO);
+    char label[] = "UBO: matrices";
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
+    glObjectLabel(GL_BUFFER, transientInfo->matricesUBO, -1, label);
     glBufferData(GL_UNIFORM_BUFFER, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
 
@@ -1609,7 +1629,7 @@ internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInf
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
 
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
-    
+
     glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[0]);
     glActiveTexture(GL_TEXTURE1);
@@ -1632,7 +1652,7 @@ internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInf
 internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
                                   PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
                                   Arena *tempArena, bool dynamicEnvPass = false)
-{    
+{
     // TODO: find a proper way to parameterize dynamic environment mapping. We only want certain
     // objects to reflect the environment, not all of them. It should depend on their shininess.
     local_persist EnvironmentMap dynamicEnvMap;
@@ -1834,7 +1854,8 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     f32 spotLightNearPlaneDistance = .1f;
     f32 spotLightFarPlaneDistance = 150.f;
     glm::vec3 spotEye = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
-    glm::mat4 spotLightViewMatrix = glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), GetCameraUpVector(cameraInfo));
+    glm::mat4 spotLightViewMatrix =
+        glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), GetCameraUpVector(cameraInfo));
     glm::mat4 spotLightSpaceMatrix = projectionMatrix * spotLightViewMatrix;
 
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
@@ -1871,19 +1892,19 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         glStencilMask(0xff);
         glStencilFunc(GL_ALWAYS, 1, 0xff);
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-        
+
         // G-buffer pass.
         FillGBuffer(cameraInfo, transientInfo, persistentInfo);
-        
+
         glDisable(GL_STENCIL_TEST);
-        
+
         // RenderWithGeometryShader(transientInfo);
 
         // Textured cubes.
         // RenderWithTextureShader(cameraInfo, transientInfo, persistentInfo);
 
         // Windows.
-        // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);        
+        // RenderWithGlassShader(cameraInfo, transientInfo, persistentInfo, listArena, tempArena);
     }
 }
 
@@ -2148,21 +2169,21 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     glDisable(GL_DEPTH_TEST);
     SetQuadProjectionViewMatrix();
-    
+
     // Lighting pass.
     ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena);
-    
+
     // Draw skybox where geometry rendering pass did not set stencil value to 1.
     {
         glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
         glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->lightingFBO);
         glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_STENCIL_BUFFER_BIT, GL_NEAREST);
-        
+
         glEnable(GL_STENCIL_TEST);
         glStencilMask(0x00);
         glStencilFunc(GL_NOTEQUAL, 1, 0xff);
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-        
+
         u32 shaderProgram = transientInfo->skyboxShader.id;
         glUseProgram(shaderProgram);
 
@@ -2178,10 +2199,10 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
         glDrawBuffer(GL_COLOR_ATTACHMENT0);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-    
+
         glDisable(GL_STENCIL_TEST);
     }
-    
+
     SetQuadProjectionViewMatrix();
     glm::mat4 modelMatrix = glm::mat4(1.f);
 
