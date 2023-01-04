@@ -1,13 +1,10 @@
 #version 450 core
     
-struct Material
-{
-    sampler2D diffuse;
-    sampler2D specular;
-    sampler2D normals;
-    sampler2D displacement;
-    float shininess;
-};
+layout (binding = 10) uniform sampler2D diffuse;
+layout (binding = 11) uniform sampler2D specular;
+layout (binding = 12) uniform sampler2D normals;
+layout (binding = 13) uniform sampler2D displacement;
+uniform float shininess;
 
 layout (location = 0) out vec4 positionBuffer; // Alpha = specular.
 layout (location = 1) out vec4 normalBuffer;   // Alpha reserved for handedness.
@@ -20,8 +17,6 @@ in vec2 texCoords;
 in mat3 tbn;
 in vec3 cameraPosTS;
 in vec3 fragPosTS;
-
-uniform Material material;
 
 // Displacement mapping.
 uniform bool displace;
@@ -38,17 +33,17 @@ vec2 GetDisplacedTexCoords(vec3 viewDir)
     vec2 deltaTexCoords = p / numLayers;
     
     vec2 result = texCoords;
-    float curMapDepth = texture(material.displacement, result).r;
+    float curMapDepth = texture(displacement, result).r;
     while (curLayerDepth < curMapDepth)
     {
         result -= deltaTexCoords;
         curLayerDepth += layerDepth;
-        curMapDepth = texture(material.displacement, result).r;
+        curMapDepth = texture(displacement, result).r;
     }
     
     vec2 prevTexCoords = result + deltaTexCoords;
     
-    float prevDist = texture(material.displacement, prevTexCoords).r - (curLayerDepth - layerDepth);
+    float prevDist = texture(displacement, prevTexCoords).r - (curLayerDepth - layerDepth);
     float curDist = curLayerDepth - curMapDepth;
     
     float weight = prevDist / (curDist + prevDist);
@@ -66,12 +61,12 @@ void main()
     {
         discard;
     }
-    vec3 norm = texture(material.normals, displacedTexCoords).rgb;
+    vec3 norm = texture(normals, displacedTexCoords).rgb;
     norm = normalize(norm * 2.f - 1.f);
     
     positionBuffer.rgb = fragPosWS;
-    positionBuffer.a = texture(material.specular, displacedTexCoords).r;
+    positionBuffer.a = texture(specular, displacedTexCoords).r;
     normalBuffer.rgb = tbn * norm;
-    albedoBuffer.rgb = texture(material.diffuse, displacedTexCoords).rgb;
-    albedoBuffer.a = material.shininess;
+    albedoBuffer.rgb = texture(diffuse, displacedTexCoords).rgb;
+    albedoBuffer.a = shininess;
 }

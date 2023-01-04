@@ -1,4 +1,4 @@
-#version 330 core
+#version 450 core
 
 in vec2 texCoords;
 
@@ -6,8 +6,8 @@ out vec4 fragColor;
 
 uniform float gamma;
 uniform float exposure;
-uniform sampler2D scene;
-uniform sampler2D bloomBlur;
+layout (binding = 10) uniform sampler2D scene;
+layout (binding = 11) uniform sampler2D bloomBlur;
 
 const float offset = 1.f / 300.f;
 

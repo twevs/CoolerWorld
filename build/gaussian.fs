@@ -1,10 +1,10 @@
-#version 330 core
+#version 450 core
 
 out vec4 fragColor;
 
 in vec2 texCoords;
 
-uniform sampler2D image;
+layout (binding = 10) uniform sampler2D image;
 
 uniform bool horizontal;
 

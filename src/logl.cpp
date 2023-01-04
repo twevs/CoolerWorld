@@ -160,11 +160,6 @@ internal FILETIME GetFileTime(const char *filename)
     return fileTime;
 }
 
-internal void SetShaderUniformSampler(u32 shaderProgram, const char *uniformName, s32 slot)
-{
-    glUniform1i(glGetUniformLocation(shaderProgram, uniformName), slot);
-}
-
 internal void SetShaderUniformInt(u32 shaderProgram, const char *uniformName, s32 value)
 {
     glUniform1i(glGetUniformLocation(shaderProgram, uniformName), value);
@@ -280,53 +275,6 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
-
-    glUseProgram(info->gBufferShader.id);
-    SetShaderUniformSampler(info->gBufferShader.id, "material.diffuse", 0);
-    SetShaderUniformSampler(info->gBufferShader.id, "material.specular", 1);
-    SetShaderUniformSampler(info->gBufferShader.id, "material.normals", 2);
-    SetShaderUniformSampler(info->gBufferShader.id, "material.displacement", 3);
-
-    glUseProgram(info->lightingShader.id);
-    SetShaderUniformSampler(info->lightingShader.id, "gBuffer.position", 0);
-    SetShaderUniformSampler(info->lightingShader.id, "gBuffer.normal", 1);
-    SetShaderUniformSampler(info->lightingShader.id, "gBuffer.albedo", 2);
-    SetShaderUniformSampler(info->lightingShader.id, "skybox", 3);
-    SetShaderUniformSampler(info->lightingShader.id, "dirDepthMap", 4);
-    SetShaderUniformSampler(info->lightingShader.id, "spotDepthMap", 5);
-    for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
-    {
-        char uniformName[32];
-        sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->lightingShader.id, uniformName, 6 + i);
-    }
-    glUseProgram(info->instancedObjectShader.id);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "gBuffer.position", 0);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "gBuffer.normal", 1);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "gBuffer.albedo", 2);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "skybox", 3);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "dirDepthMap", 4);
-    SetShaderUniformSampler(info->instancedObjectShader.id, "spotDepthMap", 5);
-    for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
-    {
-        char uniformName[32];
-        sprintf_s(uniformName, "pointDepthMaps[%i]", i);
-        SetShaderUniformSampler(info->instancedObjectShader.id, uniformName, 6 + i);
-    }
-
-    glUseProgram(info->textureShader.id);
-    SetShaderUniformSampler(info->textureShader.id, "tex", 0);
-
-    glUseProgram(info->postProcessShader.id);
-    SetShaderUniformSampler(info->postProcessShader.id, "scene", 0);
-    SetShaderUniformSampler(info->postProcessShader.id, "bloomBlur", 1);
-
-    glUseProgram(info->glassShader.id);
-    SetShaderUniformSampler(info->glassShader.id, "tex", 0);
-    SetShaderUniformSampler(info->glassShader.id, "skybox", 1);
-
-    glUseProgram(info->skyboxShader.id);
-    SetShaderUniformSampler(info->skyboxShader.id, "skybox", 0);
 
     return true;
 }
@@ -1426,14 +1374,10 @@ internal void RenderObject(Object *object, u32 shaderProgram, f32 yRot = 0.f, fl
 {
     glBindVertexArray(object->VAO);
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, object->textures.diffuse.id);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, object->textures.specular.id);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, object->textures.normals.id);
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_2D, object->textures.displacement.id);
+    glBindTextureUnit(10, object->textures.diffuse.id);
+    glBindTextureUnit(11, object->textures.specular.id);
+    glBindTextureUnit(12, object->textures.normals.id);
+    glBindTextureUnit(13, object->textures.displacement.id);
     if (object->textures.displacement.id > 0)
     {
         SetShaderUniformInt(shaderProgram, "displace", 1);
@@ -1506,8 +1450,7 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
         u32 textureSlot = 0;
         for (; textureSlot < mesh->numTextures; textureSlot++)
         {
-            glActiveTexture(GL_TEXTURE0 + textureSlot);
-            glBindTexture(GL_TEXTURE_2D, mesh->textures[textureSlot].id);
+            glBindTextureUnit(10 + textureSlot, mesh->textures[textureSlot].id);
         }
         if (textureSlot == 4)
         {
@@ -1515,8 +1458,7 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
         }
         else
         {
-            glActiveTexture(GL_TEXTURE3);
-            glBindTexture(GL_TEXTURE_2D, 0);
+            glBindTextureUnit(13, 0);
         }
 
         if (numInstances == 1)
@@ -1576,7 +1518,7 @@ internal void SetGBufferUniforms(u32 shaderProgram, PersistentDrawingInfo *persi
 {
     glUseProgram(shaderProgram);
 
-    SetShaderUniformFloat(shaderProgram, "material.shininess", persistentInfo->materialShininess);
+    SetShaderUniformFloat(shaderProgram, "shininess", persistentInfo->materialShininess);
     SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
 }
@@ -1595,7 +1537,7 @@ internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInf
 {
     glUseProgram(shaderProgram);
 
-    SetShaderUniformFloat(shaderProgram, "material.shininess", persistentInfo->materialShininess);
+    SetShaderUniformFloat(shaderProgram, "shininess", persistentInfo->materialShininess);
     SetShaderUniformInt(shaderProgram, "blinn", persistentInfo->blinn);
 
     SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
@@ -1637,22 +1579,15 @@ internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInf
 
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
 
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[0]);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[1]);
-    glActiveTexture(GL_TEXTURE2);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->mainQuads[2]);
-    glActiveTexture(GL_TEXTURE3);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
-    glActiveTexture(GL_TEXTURE4);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapQuad);
-    glActiveTexture(GL_TEXTURE5);
-    glBindTexture(GL_TEXTURE_2D, transientInfo->spotShadowMapQuad);
+    glBindTextureUnit(10, transientInfo->mainQuads[0]);
+    glBindTextureUnit(11, transientInfo->mainQuads[1]);
+    glBindTextureUnit(12, transientInfo->mainQuads[2]);
+    glBindTextureUnit(13, transientInfo->skyboxTexture);
+    glBindTextureUnit(14, transientInfo->dirShadowMapQuad);
+    glBindTextureUnit(15, transientInfo->spotShadowMapQuad);
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
     {
-        glActiveTexture(GL_TEXTURE6 + i);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->pointShadowMapQuad[i]);
+        glBindTextureUnit(16 + i, transientInfo->pointShadowMapQuad[i]);
     }
 }
 
@@ -1790,8 +1725,7 @@ internal void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo
     u32 shaderProgram = transientInfo->glassShader.id;
     glUseProgram(shaderProgram);
 
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+    glBindTextureUnit(11, transientInfo->skyboxTexture);
 
     SkipList list = CreateNewList(listArena);
     // TODO: account for in refactor.
@@ -2233,8 +2167,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
 
         glBindVertexArray(transientInfo->cubeVao);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_CUBE_MAP, transientInfo->skyboxTexture);
+        glBindTextureUnit(10, transientInfo->skyboxTexture);
 
         glDrawBuffer(GL_COLOR_ATTACHMENT0);
         glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
@@ -2265,8 +2198,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->gaussianFBOs[horizontal]);
         SetShaderUniformInt(gaussianShader, "horizontal", horizontal);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, gaussianQuad);
+        glBindTextureUnit(10, gaussianQuad);
         horizontal = !horizontal;
 
         glBindVertexArray(transientInfo->mainQuadVao);
@@ -2310,10 +2242,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Main quad post-processing");
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, transientInfo->postProcessingQuad);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, transientInfo->gaussianQuads[0]);
+        glBindTextureUnit(10, transientInfo->postProcessingQuad);
+        glBindTextureUnit(11, transientInfo->gaussianQuads[0]);
 
         glBindVertexArray(transientInfo->mainQuadVao);
 
@@ -2327,12 +2257,10 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Rear-view post-processing");
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewQuad);
+        glBindTextureUnit(10, transientInfo->rearViewQuad);
         // NOTE: for now we don't bother with bloom in the rear-view mirror, since our bloom blur buffer
         // is of the same size as the main framebuffer.
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, 0);
+        glBindTextureUnit(11, 0);
 
         glBindVertexArray(transientInfo->rearViewQuadVao);
 

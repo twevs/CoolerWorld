@@ -1,11 +1,8 @@
 #version 450 core
     
-struct GBuffer
-{
-    sampler2D position; // Alpha = specular.
-    sampler2D normal;   // Alpha reserved for handedness.
-    sampler2D albedo;   // Alpha = shininess.
-};
+layout (binding = 10) uniform sampler2D positionBuffer; // Alpha = specular.
+layout (binding = 11) uniform sampler2D normalBuffer;   // Alpha reserved for handedness.
+layout (binding = 12) uniform sampler2D albedoBuffer;   // Alpha = shininess.
 
 struct DirLight
 {
@@ -57,8 +54,6 @@ layout (std140, binding = 0) uniform Matrices
     mat4 pointShadowMatrices[6];
 };
 
-uniform GBuffer gBuffer;
-
 uniform DirLight dirLight;
 vec3 CalcDirLight(DirLight light, vec3 fragPos, vec3 normal, vec3 cameraDir, vec2 inTexCoords);
 
@@ -68,15 +63,15 @@ vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 fragPos, vec3 norm
 uniform SpotLight spotLight;
 vec3 CalcSpotLight(SpotLight light, vec3 fragPos, vec3 normal, vec3 cameraDir, vec2 inTexCoords);
 
-uniform samplerCube skybox;
+layout (binding = 13) uniform samplerCube skybox;
 vec3 CalcEnvironment(vec3 normal, vec3 cameraDir);
 
 uniform bool blinn;
 
 // Shadow maps.
-uniform sampler2D dirDepthMap;
-uniform sampler2D spotDepthMap;
-uniform samplerCube pointDepthMaps[NUM_POINTLIGHTS];
+layout (binding = 14) uniform sampler2D dirDepthMap;
+layout (binding = 15) uniform sampler2D spotDepthMap;
+layout (binding = 16) uniform samplerCube pointDepthMaps[NUM_POINTLIGHTS];
 
 // Point light shadow mapping.
 uniform float pointFar;
@@ -142,10 +137,10 @@ float CalcPointShadow(vec3 nrm, vec3 fragPos, vec3 lightPos, samplerCube depthMa
 
 void main()
 {
-    vec3 fragPos = texture(gBuffer.position, texCoords).rgb;
+    vec3 fragPos = texture(positionBuffer, texCoords).rgb;
     vec3 cameraDir = normalize(cameraPos - fragPos);
     
-    vec3 norm = texture(gBuffer.normal, texCoords).rgb;
+    vec3 norm = texture(normalBuffer, texCoords).rgb;
     vec3 dirContribution = CalcDirLight(dirLight, fragPos, norm, cameraDir, texCoords);
     vec3 pointsContribution = CalcPointLights(pointLights, fragPos, norm, cameraDir, texCoords);
     vec3 spotContribution = CalcSpotLight(spotLight, fragPos, norm, cameraDir, texCoords);
@@ -169,21 +164,21 @@ void main()
 vec3 CalcDirLight(DirLight light, vec3 fragPos, vec3 normal, vec3 cameraDir, vec2 inTexCoords)
 {
     // Ambient contribution.
-    vec3 ambient = texture(gBuffer.albedo, inTexCoords).rgb * light.ambient;
+    vec3 ambient = texture(albedoBuffer, inTexCoords).rgb * light.ambient;
     
     // Diffuse contribution.
     vec3 lightDir = normalize(-dirLight.direction);
     float diff = max(dot(normal, lightDir), 0.f);
-    vec3 diffuse = texture(gBuffer.albedo, inTexCoords).rgb * diff * light.diffuse;
+    vec3 diffuse = texture(albedoBuffer, inTexCoords).rgb * diff * light.diffuse;
 
     // Specular contribution.
     vec3 halfway = normalize(lightDir + cameraDir);
     vec3 reflectionDir = reflect(-lightDir, normal);
     vec3 specVec1 = blinn ? halfway : reflectionDir;
     vec3 specVec2 = blinn ? normal : cameraDir;
-    float shininess = texture(gBuffer.albedo, inTexCoords).a;
+    float shininess = texture(albedoBuffer, inTexCoords).a;
     float spec = pow(max(dot(specVec1, specVec2), 0.f), shininess);
-    vec3 specular = texture(gBuffer.position, inTexCoords).a * spec * light.specular;
+    vec3 specular = texture(positionBuffer, inTexCoords).a * spec * light.specular;
 
 	vec4 fragPosDirLightSpace = dirLightSpaceMatrix * vec4(fragPos, 1.f);
     return ambient + (1.f - CalcShadow(fragPosDirLightSpace, normal, lightDir, dirDepthMap)) * (diffuse + specular);
@@ -202,21 +197,21 @@ vec3 CalcPointLights(PointLight[NUM_POINTLIGHTS] lights, vec3 fragPos, vec3 norm
         float intensity = 1.f / (1.f + light.linear * d + light.quadratic * d * d);
         
         // Ambient contribution.
-        vec3 ambient = texture(gBuffer.albedo, inTexCoords).rgb * light.ambient;
+        vec3 ambient = texture(albedoBuffer, inTexCoords).rgb * light.ambient;
     
         // Diffuse contribution.
         vec3 lightDir = normalize(lightPos - fragPos);
         float diff = max(dot(normal, lightDir), 0.f);
-        vec3 diffuse = texture(gBuffer.albedo, inTexCoords).rgb * diff * light.diffuse;
+        vec3 diffuse = texture(albedoBuffer, inTexCoords).rgb * diff * light.diffuse;
 
         // Specular contribution.
         vec3 halfway = normalize(lightDir + cameraDir);
         vec3 reflectionDir = reflect(-lightDir, normal);
         vec3 specVec1 = blinn ? halfway : reflectionDir;
         vec3 specVec2 = blinn ? normal : cameraDir;
-        float shininess = texture(gBuffer.albedo, inTexCoords).a;
+        float shininess = texture(albedoBuffer, inTexCoords).a;
         float spec = pow(max(dot(specVec1, specVec2), 0.f), shininess);
-        vec3 specular = texture(gBuffer.position, inTexCoords).a * spec * light.specular;
+        vec3 specular = texture(positionBuffer, inTexCoords).a * spec * light.specular;
         
         float shadow = CalcPointShadow(normal, fragPos, lights[i].position, pointDepthMaps[i]);
         result += intensity * (ambient + (1.f - shadow) * (diffuse + specular));
@@ -233,20 +228,20 @@ vec3 CalcSpotLight(SpotLight light, vec3 fragPos, vec3 normal, vec3 cameraDir, v
     intensity = clamp(intensity, 0.f, 1.f);
         
     // Ambient contribution.
-    vec3 ambient = texture(gBuffer.albedo, inTexCoords).rgb * light.ambient;
+    vec3 ambient = texture(albedoBuffer, inTexCoords).rgb * light.ambient;
     
     // Diffuse contribution.
     float diff = max(dot(normal, lightDir), 0.f);
-    vec3 diffuse = texture(gBuffer.albedo, inTexCoords).rgb * diff * light.diffuse;
+    vec3 diffuse = texture(albedoBuffer, inTexCoords).rgb * diff * light.diffuse;
 
     // Specular contribution.
     vec3 halfway = normalize(lightDir + cameraDir);
     vec3 reflectionDir = reflect(-lightDir, normal);
     vec3 specVec1 = blinn ? halfway : reflectionDir;
     vec3 specVec2 = blinn ? normal : cameraDir;
-    float shininess = texture(gBuffer.albedo, inTexCoords).a;
+    float shininess = texture(albedoBuffer, inTexCoords).a;
     float spec = pow(max(dot(specVec1, specVec2), 0.f), shininess);
-    vec3 specular = texture(gBuffer.position, inTexCoords).a * spec * light.specular;
+    vec3 specular = texture(positionBuffer, inTexCoords).a * spec * light.specular;
 
 	vec4 fragPosSpotLightSpace = spotLightSpaceMatrix * vec4(fragPos, 1.f);
     return intensity * (1.f - CalcShadow(fragPosSpotLightSpace, normal, lightDir, spotDepthMap)) * (diffuse + specular);
