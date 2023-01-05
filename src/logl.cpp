@@ -2182,17 +2182,9 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     // Apply Gaussian blur to brightness texture to generate bloom.
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Gaussian blur for bloom");
-    // TODO: review blitting since we are no longer using MSAA?
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->lightingFBO);
-    glReadBuffer(GL_COLOR_ATTACHMENT1);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->gaussianFBOs[0]);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    glClearColor(1.f, 1.f, 1.f, 1.f);
-    glClear(GL_COLOR_BUFFER_BIT);
     bool horizontal = true;
     u32 gaussianShader = transientInfo->gaussianShader.id;
-    u32 gaussianQuad = transientInfo->gaussianQuads[0];
+    u32 gaussianQuad = transientInfo->lightingQuads[1];
     glUseProgram(gaussianShader);
     for (u32 i = 0; i < 10; i++)
     {
@@ -2210,10 +2202,6 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     }
     glPopDebugGroup();
 
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->lightingFBO);
-    glReadBuffer(GL_COLOR_ATTACHMENT0);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->postProcessingFBO);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     // NOTE: in the case of the rear-view mirror, since a multisampled framebuffer cannot be blitted
     // to only a portion of a non-multisampled framebuffer, there are 3 options:
     // 1. blit a non-multisampled framebuffer to a portion of the main buffer;
@@ -2242,7 +2230,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Main quad post-processing");
 
-        glBindTextureUnit(10, transientInfo->postProcessingQuad);
+        glBindTextureUnit(10, transientInfo->lightingQuads[0]);
         glBindTextureUnit(11, transientInfo->gaussianQuads[0]);
 
         glBindVertexArray(transientInfo->mainQuadVao);
