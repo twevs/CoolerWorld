@@ -1414,6 +1414,7 @@ internal void RenderWithColorShader(TransientDrawingInfo *transientInfo, Persist
 
         glEnable(GL_STENCIL_TEST);
         glStencilMask(0xff);
+        glClear(GL_STENCIL_BUFFER_BIT);
         glStencilFunc(GL_ALWAYS, 1, 0xff);
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
@@ -1855,12 +1856,6 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     }
     else
     {
-        // TODO: fix effect of outlining on meshes that appear between the camera and the outlined
-        // object.
-
-        // Point lights.
-        RenderWithColorShader(transientInfo, persistentInfo);
-
         // Deferred skybox rendering is achieved thus:
         // 1. When drawing geometry, set stencil value to 1.
         // 2. Execute lighting pass on geometry.
@@ -2052,7 +2047,7 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
                          bool rearView)
 {
     // Draw skybox where geometry rendering pass did not set stencil value to 1.
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Skybox pass");
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Main skybox pass" : "Rear-view skybox pass");
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO);
@@ -2276,7 +2271,22 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
         glPopDebugGroup();
     }
+
     glEnable(GL_DEPTH_TEST);
+
+    // Point lights.
+    // TODO: fix effect of outlining on meshes that appear between the camera and the outlined
+    // object.
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Point lights");
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    glm::mat4 viewMatrix, projectionMatrix;
+    GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
+    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
+    RenderWithColorShader(transientInfo, persistentInfo);
+    glPopDebugGroup();
 
     DrawDebugWindow(cameraInfo, transientInfo, persistentInfo);
 
