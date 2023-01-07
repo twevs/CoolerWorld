@@ -861,14 +861,20 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
                                                      transientInfo->mainQuads, 3, &transientInfo->mainRBO, false, true);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum rearViewFramebufferStatus = CreateFramebuffer("Rear-view", width, height, &transientInfo->rearViewFBO,
-                                                         &transientInfo->rearViewQuad, 1, &transientInfo->rearViewRBO);
+    GLenum rearViewFramebufferStatus =
+        CreateFramebuffer("Rear-view", width, height, &transientInfo->rearViewFBO, transientInfo->rearViewQuads, 3,
+                          &transientInfo->rearViewRBO, false, true);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum lightingFramebufferStatus =
         CreateFramebuffer("Lighting pass", width, height, &transientInfo->lightingFBO, transientInfo->lightingQuads, 2,
                           &transientInfo->lightingRBO, false, true);
     myAssert(lightingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
+    GLenum rearViewLightingFramebufferStatus =
+        CreateFramebuffer("Lighting pass", width, height, &transientInfo->rearViewLightingFBO,
+                          transientInfo->rearViewLightingQuads, 2, &transientInfo->rearViewLightingRBO, false, true);
+    myAssert(rearViewLightingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum postProcessingFramebufferStatus =
         CreateFramebuffer("Post-processing", width, height, &transientInfo->postProcessingFBO,
@@ -1533,7 +1539,7 @@ internal void FillGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transien
 }
 
 internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                                        PersistentDrawingInfo *persistentInfo)
+                                        PersistentDrawingInfo *persistentInfo, bool rearView)
 {
     glUseProgram(shaderProgram);
 
@@ -1579,9 +1585,9 @@ internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInf
 
     SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
 
-    glBindTextureUnit(10, transientInfo->mainQuads[0]);
-    glBindTextureUnit(11, transientInfo->mainQuads[1]);
-    glBindTextureUnit(12, transientInfo->mainQuads[2]);
+    glBindTextureUnit(10, rearView ? transientInfo->rearViewQuads[0] : transientInfo->mainQuads[0]);
+    glBindTextureUnit(11, rearView ? transientInfo->rearViewQuads[1] : transientInfo->mainQuads[1]);
+    glBindTextureUnit(12, rearView ? transientInfo->rearViewQuads[2] : transientInfo->mainQuads[2]);
     glBindTextureUnit(13, transientInfo->skyboxTexture);
     glBindTextureUnit(14, transientInfo->dirShadowMapQuad);
     glBindTextureUnit(15, transientInfo->spotShadowMapQuad);
@@ -1593,7 +1599,7 @@ internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInf
 
 internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
                                   PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
-                                  Arena *tempArena, bool dynamicEnvPass = false)
+                                  Arena *tempArena, bool rearView, bool dynamicEnvPass = false)
 {
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Lighting pass");
 
@@ -1676,7 +1682,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     }
 #endif
 
-    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->lightingFBO);
+    glBindFramebuffer(GL_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO);
     GLenum attachments[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
     glDrawBuffers(2, attachments);
     glClearColor(1.f, 1.f, 1.f, 1.f);
@@ -1684,7 +1690,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
 
     u32 shaderProgram = transientInfo->lightingShader.id;
     glUseProgram(shaderProgram);
-    SetLightingShaderUniforms(shaderProgram, cameraInfo, transientInfo, persistentInfo);
+    SetLightingShaderUniforms(shaderProgram, cameraInfo, transientInfo, persistentInfo, rearView);
 
     glm::mat4 modelMatrix = glm::mat4(1.f);
     SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
@@ -2042,6 +2048,41 @@ internal void SetQuadProjectionViewMatrix()
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
 }
 
+internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *cameraInfo, s32 width, s32 height,
+                         bool rearView)
+{
+    // Draw skybox where geometry rendering pass did not set stencil value to 1.
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Skybox pass");
+
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+
+    glEnable(GL_STENCIL_TEST);
+    glStencilMask(0x00);
+    glStencilFunc(GL_NOTEQUAL, 1, 0xff);
+    glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+
+    u32 shaderProgram = transientInfo->skyboxShader.id;
+    glUseProgram(shaderProgram);
+
+    glm::mat4 viewMatrix, projectionMatrix;
+    GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+    glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
+    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
+
+    glBindVertexArray(transientInfo->cubeVao);
+    glBindTextureUnit(10, transientInfo->skyboxTexture);
+
+    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+
+    glDisable(GL_STENCIL_TEST);
+
+    glPopDebugGroup();
+}
+
 extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *running,
                                                  TransientDrawingInfo *transientInfo,
                                                  PersistentDrawingInfo *persistentInfo, CameraInfo *cameraInfo,
@@ -2143,41 +2184,17 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     glDisable(GL_DEPTH_TEST);
     SetQuadProjectionViewMatrix();
 
-    // Lighting pass.
-    ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena);
+    // Main lighting pass.
+    ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, false);
 
-    // Draw skybox where geometry rendering pass did not set stencil value to 1.
-    {
-        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Skybox pass");
+    // Rear-view lighting pass.
+    ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, true);
 
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, transientInfo->lightingFBO);
-        glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+    // Main skybox pass.
+    DrawSkybox(transientInfo, cameraInfo, width, height, false);
 
-        glEnable(GL_STENCIL_TEST);
-        glStencilMask(0x00);
-        glStencilFunc(GL_NOTEQUAL, 1, 0xff);
-        glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
-
-        u32 shaderProgram = transientInfo->skyboxShader.id;
-        glUseProgram(shaderProgram);
-
-        glm::mat4 viewMatrix, projectionMatrix;
-        GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
-        glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
-        glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
-        glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
-
-        glBindVertexArray(transientInfo->cubeVao);
-        glBindTextureUnit(10, transientInfo->skyboxTexture);
-
-        glDrawBuffer(GL_COLOR_ATTACHMENT0);
-        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
-
-        glDisable(GL_STENCIL_TEST);
-
-        glPopDebugGroup();
-    }
+    // Rear-view skybox pass.
+    DrawSkybox(transientInfo, &rearViewCamera, width, height, true);
 
     SetQuadProjectionViewMatrix();
     glm::mat4 modelMatrix = glm::mat4(1.f);
@@ -2247,7 +2264,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     {
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Rear-view post-processing");
 
-        glBindTextureUnit(10, transientInfo->rearViewQuad);
+        glBindTextureUnit(10, transientInfo->rearViewLightingQuads[0]);
         // NOTE: for now we don't bother with bloom in the rear-view mirror, since our bloom blur buffer
         // is of the same size as the main framebuffer.
         glBindTextureUnit(11, 0);

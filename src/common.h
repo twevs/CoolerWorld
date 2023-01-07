@@ -239,12 +239,16 @@ struct TransientDrawingInfo
 
     u32 rearViewQuadVao;
     u32 rearViewFBO;
-    u32 rearViewQuad;
+    u32 rearViewQuads[3];
     u32 rearViewRBO;
     
     u32 lightingQuads[2];
     u32 lightingFBO;
     u32 lightingRBO;
+    
+    u32 rearViewLightingQuads[2];
+    u32 rearViewLightingFBO;
+    u32 rearViewLightingRBO;
     
     u32 postProcessingFBO;
     u32 postProcessingQuad;
