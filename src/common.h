@@ -156,8 +156,7 @@ struct Mesh
     Texture *textures;
     u32 numTextures;
     
-    glm::vec3 position; // In local space.
-    glm::vec3 scale;
+    glm::mat4 relativeTransform;
 };
 
 struct Model

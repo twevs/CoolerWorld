@@ -499,9 +499,7 @@ internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 
         aiMatrix4x4 trans = node->mTransformation;
         glm::mat4 rowMajorTrans = {trans.a1, trans.a2, trans.a3, trans.a4, trans.b1, trans.b2, trans.b3, trans.b4,
                                    trans.c1, trans.c2, trans.c3, trans.c4, trans.d1, trans.d2, trans.d3, trans.d4};
-        glm::mat4 colMajorTrans = glm::transpose(rowMajorTrans);
-        processedMesh.position = glm::vec3(colMajorTrans[3][0], colMajorTrans[3][1], colMajorTrans[3][2]);
-        processedMesh.scale = glm::vec3(colMajorTrans[0][0], colMajorTrans[1][1], colMajorTrans[2][2]);
+        processedMesh.relativeTransform = glm::transpose(rowMajorTrans);
         meshes[*meshCount] = processedMesh;
         *meshCount += 1;
     }
@@ -1105,14 +1103,14 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     //                            texturesArena, meshDataArena);
     // u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
     //                          texturesArena, meshDataArena);
-    u32 deccerCubeIndex = AddModel("SM_Deccer_Cubes.fbx", transientInfo, bitangentElemCounts,
-                                   myArraySize(bitangentElemCounts), texturesArena, meshDataArena, .01f);
+    u32 deccerCubesIndex = AddModel("SM_Deccer_Cubes_Merged_Texture_Atlas.fbx", transientInfo, bitangentElemCounts,
+                                    myArraySize(bitangentElemCounts), texturesArena, meshDataArena, .01f);
 
-    AddModelToShaderPass(&transientInfo->dirDepthMapShader, deccerCubeIndex);
-    AddModelToShaderPass(&transientInfo->spotDepthMapShader, deccerCubeIndex);
-    AddModelToShaderPass(&transientInfo->pointDepthMapShader, deccerCubeIndex);
-    AddModelToShaderPass(&transientInfo->gBufferShader, deccerCubeIndex);
-    AddModelToShaderPass(&transientInfo->geometryShader, deccerCubeIndex);
+    AddModelToShaderPass(&transientInfo->dirDepthMapShader, deccerCubesIndex);
+    AddModelToShaderPass(&transientInfo->spotDepthMapShader, deccerCubesIndex);
+    AddModelToShaderPass(&transientInfo->pointDepthMapShader, deccerCubesIndex);
+    AddModelToShaderPass(&transientInfo->gBufferShader, deccerCubesIndex);
+    AddModelToShaderPass(&transientInfo->geometryShader, deccerCubesIndex);
 
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
@@ -1486,8 +1484,10 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
         {
             // Model matrix: transforms vertices from local to world space.
             glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, model->position + model->scale * mesh->position);
-            modelMatrix = glm::scale(modelMatrix, model->scale * mesh->scale);
+            modelMatrix = glm::translate(modelMatrix, model->position);
+            modelMatrix = glm::scale(modelMatrix, model->scale);
+
+            modelMatrix *= mesh->relativeTransform;
 
             glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
