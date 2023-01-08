@@ -495,7 +495,14 @@ internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 
     for (u32 i = 0; i < node->mNumMeshes; i++)
     {
         aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
-        meshes[*meshCount] = ProcessMesh(mesh, scene, texturesArena, loadedTextures, meshDataArena);
+        Mesh processedMesh = ProcessMesh(mesh, scene, texturesArena, loadedTextures, meshDataArena);
+        aiMatrix4x4 trans = node->mTransformation;
+        glm::mat4 rowMajorTrans = {trans.a1, trans.a2, trans.a3, trans.a4, trans.b1, trans.b2, trans.b3, trans.b4,
+                                   trans.c1, trans.c2, trans.c3, trans.c4, trans.d1, trans.d2, trans.d3, trans.d4};
+        glm::mat4 colMajorTrans = glm::transpose(rowMajorTrans);
+        processedMesh.position = glm::vec3(colMajorTrans[3][0], colMajorTrans[3][1], colMajorTrans[3][2]);
+        processedMesh.scale = glm::vec3(colMajorTrans[0][0], colMajorTrans[1][1], colMajorTrans[2][2]);
+        meshes[*meshCount] = processedMesh;
         *meshCount += 1;
     }
 
@@ -1091,14 +1098,15 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     s32 elemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
     s32 bitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
 
-    u32 backpackIndex = AddModel("backpack.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
-                                 texturesArena, meshDataArena);
-    u32 planetIndex = AddModel("planet.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
-                               texturesArena, meshDataArena);
-    u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
-                             texturesArena, meshDataArena);
+    // u32 backpackIndex = AddModel("backpack.obj", transientInfo, bitangentElemCounts,
+    // myArraySize(bitangentElemCounts),
+    //                              texturesArena, meshDataArena);
+    // u32 planetIndex = AddModel("planet.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+    //                            texturesArena, meshDataArena);
+    // u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+    //                          texturesArena, meshDataArena);
     u32 deccerCubeIndex = AddModel("SM_Deccer_Cubes.fbx", transientInfo, bitangentElemCounts,
-                                   myArraySize(bitangentElemCounts), texturesArena, meshDataArena, .05f);
+                                   myArraySize(bitangentElemCounts), texturesArena, meshDataArena, .01f);
 
     AddModelToShaderPass(&transientInfo->dirDepthMapShader, deccerCubeIndex);
     AddModelToShaderPass(&transientInfo->spotDepthMapShader, deccerCubeIndex);
@@ -1180,6 +1188,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
     }
 
+    /*
     Textures cubeTextures = {};
     cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
     for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
@@ -1200,6 +1209,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->gBufferShader, curWallIndex);
     }
+    */
 
     drawingInfo->dirLight.direction =
         glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
@@ -1476,8 +1486,8 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
         {
             // Model matrix: transforms vertices from local to world space.
             glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
-            modelMatrix = glm::scale(modelMatrix, model->scale);
+            modelMatrix = glm::translate(modelMatrix, model->position + model->scale * mesh->position);
+            modelMatrix = glm::scale(modelMatrix, model->scale * mesh->scale);
 
             glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
