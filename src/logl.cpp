@@ -546,7 +546,7 @@ internal u32 CreateVAO(VaoInformation *vaoInfo)
 }
 
 internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSize, Arena *texturesArena,
-                         Arena *meshDataArena)
+                         Arena *meshDataArena, f32 scale = 1.f)
 {
     Model result = {};
 
@@ -579,6 +579,7 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     result.meshes = meshes;
     result.meshCount = meshCount;
     result.vaos = meshVAOs;
+    result.scale = glm::vec3(scale);
 
     return result;
 }
@@ -943,10 +944,11 @@ internal void CreateSkybox(TransientDrawingInfo *transientInfo)
 }
 
 internal u32 AddModel(const char *filename, TransientDrawingInfo *transientInfo, s32 *elemCounts, u32 elemCountsSize,
-                      Arena *texturesArena, Arena *meshDataArena)
+                      Arena *texturesArena, Arena *meshDataArena, f32 scale = 1.f)
 {
     u32 modelIndex = transientInfo->numModels;
-    transientInfo->models[modelIndex] = LoadModel(filename, elemCounts, elemCountsSize, texturesArena, meshDataArena);
+    transientInfo->models[modelIndex] =
+        LoadModel(filename, elemCounts, elemCountsSize, texturesArena, meshDataArena, scale);
     transientInfo->numModels++;
     myAssert(transientInfo->numModels <= MAX_MODELS);
     return modelIndex;
@@ -1095,12 +1097,14 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
                                texturesArena, meshDataArena);
     u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
                              texturesArena, meshDataArena);
+    u32 deccerCubeIndex = AddModel("SM_Deccer_Cubes.fbx", transientInfo, bitangentElemCounts,
+                                   myArraySize(bitangentElemCounts), texturesArena, meshDataArena, .05f);
 
-    AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->pointDepthMapShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->gBufferShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->dirDepthMapShader, deccerCubeIndex);
+    AddModelToShaderPass(&transientInfo->spotDepthMapShader, deccerCubeIndex);
+    AddModelToShaderPass(&transientInfo->pointDepthMapShader, deccerCubeIndex);
+    AddModelToShaderPass(&transientInfo->gBufferShader, deccerCubeIndex);
+    AddModelToShaderPass(&transientInfo->geometryShader, deccerCubeIndex);
 
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
@@ -1473,19 +1477,19 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
             // Model matrix: transforms vertices from local to world space.
             glm::mat4 modelMatrix = glm::mat4(1.f);
             modelMatrix = glm::translate(modelMatrix, glm::vec3(0.f));
+            modelMatrix = glm::scale(modelMatrix, model->scale);
 
             glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
 
             SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
             SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
 
-            glDrawElements(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0);
+            glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
         }
         else
         {
             SetShaderUniformFloat(shaderProgram, "time", Win32GetTime());
-            glDrawElementsInstanced(GL_TRIANGLES, mesh->verticesSize / sizeof(Vertex), GL_UNSIGNED_INT, 0,
-                                    numInstances);
+            glDrawElementsInstanced(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0, numInstances);
         }
     }
 }
