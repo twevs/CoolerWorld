@@ -213,7 +213,8 @@ struct TransientDrawingInfo
     u32 numModels;
     
     ShaderProgram gBufferShader;
-    ShaderProgram lightingShader;
+    ShaderProgram nonPointLightingShader;
+    ShaderProgram pointLightingShader;
     ShaderProgram dirDepthMapShader;
     ShaderProgram spotDepthMapShader;
     ShaderProgram pointDepthMapShader;
@@ -230,6 +231,7 @@ struct TransientDrawingInfo
     u32 matricesUBO;
 
     u32 cubeVao;
+    Model *sphereModel;
 
     u32 skyboxTexture;
 

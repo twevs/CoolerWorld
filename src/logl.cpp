@@ -170,6 +170,11 @@ internal void SetShaderUniformFloat(u32 shaderProgram, const char *uniformName, 
     glUniform1f(glGetUniformLocation(shaderProgram, uniformName), value);
 }
 
+internal void SetShaderUniformVec2(u32 shaderProgram, const char *uniformName, glm::vec2 vector)
+{
+    glUniform2fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
+}
+
 internal void SetShaderUniformVec3(u32 shaderProgram, const char *uniformName, glm::vec3 vector)
 {
     glUniform3fv(glGetUniformLocation(shaderProgram, uniformName), 1, glm::value_ptr(vector));
@@ -235,7 +240,11 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->lightingShader, "vertex_shader.vs", "fragment_shader.fs"))
+    if (!CreateShaderProgram(&info->nonPointLightingShader, "vertex_shader.vs", "fragment_shader.fs"))
+    {
+        return false;
+    }
+    if (!CreateShaderProgram(&info->pointLightingShader, "vertex_shader.vs", "point_lighting.fs"))
     {
         return false;
     }
@@ -1096,21 +1105,23 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     s32 elemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
     s32 bitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
 
-    // u32 backpackIndex = AddModel("backpack.obj", transientInfo, bitangentElemCounts,
-    // myArraySize(bitangentElemCounts),
-    //                              texturesArena, meshDataArena);
-    // u32 planetIndex = AddModel("planet.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
-    //                            texturesArena, meshDataArena);
-    // u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
-    //                          texturesArena, meshDataArena);
-    u32 deccerCubesIndex = AddModel("SM_Deccer_Cubes_Merged_Texture_Atlas.fbx", transientInfo, bitangentElemCounts,
+    u32 backpackIndex = AddModel("backpack.obj", transientInfo, bitangentElemCounts,
+    myArraySize(bitangentElemCounts),
+                                 texturesArena, meshDataArena);
+    u32 planetIndex = AddModel("planet.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+                               texturesArena, meshDataArena);
+    u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+                             texturesArena, meshDataArena);
+    u32 deccerCubesIndex = AddModel("SM_Deccer_Cubes_Textured_Complex.fbx", transientInfo, bitangentElemCounts,
                                     myArraySize(bitangentElemCounts), texturesArena, meshDataArena, .01f);
+    u32 sphereIndex = AddModel("sphere.fbx", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts), texturesArena, meshDataArena);
+    transientInfo->sphereModel = &transientInfo->models[sphereIndex];
 
-    AddModelToShaderPass(&transientInfo->dirDepthMapShader, deccerCubesIndex);
-    AddModelToShaderPass(&transientInfo->spotDepthMapShader, deccerCubesIndex);
-    AddModelToShaderPass(&transientInfo->pointDepthMapShader, deccerCubesIndex);
-    AddModelToShaderPass(&transientInfo->gBufferShader, deccerCubesIndex);
-    AddModelToShaderPass(&transientInfo->geometryShader, deccerCubesIndex);
+    AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->pointDepthMapShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->gBufferShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
 
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
@@ -1186,7 +1197,6 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
     }
 
-    /*
     Textures cubeTextures = {};
     cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
     for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
@@ -1207,7 +1217,6 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->gBufferShader, curWallIndex);
     }
-    */
 
     drawingInfo->dirLight.direction =
         glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
@@ -1377,7 +1386,7 @@ internal bool HasNewVersion(ShaderProgram *program)
 
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
-    if (HasNewVersion(&info->lightingShader) || HasNewVersion(&info->instancedObjectShader) ||
+    if (HasNewVersion(&info->nonPointLightingShader) || HasNewVersion(&info->pointLightingShader) || HasNewVersion(&info->instancedObjectShader) ||
         HasNewVersion(&info->colorShader) || HasNewVersion(&info->outlineShader) ||
         HasNewVersion(&info->textureShader) || HasNewVersion(&info->glassShader) ||
         HasNewVersion(&info->postProcessShader) || HasNewVersion(&info->skyboxShader) ||
@@ -1553,52 +1562,31 @@ internal void FillGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transien
     RenderShaderPass(&transientInfo->gBufferShader, transientInfo);
 }
 
-internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+internal void SetLightingShaderUniforms(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
                                         PersistentDrawingInfo *persistentInfo, bool rearView)
 {
-    glUseProgram(shaderProgram);
+    u32 nonPointShader = transientInfo->nonPointLightingShader.id;
+    glUseProgram(nonPointShader);
 
-    SetShaderUniformFloat(shaderProgram, "shininess", persistentInfo->materialShininess);
-    SetShaderUniformInt(shaderProgram, "blinn", persistentInfo->blinn);
+    SetShaderUniformFloat(nonPointShader, "shininess", persistentInfo->materialShininess);
+    SetShaderUniformInt(nonPointShader, "blinn", persistentInfo->blinn);
 
-    SetShaderUniformVec3(shaderProgram, "dirLight.direction", persistentInfo->dirLight.direction);
-    SetShaderUniformVec3(shaderProgram, "dirLight.ambient", persistentInfo->dirLight.ambient);
-    SetShaderUniformVec3(shaderProgram, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
-    SetShaderUniformVec3(shaderProgram, "dirLight.specular", persistentInfo->dirLight.specular);
+    SetShaderUniformVec3(nonPointShader, "dirLight.direction", persistentInfo->dirLight.direction);
+    SetShaderUniformVec3(nonPointShader, "dirLight.ambient", persistentInfo->dirLight.ambient);
+    SetShaderUniformVec3(nonPointShader, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
+    SetShaderUniformVec3(nonPointShader, "dirLight.specular", persistentInfo->dirLight.specular);
 
-    for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
-    {
-        PointLight *lights = persistentInfo->pointLights;
-        PointLight light = lights[lightIndex];
+    SetShaderUniformVec3(nonPointShader, "spotLight.position", cameraInfo->pos);
+    SetShaderUniformVec3(nonPointShader, "spotLight.direction", GetCameraForwardVector(cameraInfo));
+    SetShaderUniformFloat(nonPointShader, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
+    SetShaderUniformFloat(nonPointShader, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
+    SetShaderUniformVec3(nonPointShader, "spotLight.ambient", persistentInfo->spotLight.ambient);
+    SetShaderUniformVec3(nonPointShader, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
+    SetShaderUniformVec3(nonPointShader, "spotLight.specular", persistentInfo->spotLight.specular);
 
-        char uniformString[32];
-        sprintf_s(uniformString, "pointLights[%i].position", lightIndex);
-        SetShaderUniformVec3(shaderProgram, uniformString, light.position);
-        sprintf_s(uniformString, "pointLights[%i].ambient", lightIndex);
-        SetShaderUniformVec3(shaderProgram, uniformString, light.ambient);
-        sprintf_s(uniformString, "pointLights[%i].diffuse", lightIndex);
-        SetShaderUniformVec3(shaderProgram, uniformString, light.diffuse);
-        sprintf_s(uniformString, "pointLights[%i].specular", lightIndex);
-        SetShaderUniformVec3(shaderProgram, uniformString, light.specular);
+    SetShaderUniformVec3(nonPointShader, "cameraPos", cameraInfo->pos);
 
-        Attenuation *att = &globalAttenuationTable[light.attIndex];
-        sprintf_s(uniformString, "pointLights[%i].linear", lightIndex);
-        SetShaderUniformFloat(shaderProgram, uniformString, att->linear);
-        sprintf_s(uniformString, "pointLights[%i].quadratic", lightIndex);
-        SetShaderUniformFloat(shaderProgram, uniformString, att->quadratic);
-    }
-
-    SetShaderUniformVec3(shaderProgram, "spotLight.position", cameraInfo->pos);
-    SetShaderUniformVec3(shaderProgram, "spotLight.direction", GetCameraForwardVector(cameraInfo));
-    SetShaderUniformFloat(shaderProgram, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
-    SetShaderUniformFloat(shaderProgram, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
-    SetShaderUniformVec3(shaderProgram, "spotLight.ambient", persistentInfo->spotLight.ambient);
-    SetShaderUniformVec3(shaderProgram, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
-    SetShaderUniformVec3(shaderProgram, "spotLight.specular", persistentInfo->spotLight.specular);
-
-    SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
-
-    SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
+    SetShaderUniformFloat(nonPointShader, "heightScale", .1f);
 
     glBindTextureUnit(10, rearView ? transientInfo->rearViewQuads[0] : transientInfo->mainQuads[0]);
     glBindTextureUnit(11, rearView ? transientInfo->rearViewQuads[1] : transientInfo->mainQuads[1]);
@@ -1606,10 +1594,29 @@ internal void SetLightingShaderUniforms(u32 shaderProgram, CameraInfo *cameraInf
     glBindTextureUnit(13, transientInfo->skyboxTexture);
     glBindTextureUnit(14, transientInfo->dirShadowMapQuad);
     glBindTextureUnit(15, transientInfo->spotShadowMapQuad);
-    for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
-    {
-        glBindTextureUnit(16 + i, transientInfo->pointShadowMapQuad[i]);
-    }
+}
+
+internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
+{
+    glm::vec3 cameraForwardVec = GetCameraForwardVector(cameraInfo);
+    glm::vec3 cameraTarget = cameraInfo->pos + cameraForwardVec;
+
+    glm::vec3 cameraDirection = glm::normalize(cameraInfo->pos - cameraTarget);
+
+    glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
+    glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
+    return glm::normalize(glm::cross(cameraDirection, cameraRightVec));
+}
+
+internal void GetRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 *outViewMatrix, glm::mat4 *outProjectionMatrix)
+{
+    glm::vec3 cameraTarget = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
+    glm::vec3 cameraUpVec = GetCameraUpVector(cameraInfo);
+    f32 nearPlaneDistance = .1f;
+    f32 farPlaneDistance = 150.f;
+    *outProjectionMatrix =
+        glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, nearPlaneDistance, farPlaneDistance);
+    *outViewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 }
 
 internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
@@ -1702,15 +1709,73 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     glDrawBuffers(2, attachments);
     glClearColor(1.f, 1.f, 1.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
-
-    u32 shaderProgram = transientInfo->lightingShader.id;
-    glUseProgram(shaderProgram);
-    SetLightingShaderUniforms(shaderProgram, cameraInfo, transientInfo, persistentInfo, rearView);
+    
+    // Non-point lighting.
+    u32 nonPointShaderProgram = transientInfo->nonPointLightingShader.id;
+    glUseProgram(nonPointShaderProgram);
+    SetLightingShaderUniforms(cameraInfo, transientInfo, persistentInfo, rearView);
 
     glm::mat4 modelMatrix = glm::mat4(1.f);
-    SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+    SetShaderUniformMat4(nonPointShaderProgram, "modelMatrix", &modelMatrix);
     glBindVertexArray(transientInfo->mainQuadVao);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    
+    // Point lighting.
+    // NOTE: perhaps we could do instanced rendering of the spheres instead?
+    u32 pointShader = transientInfo->pointLightingShader.id;
+    glUseProgram(pointShader);
+    
+    glm::mat4 viewMatrix, projectionMatrix;
+    GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
+    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
+    
+    RECT clientRect;
+    GetClientRect(window, &clientRect);
+    glm::vec2 screenSize{(f32)clientRect.right, (f32)clientRect.bottom};
+    SetShaderUniformVec2(pointShader, "screenSize", screenSize);
+    
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE);
+    glCullFace(GL_FRONT);
+    
+    for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+    {
+        PointLight *lights = persistentInfo->pointLights;
+        PointLight light = lights[lightIndex];
+        
+        SetShaderUniformVec3(pointShader, "pointLight.position", light.position);
+        SetShaderUniformVec3(pointShader, "pointLight.ambient", light.ambient);
+        SetShaderUniformVec3(pointShader, "pointLight.diffuse", light.diffuse);
+        SetShaderUniformVec3(pointShader, "pointLight.specular", light.specular);
+
+        Attenuation *att = &globalAttenuationTable[light.attIndex];
+        SetShaderUniformFloat(pointShader, "pointLight.linear", att->linear);
+        SetShaderUniformFloat(pointShader, "pointLight.quadratic", att->quadratic);
+        
+        
+        glBindTextureUnit(16, transientInfo->pointShadowMapQuad[lightIndex]);
+        
+        Model *model = transientInfo->sphereModel;
+        for (u32 i = 0; i < model->meshCount; i++)
+        {
+            glBindVertexArray(model->vaos[i]);
+
+            Mesh *mesh = &model->meshes[i];
+            glm::mat4 lightModelMatrix = glm::mat4(1.f);
+            lightModelMatrix = glm::translate(lightModelMatrix, light.position);
+            lightModelMatrix *= mesh->relativeTransform;
+            glm::mat3 lightNormalMatrix = glm::mat3(glm::transpose(glm::inverse(lightModelMatrix)));
+
+            SetShaderUniformMat4(pointShader, "modelMatrix", &lightModelMatrix);
+            SetShaderUniformMat3(pointShader, "normalMatrix", &lightNormalMatrix);
+
+            glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
+        }
+    }
+    
+    glCullFace(GL_BACK);
+    glDisable(GL_BLEND);
 
     glPopDebugGroup();
 }
@@ -1769,29 +1834,6 @@ internal void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo
     ArenaClear(tempArena);
 
     glDisable(GL_BLEND);
-}
-
-internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
-{
-    glm::vec3 cameraForwardVec = GetCameraForwardVector(cameraInfo);
-    glm::vec3 cameraTarget = cameraInfo->pos + cameraForwardVec;
-
-    glm::vec3 cameraDirection = glm::normalize(cameraInfo->pos - cameraTarget);
-
-    glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
-    glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
-    return glm::normalize(glm::cross(cameraDirection, cameraRightVec));
-}
-
-internal void GetRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 *outViewMatrix, glm::mat4 *outProjectionMatrix)
-{
-    glm::vec3 cameraTarget = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
-    glm::vec3 cameraUpVec = GetCameraUpVector(cameraInfo);
-    f32 nearPlaneDistance = .1f;
-    f32 farPlaneDistance = 150.f;
-    *outProjectionMatrix =
-        glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, nearPlaneDistance, farPlaneDistance);
-    *outViewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 }
 
 internal void GetPassTypeAsString(RenderPassType type, u32 bufSize, char *outString)
@@ -2166,7 +2208,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glUseProgram(pointShaderProgram);
         SetShaderUniformVec3(pointShaderProgram, "lightPos", pointCameraInfo.pos);
         SetShaderUniformFloat(pointShaderProgram, "farPlane", pointFar);
-        u32 lightingShaderProgram = transientInfo->lightingShader.id;
+        u32 lightingShaderProgram = transientInfo->pointLightingShader.id;
         glUseProgram(lightingShaderProgram);
         SetShaderUniformFloat(lightingShaderProgram, "pointFar", pointFar);
         u32 instancedObjectShaderProgram = transientInfo->instancedObjectShader.id;
@@ -2198,7 +2240,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     // Rear-view lighting pass.
     ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, true);
-
+    
     // Main skybox pass.
     DrawSkybox(transientInfo, cameraInfo, width, height, false);
 
