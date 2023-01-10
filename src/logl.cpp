@@ -1732,29 +1732,38 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     
     RECT clientRect;
     GetClientRect(window, &clientRect);
-    glm::vec2 screenSize{(f32)clientRect.right, (f32)clientRect.bottom};
+    s32 width = clientRect.right;
+    s32 height = clientRect.bottom;
+    
+    glm::vec2 screenSize{(f32)width, (f32)height};
     SetShaderUniformVec2(pointShader, "screenSize", screenSize);
+    
+    glEnable(GL_STENCIL_TEST);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, rearView ? transientInfo->rearViewFBO :  transientInfo->mainFBO);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO);
+    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    glDrawBuffers(2, attachments);
     
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
-    glCullFace(GL_FRONT);
     
     for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
     {
         PointLight *lights = persistentInfo->pointLights;
         PointLight light = lights[lightIndex];
-        
-        SetShaderUniformVec3(pointShader, "pointLight.position", light.position);
-        SetShaderUniformVec3(pointShader, "pointLight.ambient", light.ambient);
-        SetShaderUniformVec3(pointShader, "pointLight.diffuse", light.diffuse);
-        SetShaderUniformVec3(pointShader, "pointLight.specular", light.specular);
-
         Attenuation *att = &globalAttenuationTable[light.attIndex];
-        SetShaderUniformFloat(pointShader, "pointLight.linear", att->linear);
-        SetShaderUniformFloat(pointShader, "pointLight.quadratic", att->quadratic);
+    
+        glColorMask(0, 0, 0, 0);
         
-        
-        glBindTextureUnit(16, transientInfo->pointShadowMapQuad[lightIndex]);
+        glEnable(GL_DEPTH_TEST);
+        glDepthMask(GL_FALSE);
+        glDisable(GL_CULL_FACE);
+    
+        glStencilMask(0xff);
+        glClear(GL_STENCIL_BUFFER_BIT);
+        glStencilFunc(GL_ALWAYS, 0, 0);
+        glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_DECR_WRAP, GL_KEEP);
+        glStencilOpSeparate(GL_BACK, GL_KEEP, GL_INCR_WRAP, GL_KEEP);
         
         Model *model = transientInfo->sphereModel;
         for (u32 i = 0; i < model->meshCount; i++)
@@ -1764,6 +1773,12 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
             Mesh *mesh = &model->meshes[i];
             glm::mat4 lightModelMatrix = glm::mat4(1.f);
             lightModelMatrix = glm::translate(lightModelMatrix, light.position);
+            f32 constant = 1.f;
+            f32 linear = att->linear;
+            f32 quadratic = att->quadratic;
+            f32 lightMax = fmax(fmax(light.diffuse.r, light.diffuse.g), light.diffuse.b);
+            f32 radius = (-linear + sqrtf(linear * linear - 4.f * quadratic * (constant - (256.f / 5.f) * lightMax))) / (2.f * quadratic);
+            lightModelMatrix = glm::scale(lightModelMatrix, glm::vec3(radius));
             lightModelMatrix *= mesh->relativeTransform;
             glm::mat3 lightNormalMatrix = glm::mat3(glm::transpose(glm::inverse(lightModelMatrix)));
 
@@ -1772,11 +1787,40 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
 
             glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
         }
+        
+        glColorMask(0xff, 0xff, 0xff, 0xff);
+        
+        glDisable(GL_DEPTH_TEST);
+        glDepthMask(GL_TRUE);
+        glEnable(GL_CULL_FACE);
+        glCullFace(GL_FRONT);
+    
+        glStencilMask(0x00);
+        glStencilFunc(GL_NOTEQUAL, 0, 0xff);
+        
+        SetShaderUniformVec3(pointShader, "pointLight.position", light.position);
+        SetShaderUniformVec3(pointShader, "pointLight.ambient", light.ambient);
+        SetShaderUniformVec3(pointShader, "pointLight.diffuse", light.diffuse);
+        SetShaderUniformVec3(pointShader, "pointLight.specular", light.specular);
+
+        SetShaderUniformFloat(pointShader, "pointLight.linear", att->linear);
+        SetShaderUniformFloat(pointShader, "pointLight.quadratic", att->quadratic);
+        
+        glBindTextureUnit(16, transientInfo->pointShadowMapQuad[lightIndex]);
+        
+        for (u32 i = 0; i < model->meshCount; i++)
+        {
+            Mesh *mesh = &model->meshes[i];
+            glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
+        }
+        
+        glCullFace(GL_BACK);
+        glDisable(GL_CULL_FACE);
     }
     
-    glCullFace(GL_BACK);
     glDisable(GL_BLEND);
-
+    glDisable(GL_STENCIL_TEST);
+    
     glPopDebugGroup();
 }
 
