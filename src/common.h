@@ -235,8 +235,6 @@ struct TransientDrawingInfo
 
     u32 skyboxTexture;
 
-    s32 numSamples;
-    
     u32 mainQuadVao;
     u32 mainFBO;
     u32 mainQuads[3];

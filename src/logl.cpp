@@ -646,11 +646,17 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
 
 #define MAX_ATTACHMENTS 4
 
-internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 *fbo, u32 *quadTextures,
-                                  u32 numTextures, u32 *rbo, bool depthMap = false, bool hdr = false)
+struct FramebufferOptions
 {
-    myAssert(!(depthMap && hdr));
-    myAssert(!(depthMap && (numTextures > 1)));
+    GLenum internalFormat = GL_RGB;
+    GLenum filteringMethod = GL_LINEAR;
+    GLenum wrapMode = GL_REPEAT;
+    f32 borderColor[4] = {1.f, 1.f, 1.f, 1.f};
+};
+
+internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 *fbo, u32 *quadTextures,
+                                  u32 numTextures, u32 *rbo, FramebufferOptions *options)
+{
     myAssert(numTextures <= MAX_ATTACHMENTS);
 
     glGenFramebuffers(1, fbo);
@@ -668,19 +674,28 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
         sprintf_s(textureLabel, "Framebuffer: %s - Attached texture %i", label, i);
         glObjectLabel(GL_TEXTURE, quadTextures[i], -1, textureLabel);
 
-        GLenum internalFormat = depthMap ? GL_DEPTH_COMPONENT : hdr ? GL_RGBA16F : GL_RGB;
+        GLenum internalFormat = options[i].internalFormat;
+        bool depthMap = (internalFormat == GL_DEPTH_COMPONENT);
+        bool hdr = (internalFormat == GL_RGBA16F);
+        myAssert(!(depthMap && hdr));
+        myAssert(!(depthMap && (numTextures > 1)));
+
         GLenum type = (depthMap || hdr) ? GL_FLOAT : GL_UNSIGNED_BYTE;
         GLenum format = hdr ? GL_RGBA : internalFormat;
         glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, NULL);
-        GLint filteringMethod = depthMap ? GL_NEAREST : GL_LINEAR;
+        GLint filteringMethod = options[i].filteringMethod;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filteringMethod);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filteringMethod);
-        if (depthMap)
+        GLenum wrapMode = options[i].wrapMode;
+        if (wrapMode != GL_REPEAT)
         {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-            f32 borderColor[] = {1.f, 1.f, 1.f, 1.f};
-            glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, borderColor);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
+
+            if (wrapMode == GL_CLAMP_TO_BORDER)
+            {
+                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, options[i].borderColor);
+            }
         }
         // TODO: non-depth map texture wrapping parameters?
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -691,7 +706,7 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
         attachments[i] = attachment;
     }
 
-    if (depthMap)
+    if (options[0].internalFormat == GL_DEPTH_COMPONENT)
     {
         glDrawBuffer(GL_NONE);
         glReadBuffer(GL_NONE);
@@ -868,42 +883,57 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     s32 width = clientRect.right;
     s32 height = clientRect.bottom;
 
-    transientInfo->numSamples = 4;
+    FramebufferOptions hdrBuffer = {};
+    hdrBuffer.internalFormat = GL_RGBA16F;
 
-    // TODO: make only the position buffer an HDR buffer, the normal and albedo buffers don't need the
-    // extra capacity.
-    GLenum mainFramebufferStatus = CreateFramebuffer("Main", width, height, &transientInfo->mainFBO,
-                                                     transientInfo->mainQuads, 3, &transientInfo->mainRBO, false, true);
+    // Main G-buffer, with 3 colour buffers:
+    // 0 = position buffer, 1 = normal buffer, 2 = albedo buffer.
+    FramebufferOptions gBufferOptions[3] = {hdrBuffer, hdrBuffer, hdrBuffer};
+    auto *positionBuffer = &gBufferOptions[0];
+    positionBuffer->filteringMethod = GL_NEAREST;
+    positionBuffer->wrapMode = GL_CLAMP_TO_EDGE;
+
+    GLenum mainFramebufferStatus =
+        CreateFramebuffer("Main G-buffer", width, height, &transientInfo->mainFBO, transientInfo->mainQuads, 3,
+                          &transientInfo->mainRBO, gBufferOptions);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum rearViewFramebufferStatus =
-        CreateFramebuffer("Rear-view", width, height, &transientInfo->rearViewFBO, transientInfo->rearViewQuads, 3,
-                          &transientInfo->rearViewRBO, false, true);
+        CreateFramebuffer("Rear-view G-buffer", width, height, &transientInfo->rearViewFBO, transientInfo->rearViewQuads, 3,
+                          &transientInfo->rearViewRBO, gBufferOptions);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
+    // 0 = HDR colour buffer, 1 = bloom threshold buffer.
+    FramebufferOptions lightingFramebufferOptions[2] = {hdrBuffer, hdrBuffer};
+
     GLenum lightingFramebufferStatus =
-        CreateFramebuffer("Lighting pass", width, height, &transientInfo->lightingFBO, transientInfo->lightingQuads, 2,
-                          &transientInfo->lightingRBO, false, true);
+        CreateFramebuffer("Main lighting pass", width, height, &transientInfo->lightingFBO,
+                          transientInfo->lightingQuads, 2, &transientInfo->lightingRBO, lightingFramebufferOptions);
     myAssert(lightingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum rearViewLightingFramebufferStatus =
-        CreateFramebuffer("Lighting pass", width, height, &transientInfo->rearViewLightingFBO,
-                          transientInfo->rearViewLightingQuads, 2, &transientInfo->rearViewLightingRBO, false, true);
+    GLenum rearViewLightingFramebufferStatus = CreateFramebuffer(
+        "Rear-view lighting pass", width, height, &transientInfo->rearViewLightingFBO,
+        transientInfo->rearViewLightingQuads, 2, &transientInfo->rearViewLightingRBO, lightingFramebufferOptions);
     myAssert(rearViewLightingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum postProcessingFramebufferStatus =
         CreateFramebuffer("Post-processing", width, height, &transientInfo->postProcessingFBO,
-                          &transientInfo->postProcessingQuad, 1, &transientInfo->postProcessingRBO, false, true);
+                          &transientInfo->postProcessingQuad, 1, &transientInfo->postProcessingRBO, &hdrBuffer);
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
+    FramebufferOptions depthBufferOptions = {};
+    depthBufferOptions.internalFormat = GL_DEPTH_COMPONENT;
+    depthBufferOptions.filteringMethod = GL_NEAREST;
+    depthBufferOptions.wrapMode = GL_CLAMP_TO_BORDER;
 
     GLenum dirDepthMapFramebufferStatus = CreateFramebuffer(
         "Directional light shadow map", DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->dirShadowMapFBO,
-        &transientInfo->dirShadowMapQuad, 1, &transientInfo->dirShadowMapRBO, true);
+        &transientInfo->dirShadowMapQuad, 1, &transientInfo->dirShadowMapRBO, &depthBufferOptions);
     myAssert(dirDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum spotDepthMapFramebufferStatus = CreateFramebuffer(
         "Spot light shadow map", DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO,
-        &transientInfo->spotShadowMapQuad, 1, &transientInfo->spotShadowMapRBO, true);
+        &transientInfo->spotShadowMapQuad, 1, &transientInfo->spotShadowMapRBO, &depthBufferOptions);
     myAssert(spotDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
@@ -921,7 +951,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
         sprintf_s(label, "Gaussian ping-pong buffer %i", i);
         GLenum gaussianFramebufferStatus =
             CreateFramebuffer(label, width, height, &transientInfo->gaussianFBOs[i], &transientInfo->gaussianQuads[i],
-                              1, &transientInfo->gaussianRBOs[i], false, true);
+                              1, &transientInfo->gaussianRBOs[i], &hdrBuffer);
         myAssert(gaussianFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     }
 }
@@ -1105,8 +1135,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     s32 elemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
     s32 bitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
 
-    u32 backpackIndex = AddModel("backpack.obj", transientInfo, bitangentElemCounts,
-    myArraySize(bitangentElemCounts),
+    u32 backpackIndex = AddModel("backpack.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
                                  texturesArena, meshDataArena);
     u32 planetIndex = AddModel("planet.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
                                texturesArena, meshDataArena);
@@ -1114,7 +1143,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
                              texturesArena, meshDataArena);
     u32 deccerCubesIndex = AddModel("SM_Deccer_Cubes_Textured_Complex.fbx", transientInfo, bitangentElemCounts,
                                     myArraySize(bitangentElemCounts), texturesArena, meshDataArena, .01f);
-    u32 sphereIndex = AddModel("sphere.fbx", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts), texturesArena, meshDataArena);
+    u32 sphereIndex = AddModel("sphere.fbx", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+                               texturesArena, meshDataArena);
     transientInfo->sphereModel = &transientInfo->models[sphereIndex];
 
     AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
@@ -1386,11 +1416,12 @@ internal bool HasNewVersion(ShaderProgram *program)
 
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
-    if (HasNewVersion(&info->nonPointLightingShader) || HasNewVersion(&info->pointLightingShader) || HasNewVersion(&info->instancedObjectShader) ||
-        HasNewVersion(&info->colorShader) || HasNewVersion(&info->outlineShader) ||
-        HasNewVersion(&info->textureShader) || HasNewVersion(&info->glassShader) ||
-        HasNewVersion(&info->postProcessShader) || HasNewVersion(&info->skyboxShader) ||
-        HasNewVersion(&info->geometryShader) || HasNewVersion(&info->gaussianShader))
+    if (HasNewVersion(&info->nonPointLightingShader) || HasNewVersion(&info->pointLightingShader) ||
+        HasNewVersion(&info->instancedObjectShader) || HasNewVersion(&info->colorShader) ||
+        HasNewVersion(&info->outlineShader) || HasNewVersion(&info->textureShader) ||
+        HasNewVersion(&info->glassShader) || HasNewVersion(&info->postProcessShader) ||
+        HasNewVersion(&info->skyboxShader) || HasNewVersion(&info->geometryShader) ||
+        HasNewVersion(&info->gaussianShader))
     {
         bool reloadedShaders = CreateShaderPrograms(info);
         myAssert(reloadedShaders);
@@ -1623,7 +1654,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
                                   PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
                                   Arena *tempArena, bool rearView, bool dynamicEnvPass = false)
 {
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Lighting pass");
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view lighting pass" : "Main lighting pass");
 
     // TODO: find a proper way to parameterize dynamic environment mapping. We only want certain
     // objects to reflect the environment, not all of them. It should depend on their shininess.
@@ -1709,7 +1740,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     glDrawBuffers(2, attachments);
     glClearColor(1.f, 1.f, 1.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
-    
+
     // Non-point lighting.
     u32 nonPointShaderProgram = transientInfo->nonPointLightingShader.id;
     glUseProgram(nonPointShaderProgram);
@@ -1719,52 +1750,52 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     SetShaderUniformMat4(nonPointShaderProgram, "modelMatrix", &modelMatrix);
     glBindVertexArray(transientInfo->mainQuadVao);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-    
+
     // Point lighting.
     // NOTE: perhaps we could do instanced rendering of the spheres instead?
     u32 pointShader = transientInfo->pointLightingShader.id;
     glUseProgram(pointShader);
-    
+
     glm::mat4 viewMatrix, projectionMatrix;
     GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
-    
+
     RECT clientRect;
     GetClientRect(window, &clientRect);
     s32 width = clientRect.right;
     s32 height = clientRect.bottom;
-    
+
     glm::vec2 screenSize{(f32)width, (f32)height};
     SetShaderUniformVec2(pointShader, "screenSize", screenSize);
-    
+
     glEnable(GL_STENCIL_TEST);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, rearView ? transientInfo->rearViewFBO :  transientInfo->mainFBO);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO);
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
     glDrawBuffers(2, attachments);
-    
+
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
-    
+
     for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
     {
         PointLight *lights = persistentInfo->pointLights;
         PointLight light = lights[lightIndex];
         Attenuation *att = &globalAttenuationTable[light.attIndex];
-    
+
         glColorMask(0, 0, 0, 0);
-        
+
         glEnable(GL_DEPTH_TEST);
         glDepthMask(GL_FALSE);
         glDisable(GL_CULL_FACE);
-    
+
         glStencilMask(0xff);
         glClear(GL_STENCIL_BUFFER_BIT);
         glStencilFunc(GL_ALWAYS, 0, 0);
         glStencilOpSeparate(GL_FRONT, GL_KEEP, GL_DECR_WRAP, GL_KEEP);
         glStencilOpSeparate(GL_BACK, GL_KEEP, GL_INCR_WRAP, GL_KEEP);
-        
+
         Model *model = transientInfo->sphereModel;
         for (u32 i = 0; i < model->meshCount; i++)
         {
@@ -1777,7 +1808,8 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
             f32 linear = att->linear;
             f32 quadratic = att->quadratic;
             f32 lightMax = fmax(fmax(light.diffuse.r, light.diffuse.g), light.diffuse.b);
-            f32 radius = (-linear + sqrtf(linear * linear - 4.f * quadratic * (constant - (256.f / 5.f) * lightMax))) / (2.f * quadratic);
+            f32 radius = (-linear + sqrtf(linear * linear - 4.f * quadratic * (constant - (256.f / 5.f) * lightMax))) /
+                         (2.f * quadratic);
             lightModelMatrix = glm::scale(lightModelMatrix, glm::vec3(radius));
             lightModelMatrix *= mesh->relativeTransform;
             glm::mat3 lightNormalMatrix = glm::mat3(glm::transpose(glm::inverse(lightModelMatrix)));
@@ -1787,17 +1819,17 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
 
             glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
         }
-        
+
         glColorMask(0xff, 0xff, 0xff, 0xff);
-        
+
         glDisable(GL_DEPTH_TEST);
         glDepthMask(GL_TRUE);
         glEnable(GL_CULL_FACE);
         glCullFace(GL_FRONT);
-    
+
         glStencilMask(0x00);
         glStencilFunc(GL_NOTEQUAL, 0, 0xff);
-        
+
         SetShaderUniformVec3(pointShader, "pointLight.position", light.position);
         SetShaderUniformVec3(pointShader, "pointLight.ambient", light.ambient);
         SetShaderUniformVec3(pointShader, "pointLight.diffuse", light.diffuse);
@@ -1805,22 +1837,22 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
 
         SetShaderUniformFloat(pointShader, "pointLight.linear", att->linear);
         SetShaderUniformFloat(pointShader, "pointLight.quadratic", att->quadratic);
-        
+
         glBindTextureUnit(16, transientInfo->pointShadowMapQuad[lightIndex]);
-        
+
         for (u32 i = 0; i < model->meshCount; i++)
         {
             Mesh *mesh = &model->meshes[i];
             glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
         }
-        
+
         glCullFace(GL_BACK);
         glDisable(GL_CULL_FACE);
     }
-    
+
     glDisable(GL_BLEND);
     glDisable(GL_STENCIL_TEST);
-    
+
     glPopDebugGroup();
 }
 
@@ -2147,7 +2179,7 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
                          bool rearView)
 {
     // Draw skybox where geometry rendering pass did not set stencil value to 1.
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Main skybox pass" : "Rear-view skybox pass");
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view skybox pass" : "Main skybox pass");
 
     glBindFramebuffer(GL_READ_FRAMEBUFFER, rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO);
@@ -2284,7 +2316,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     // Rear-view lighting pass.
     ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, true);
-    
+
     // Main skybox pass.
     DrawSkybox(transientInfo, cameraInfo, width, height, false);
 
