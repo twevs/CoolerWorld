@@ -1121,6 +1121,57 @@ internal void CalculateTangents(Vertex *vertices, u32 numVertices, u32 *indices,
     ArenaPop(arena, allocatedSize);
 }
 
+internal f32 lerp(f32 a, f32 b, f32 alpha)
+{
+    return a + alpha * (b - a);
+}
+
+#define SSAO_KERNEL_SIZE 64
+#define SSAO_NOISE_SIZE 16
+
+internal void InitializeSSAONoiseTexture()
+{
+    srand((u32)Win32GetWallClock());
+    
+    glm::vec3 ssaoKernel[SSAO_KERNEL_SIZE] = {};
+    for (u32 i = 0; i < SSAO_KERNEL_SIZE; i++)
+    {
+        f32 xOffset = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
+        f32 yOffset = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
+        f32 zOffset = ((f32)rand() / RAND_MAX);
+        glm::vec3 sample(xOffset, yOffset, zOffset);
+        sample = glm::normalize(sample);
+        
+        sample *= ((f32)rand() / RAND_MAX);
+        f32 scale = (f32)i / SSAO_KERNEL_SIZE;
+        scale = lerp(.1f, 1.f, scale * scale);
+        sample *= scale;
+        
+        ssaoKernel[i] = sample;
+    }
+    
+    glm::vec3 ssaoNoise[SSAO_NOISE_SIZE] = {};
+    for (u32 i = 0; i < SSAO_NOISE_SIZE; i++)
+    {
+        f32 x = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
+        f32 y = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
+        glm::vec3 sample(x, y, 0.f);
+        sample = glm::normalize(sample);
+        
+        ssaoNoise[i] = sample;
+    }
+    
+    u32 ssaoNoiseTexture;
+    glGenTextures(1, &ssaoNoiseTexture);
+    glBindTexture(GL_TEXTURE_2D, ssaoNoiseTexture);
+    u32 sideLength = (u32)(sqrtf(SSAO_NOISE_SIZE));
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, sideLength, sideLength, 0, GL_RGB, GL_FLOAT, &ssaoNoise);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+}
+
 extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
                                                             PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo,
                                                             Arena *texturesArena, Arena *meshDataArena)
@@ -1256,10 +1307,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     CreateFramebuffers(window, transientInfo);
 
     CreateSkybox(transientInfo);
-
     glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
-
-    drawingInfo->initialized = true;
 
     glGenBuffers(1, &transientInfo->matricesUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
@@ -1267,7 +1315,11 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     glObjectLabel(GL_BUFFER, transientInfo->matricesUBO, -1, label);
     glBufferData(GL_UNIFORM_BUFFER, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
-
+    
+    InitializeSSAONoiseTexture();
+    
+    drawingInfo->initialized = true;
+    
     return true;
 }
 

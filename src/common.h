@@ -271,6 +271,8 @@ struct TransientDrawingInfo
     u32 gaussianQuads[2];
     u32 gaussianFBOs[2];
     u32 gaussianRBOs[2];
+    
+    u32 ssaoNoiseTexture;
 };
 
 struct PersistentDrawingInfo
