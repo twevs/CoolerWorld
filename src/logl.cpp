@@ -228,6 +228,18 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
+    if (!CreateShaderProgram(&info->ssaoShader, "vertex_shader.vs", "ssao.fs"))
+    {
+        return false;
+    }
+    if (!CreateShaderProgram(&info->nonPointLightingShader, "vertex_shader.vs", "fragment_shader.fs"))
+    {
+        return false;
+    }
+    if (!CreateShaderProgram(&info->pointLightingShader, "vertex_shader.vs", "point_lighting.fs"))
+    {
+        return false;
+    }
     if (!CreateShaderProgram(&info->dirDepthMapShader, "depth_map.vs", "depth_map.fs"))
     {
         return false;
@@ -237,14 +249,6 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
         return false;
     }
     if (!CreateShaderProgram(&info->pointDepthMapShader, "depth_cube_map.vs", "depth_cube_map.fs", "depth_cube_map.gs"))
-    {
-        return false;
-    }
-    if (!CreateShaderProgram(&info->nonPointLightingShader, "vertex_shader.vs", "fragment_shader.fs"))
-    {
-        return false;
-    }
-    if (!CreateShaderProgram(&info->pointLightingShader, "vertex_shader.vs", "point_lighting.fs"))
     {
         return false;
     }
@@ -260,11 +264,11 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->textureShader, "vertex_shader.vs", "texture.fs"))
+    if (!CreateShaderProgram(&info->glassShader, "vertex_shader.vs", "glass.fs"))
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->glassShader, "vertex_shader.vs", "glass.fs"))
+    if (!CreateShaderProgram(&info->textureShader, "vertex_shader.vs", "texture.fs"))
     {
         return false;
     }
@@ -626,6 +630,8 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
     {
         transientInfo->models[i].position = info->modelPositions[i];
     }
+    LoadShaderPass(file, &transientInfo->gBufferShader);
+    LoadShaderPass(file, &transientInfo->ssaoShader);
     LoadShaderPass(file, &transientInfo->dirDepthMapShader);
     LoadShaderPass(file, &transientInfo->spotDepthMapShader);
     LoadShaderPass(file, &transientInfo->pointDepthMapShader);
@@ -883,6 +889,8 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     s32 width = clientRect.right;
     s32 height = clientRect.bottom;
 
+    // TODO: don't create RBOs where they aren't needed.
+
     FramebufferOptions hdrBuffer = {};
     hdrBuffer.internalFormat = GL_RGBA16F;
 
@@ -899,9 +907,18 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum rearViewFramebufferStatus =
-        CreateFramebuffer("Rear-view G-buffer", width, height, &transientInfo->rearViewFBO, transientInfo->rearViewQuads, 3,
-                          &transientInfo->rearViewRBO, gBufferOptions);
+        CreateFramebuffer("Rear-view G-buffer", width, height, &transientInfo->rearViewFBO,
+                          transientInfo->rearViewQuads, 3, &transientInfo->rearViewRBO, gBufferOptions);
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+
+    FramebufferOptions ssaoFramebufferOptions = {};
+    ssaoFramebufferOptions.internalFormat = GL_RED;
+    ssaoFramebufferOptions.filteringMethod = GL_NEAREST;
+
+    GLenum ssaoFramebufferStatus =
+        CreateFramebuffer("Post-processing", width, height, &transientInfo->ssaoFBO, &transientInfo->ssaoQuad, 1,
+                          &transientInfo->ssaoRBO, &ssaoFramebufferOptions);
+    myAssert(ssaoFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     // 0 = HDR colour buffer, 1 = bloom threshold buffer.
     FramebufferOptions lightingFramebufferOptions[2] = {hdrBuffer, hdrBuffer};
@@ -931,9 +948,9 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
         &transientInfo->dirShadowMapQuad, 1, &transientInfo->dirShadowMapRBO, &depthBufferOptions);
     myAssert(dirDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
-    GLenum spotDepthMapFramebufferStatus = CreateFramebuffer(
-        "Spot light shadow map", DIR_SHADOW_MAP_SIZE, DIR_SHADOW_MAP_SIZE, &transientInfo->spotShadowMapFBO,
-        &transientInfo->spotShadowMapQuad, 1, &transientInfo->spotShadowMapRBO, &depthBufferOptions);
+    GLenum spotDepthMapFramebufferStatus =
+        CreateFramebuffer("Spot light shadow map", width, height, &transientInfo->spotShadowMapFBO,
+                          &transientInfo->spotShadowMapQuad, 1, &transientInfo->spotShadowMapRBO, &depthBufferOptions);
     myAssert(spotDepthMapFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     for (u32 i = 0; i < NUM_POINTLIGHTS; i++)
@@ -1129,10 +1146,10 @@ internal f32 lerp(f32 a, f32 b, f32 alpha)
 #define SSAO_KERNEL_SIZE 64
 #define SSAO_NOISE_SIZE 16
 
-internal void InitializeSSAONoiseTexture()
+internal void InitializeSSAONoiseTexture(TransientDrawingInfo *transientInfo)
 {
     srand((u32)Win32GetWallClock());
-    
+
     glm::vec3 ssaoKernel[SSAO_KERNEL_SIZE] = {};
     for (u32 i = 0; i < SSAO_KERNEL_SIZE; i++)
     {
@@ -1141,15 +1158,15 @@ internal void InitializeSSAONoiseTexture()
         f32 zOffset = ((f32)rand() / RAND_MAX);
         glm::vec3 sample(xOffset, yOffset, zOffset);
         sample = glm::normalize(sample);
-        
+
         sample *= ((f32)rand() / RAND_MAX);
         f32 scale = (f32)i / SSAO_KERNEL_SIZE;
         scale = lerp(.1f, 1.f, scale * scale);
         sample *= scale;
-        
+
         ssaoKernel[i] = sample;
     }
-    
+
     glm::vec3 ssaoNoise[SSAO_NOISE_SIZE] = {};
     for (u32 i = 0; i < SSAO_NOISE_SIZE; i++)
     {
@@ -1157,10 +1174,10 @@ internal void InitializeSSAONoiseTexture()
         f32 y = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
         glm::vec3 sample(x, y, 0.f);
         sample = glm::normalize(sample);
-        
+
         ssaoNoise[i] = sample;
     }
-    
+
     u32 ssaoNoiseTexture;
     glGenTextures(1, &ssaoNoiseTexture);
     glBindTexture(GL_TEXTURE_2D, ssaoNoiseTexture);
@@ -1170,6 +1187,10 @@ internal void InitializeSSAONoiseTexture()
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    u32 ssaoShader = transientInfo->ssaoShader.id;
+    glUseProgram(ssaoShader);
+    glUniform3fv(glGetUniformLocation(ssaoShader, "noiseTexture"), SSAO_NOISE_SIZE, (f32 *)ssaoNoise);
 }
 
 extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
@@ -1315,11 +1336,11 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     glObjectLabel(GL_BUFFER, transientInfo->matricesUBO, -1, label);
     glBufferData(GL_UNIFORM_BUFFER, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
-    
-    InitializeSSAONoiseTexture();
-    
+
+    InitializeSSAONoiseTexture(transientInfo);
+
     drawingInfo->initialized = true;
-    
+
     return true;
 }
 
@@ -1396,6 +1417,8 @@ extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *tran
         info->modelPositions[i] = transientInfo->models[i].position;
     }
     fwrite(info, sizeof(PersistentDrawingInfo), 1, file);
+    SaveShaderPass(file, &transientInfo->gBufferShader);
+    SaveShaderPass(file, &transientInfo->ssaoShader);
     SaveShaderPass(file, &transientInfo->dirDepthMapShader);
     SaveShaderPass(file, &transientInfo->spotDepthMapShader);
     SaveShaderPass(file, &transientInfo->pointDepthMapShader);
@@ -1468,10 +1491,12 @@ internal bool HasNewVersion(ShaderProgram *program)
 
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
-    if (HasNewVersion(&info->nonPointLightingShader) || HasNewVersion(&info->pointLightingShader) ||
-        HasNewVersion(&info->instancedObjectShader) || HasNewVersion(&info->colorShader) ||
-        HasNewVersion(&info->outlineShader) || HasNewVersion(&info->textureShader) ||
-        HasNewVersion(&info->glassShader) || HasNewVersion(&info->postProcessShader) ||
+    if (HasNewVersion(&info->gBufferShader) || HasNewVersion(&info->ssaoShader) ||
+        HasNewVersion(&info->nonPointLightingShader) || HasNewVersion(&info->pointLightingShader) ||
+        HasNewVersion(&info->dirDepthMapShader) || HasNewVersion(&info->spotDepthMapShader) ||
+        HasNewVersion(&info->pointDepthMapShader) || HasNewVersion(&info->instancedObjectShader) ||
+        HasNewVersion(&info->colorShader) || HasNewVersion(&info->outlineShader) || HasNewVersion(&info->glassShader) ||
+        HasNewVersion(&info->textureShader) || HasNewVersion(&info->postProcessShader) ||
         HasNewVersion(&info->skyboxShader) || HasNewVersion(&info->geometryShader) ||
         HasNewVersion(&info->gaussianShader))
     {
@@ -1691,7 +1716,8 @@ internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
     return glm::normalize(glm::cross(cameraDirection, cameraRightVec));
 }
 
-internal void GetRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 *outViewMatrix, glm::mat4 *outProjectionMatrix)
+internal void GetPerspectiveRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 *outViewMatrix,
+                                              glm::mat4 *outProjectionMatrix)
 {
     glm::vec3 cameraTarget = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
     glm::vec3 cameraUpVec = GetCameraUpVector(cameraInfo);
@@ -1700,6 +1726,18 @@ internal void GetRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 *outViewMat
     *outProjectionMatrix =
         glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, nearPlaneDistance, farPlaneDistance);
     *outViewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
+}
+
+internal void RenderQuad(TransientDrawingInfo *transientInfo, u32 shaderProgram)
+{
+    glm::mat4 identity = glm::mat4(1.f);
+    glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
+    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
+    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
+
+    glBindVertexArray(transientInfo->mainQuadVao);
+    SetShaderUniformMat4(shaderProgram, "modelMatrix", &identity);
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }
 
 internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
@@ -1777,6 +1815,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
             ArenaPop(tempArena, 1920 * 1080 * 4);
 
             glBindFramebuffer(GL_FRAMEBUFFER, savedFBO);
+            glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
             glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &savedViewMatrix);
             glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &savedProjectionMatrix);
         }
@@ -1798,10 +1837,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     glUseProgram(nonPointShaderProgram);
     SetLightingShaderUniforms(cameraInfo, transientInfo, persistentInfo, rearView);
 
-    glm::mat4 modelMatrix = glm::mat4(1.f);
-    SetShaderUniformMat4(nonPointShaderProgram, "modelMatrix", &modelMatrix);
-    glBindVertexArray(transientInfo->mainQuadVao);
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    RenderQuad(transientInfo, nonPointShaderProgram);
 
     // Point lighting.
     // NOTE: perhaps we could do instanced rendering of the spheres instead?
@@ -1809,7 +1845,8 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     glUseProgram(pointShader);
 
     glm::mat4 viewMatrix, projectionMatrix;
-    GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+    GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+    glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
 
@@ -2011,11 +2048,9 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glm::mat4 dirLightSpaceMatrix = dirLightProjectionMatrix * dirLightViewMatrix;
 
     glm::mat4 viewMatrix, projectionMatrix;
-    GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+    GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
 
-    f32 spotLightNearPlaneDistance = .1f;
-    f32 spotLightFarPlaneDistance = 150.f;
-    glm::vec3 spotEye = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
+    glm::vec3 spotEye = cameraInfo->pos;
     glm::mat4 spotLightViewMatrix =
         glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), GetCameraUpVector(cameraInfo));
     glm::mat4 spotLightSpaceMatrix = projectionMatrix * spotLightViewMatrix;
@@ -2220,13 +2255,6 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-internal void SetQuadProjectionViewMatrix()
-{
-    glm::mat4 identity = glm::mat4(1.f);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
-    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
-}
-
 internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *cameraInfo, s32 width, s32 height,
                          bool rearView)
 {
@@ -2246,7 +2274,7 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
     glUseProgram(shaderProgram);
 
     glm::mat4 viewMatrix, projectionMatrix;
-    GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+    GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
     glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
@@ -2258,6 +2286,25 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
 
     glDisable(GL_STENCIL_TEST);
+
+    glPopDebugGroup();
+}
+
+internal void ExecuteSSAOPass(TransientDrawingInfo *transientInfo, bool rearView)
+{
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view SSAO pass" : "Main SSAO pass");
+
+    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->ssaoFBO);
+
+    glBindTextureUnit(10, transientInfo->mainQuads[0]);
+    glBindTextureUnit(11, transientInfo->mainQuads[1]);
+    glBindTextureUnit(12, transientInfo->ssaoNoiseTexture);
+
+    u32 shaderProgram = transientInfo->ssaoShader.id;
+    glUseProgram(shaderProgram);
+    RenderQuad(transientInfo, shaderProgram);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
     glPopDebugGroup();
 }
@@ -2361,7 +2408,9 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, window, listArena, tempArena);
 
     glDisable(GL_DEPTH_TEST);
-    SetQuadProjectionViewMatrix();
+
+    // Main SSAO pass.
+    ExecuteSSAOPass(transientInfo, false);
 
     // Main lighting pass.
     ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, false);
@@ -2374,9 +2423,6 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
 
     // Rear-view skybox pass.
     DrawSkybox(transientInfo, &rearViewCamera, width, height, true);
-
-    SetQuadProjectionViewMatrix();
-    glm::mat4 modelMatrix = glm::mat4(1.f);
 
     // Apply Gaussian blur to brightness texture to generate bloom.
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Gaussian blur for bloom");
@@ -2391,10 +2437,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glBindTextureUnit(10, gaussianQuad);
         horizontal = !horizontal;
 
-        glBindVertexArray(transientInfo->mainQuadVao);
-
-        SetShaderUniformMat4(gaussianShader, "modelMatrix", &modelMatrix);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        RenderQuad(transientInfo, gaussianShader);
 
         gaussianQuad = transientInfo->gaussianQuads[!horizontal];
     }
@@ -2431,10 +2474,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glBindTextureUnit(10, transientInfo->lightingQuads[0]);
         glBindTextureUnit(11, transientInfo->gaussianQuads[0]);
 
-        glBindVertexArray(transientInfo->mainQuadVao);
-
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        RenderQuad(transientInfo, shaderProgram);
 
         glPopDebugGroup();
     }
@@ -2449,8 +2489,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glBindTextureUnit(11, 0);
 
         glBindVertexArray(transientInfo->rearViewQuadVao);
-
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+        glm::mat4 identity(1.f);
+        SetShaderUniformMat4(shaderProgram, "modelMatrix", &identity);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
         glPopDebugGroup();
@@ -2466,7 +2506,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
     glm::mat4 viewMatrix, projectionMatrix;
-    GetRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+    GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
     RenderWithColorShader(transientInfo, persistentInfo);

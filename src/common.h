@@ -213,6 +213,7 @@ struct TransientDrawingInfo
     u32 numModels;
     
     ShaderProgram gBufferShader;
+    ShaderProgram ssaoShader;
     ShaderProgram nonPointLightingShader;
     ShaderProgram pointLightingShader;
     ShaderProgram dirDepthMapShader;
@@ -273,6 +274,9 @@ struct TransientDrawingInfo
     u32 gaussianRBOs[2];
     
     u32 ssaoNoiseTexture;
+    u32 ssaoFBO;
+    u32 ssaoQuad;
+    u32 ssaoRBO;
 };
 
 struct PersistentDrawingInfo
