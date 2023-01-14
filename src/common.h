@@ -214,6 +214,7 @@ struct TransientDrawingInfo
     
     ShaderProgram gBufferShader;
     ShaderProgram ssaoShader;
+    ShaderProgram ssaoBlurShader;
     ShaderProgram nonPointLightingShader;
     ShaderProgram pointLightingShader;
     ShaderProgram dirDepthMapShader;
@@ -277,6 +278,9 @@ struct TransientDrawingInfo
     u32 ssaoFBO;
     u32 ssaoQuad;
     u32 ssaoRBO;
+    u32 ssaoBlurFBO;
+    u32 ssaoBlurQuad;
+    u32 ssaoBlurRBO;
 };
 
 struct PersistentDrawingInfo
@@ -299,6 +303,8 @@ struct PersistentDrawingInfo
     
     f32 gamma = 2.2f;
     f32 exposure = 1.f;
+    f32 ssaoSamplingRadius = .5f;
+    f32 ssaoPower = 1.f;
 };
 
 struct CameraInfo

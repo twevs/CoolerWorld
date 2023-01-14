@@ -3,6 +3,7 @@
 layout (binding = 10) uniform sampler2D positionBuffer; // Alpha = specular.
 layout (binding = 11) uniform sampler2D normalBuffer;   // Alpha reserved for handedness.
 layout (binding = 12) uniform sampler2D albedoBuffer;   // Alpha = shininess.
+layout (binding = 13) uniform sampler2D ssao;
 
 struct PointLight
 {
@@ -35,7 +36,7 @@ uniform PointLight pointLight;
 uniform bool blinn;
 
 // Shadow maps.
-layout (binding = 16) uniform samplerCube pointDepthMap;
+layout (binding = 17) uniform samplerCube pointDepthMap;
 
 // Point light shadow mapping.
 uniform float pointFar;
@@ -88,7 +89,8 @@ void main()
     float intensity = 1.f / (1.f + pointLight.linear * d + pointLight.quadratic * d * d);
 
     // Ambient contribution.
-    vec3 ambient = texture(albedoBuffer, sampleTexCoords).rgb * pointLight.ambient;
+    float ao = texture(ssao, sampleTexCoords).r;
+    vec3 ambient = texture(albedoBuffer, sampleTexCoords).rgb * pointLight.ambient * ao;
 
     // Diffuse contribution.
     vec3 lightDir = normalize(lightPos - fragPos);

@@ -232,6 +232,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
+    if (!CreateShaderProgram(&info->ssaoBlurShader, "vertex_shader.vs", "ssao_blur.fs"))
+    {
+        return false;
+    }
     if (!CreateShaderProgram(&info->nonPointLightingShader, "vertex_shader.vs", "fragment_shader.fs"))
     {
         return false;
@@ -632,6 +636,7 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
     }
     LoadShaderPass(file, &transientInfo->gBufferShader);
     LoadShaderPass(file, &transientInfo->ssaoShader);
+    LoadShaderPass(file, &transientInfo->ssaoBlurShader);
     LoadShaderPass(file, &transientInfo->dirDepthMapShader);
     LoadShaderPass(file, &transientInfo->spotDepthMapShader);
     LoadShaderPass(file, &transientInfo->pointDepthMapShader);
@@ -655,6 +660,7 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
 struct FramebufferOptions
 {
     GLenum internalFormat = GL_RGB;
+    GLenum type = GL_UNSIGNED_BYTE;
     GLenum filteringMethod = GL_LINEAR;
     GLenum wrapMode = GL_REPEAT;
     f32 borderColor[4] = {1.f, 1.f, 1.f, 1.f};
@@ -686,9 +692,9 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
         myAssert(!(depthMap && hdr));
         myAssert(!(depthMap && (numTextures > 1)));
 
-        GLenum type = (depthMap || hdr) ? GL_FLOAT : GL_UNSIGNED_BYTE;
         GLenum format = hdr ? GL_RGBA : internalFormat;
-        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, NULL);
+        myAssert(!((depthMap || hdr) && (options->type != GL_FLOAT)));
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, options->type, NULL);
         GLint filteringMethod = options[i].filteringMethod;
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filteringMethod);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filteringMethod);
@@ -893,6 +899,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     FramebufferOptions hdrBuffer = {};
     hdrBuffer.internalFormat = GL_RGBA16F;
+    hdrBuffer.type = GL_FLOAT;
 
     // Main G-buffer, with 3 colour buffers:
     // 0 = position buffer, 1 = normal buffer, 2 = albedo buffer.
@@ -913,11 +920,16 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     FramebufferOptions ssaoFramebufferOptions = {};
     ssaoFramebufferOptions.internalFormat = GL_RED;
+    ssaoFramebufferOptions.type = GL_FLOAT;
     ssaoFramebufferOptions.filteringMethod = GL_NEAREST;
 
     GLenum ssaoFramebufferStatus =
-        CreateFramebuffer("Post-processing", width, height, &transientInfo->ssaoFBO, &transientInfo->ssaoQuad, 1,
+        CreateFramebuffer("SSAO", width, height, &transientInfo->ssaoFBO, &transientInfo->ssaoQuad, 1,
                           &transientInfo->ssaoRBO, &ssaoFramebufferOptions);
+    myAssert(ssaoFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+    GLenum ssaoBlurFramebufferStatus =
+        CreateFramebuffer("SSAO blur", width, height, &transientInfo->ssaoBlurFBO, &transientInfo->ssaoBlurQuad, 1,
+                          &transientInfo->ssaoBlurRBO, &ssaoFramebufferOptions);
     myAssert(ssaoFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     // 0 = HDR colour buffer, 1 = bloom threshold buffer.
@@ -940,6 +952,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     FramebufferOptions depthBufferOptions = {};
     depthBufferOptions.internalFormat = GL_DEPTH_COMPONENT;
+    depthBufferOptions.type = GL_FLOAT;
     depthBufferOptions.filteringMethod = GL_NEAREST;
     depthBufferOptions.wrapMode = GL_CLAMP_TO_BORDER;
 
@@ -1146,7 +1159,7 @@ internal f32 lerp(f32 a, f32 b, f32 alpha)
 #define SSAO_KERNEL_SIZE 64
 #define SSAO_NOISE_SIZE 16
 
-internal void InitializeSSAONoiseTexture(TransientDrawingInfo *transientInfo)
+internal void GenerateSSAOSamplesAndNoise(TransientDrawingInfo *transientInfo)
 {
     srand((u32)Win32GetWallClock());
 
@@ -1167,6 +1180,10 @@ internal void InitializeSSAONoiseTexture(TransientDrawingInfo *transientInfo)
         ssaoKernel[i] = sample;
     }
 
+    u32 ssaoShader = transientInfo->ssaoShader.id;
+    glUseProgram(ssaoShader);
+    glUniform3fv(glGetUniformLocation(ssaoShader, "samples"), SSAO_KERNEL_SIZE, (f32 *)ssaoKernel);
+
     glm::vec3 ssaoNoise[SSAO_NOISE_SIZE] = {};
     for (u32 i = 0; i < SSAO_NOISE_SIZE; i++)
     {
@@ -1178,19 +1195,15 @@ internal void InitializeSSAONoiseTexture(TransientDrawingInfo *transientInfo)
         ssaoNoise[i] = sample;
     }
 
-    u32 ssaoNoiseTexture;
-    glGenTextures(1, &ssaoNoiseTexture);
-    glBindTexture(GL_TEXTURE_2D, ssaoNoiseTexture);
+    u32 *ssaoNoiseTexture = &transientInfo->ssaoNoiseTexture;
+    glGenTextures(1, ssaoNoiseTexture);
+    glBindTexture(GL_TEXTURE_2D, *ssaoNoiseTexture);
     u32 sideLength = (u32)(sqrtf(SSAO_NOISE_SIZE));
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, sideLength, sideLength, 0, GL_RGB, GL_FLOAT, &ssaoNoise);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-
-    u32 ssaoShader = transientInfo->ssaoShader.id;
-    glUseProgram(ssaoShader);
-    glUniform3fv(glGetUniformLocation(ssaoShader, "noiseTexture"), SSAO_NOISE_SIZE, (f32 *)ssaoNoise);
 }
 
 extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
@@ -1224,6 +1237,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     AddModelToShaderPass(&transientInfo->pointDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->gBufferShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->ssaoShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->ssaoBlurShader, backpackIndex);
 
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
@@ -1308,6 +1323,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->gBufferShader, curTexCubeIndex);
+        AddObjectToShaderPass(&transientInfo->ssaoShader, curTexCubeIndex);
+        AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curTexCubeIndex);
     }
 
     Textures wallTextures = CreateTextures("bricks2.jpg", "", "bricks2_normal.jpg", "bricks2_disp.jpg");
@@ -1318,6 +1335,8 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->gBufferShader, curWallIndex);
+        AddObjectToShaderPass(&transientInfo->ssaoShader, curWallIndex);
+        AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curWallIndex);
     }
 
     drawingInfo->dirLight.direction =
@@ -1337,7 +1356,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     glBufferData(GL_UNIFORM_BUFFER, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
 
-    InitializeSSAONoiseTexture(transientInfo);
+    GenerateSSAOSamplesAndNoise(transientInfo);
 
     drawingInfo->initialized = true;
 
@@ -1419,6 +1438,7 @@ extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *tran
     fwrite(info, sizeof(PersistentDrawingInfo), 1, file);
     SaveShaderPass(file, &transientInfo->gBufferShader);
     SaveShaderPass(file, &transientInfo->ssaoShader);
+    SaveShaderPass(file, &transientInfo->ssaoBlurShader);
     SaveShaderPass(file, &transientInfo->dirDepthMapShader);
     SaveShaderPass(file, &transientInfo->spotDepthMapShader);
     SaveShaderPass(file, &transientInfo->pointDepthMapShader);
@@ -1492,10 +1512,11 @@ internal bool HasNewVersion(ShaderProgram *program)
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
     if (HasNewVersion(&info->gBufferShader) || HasNewVersion(&info->ssaoShader) ||
-        HasNewVersion(&info->nonPointLightingShader) || HasNewVersion(&info->pointLightingShader) ||
-        HasNewVersion(&info->dirDepthMapShader) || HasNewVersion(&info->spotDepthMapShader) ||
-        HasNewVersion(&info->pointDepthMapShader) || HasNewVersion(&info->instancedObjectShader) ||
-        HasNewVersion(&info->colorShader) || HasNewVersion(&info->outlineShader) || HasNewVersion(&info->glassShader) ||
+        HasNewVersion(&info->ssaoBlurShader) || HasNewVersion(&info->nonPointLightingShader) ||
+        HasNewVersion(&info->pointLightingShader) || HasNewVersion(&info->dirDepthMapShader) ||
+        HasNewVersion(&info->spotDepthMapShader) || HasNewVersion(&info->pointDepthMapShader) ||
+        HasNewVersion(&info->instancedObjectShader) || HasNewVersion(&info->colorShader) ||
+        HasNewVersion(&info->outlineShader) || HasNewVersion(&info->glassShader) ||
         HasNewVersion(&info->textureShader) || HasNewVersion(&info->postProcessShader) ||
         HasNewVersion(&info->skyboxShader) || HasNewVersion(&info->geometryShader) ||
         HasNewVersion(&info->gaussianShader))
@@ -1670,40 +1691,6 @@ internal void FillGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transien
     RenderShaderPass(&transientInfo->gBufferShader, transientInfo);
 }
 
-internal void SetLightingShaderUniforms(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                                        PersistentDrawingInfo *persistentInfo, bool rearView)
-{
-    u32 nonPointShader = transientInfo->nonPointLightingShader.id;
-    glUseProgram(nonPointShader);
-
-    SetShaderUniformFloat(nonPointShader, "shininess", persistentInfo->materialShininess);
-    SetShaderUniformInt(nonPointShader, "blinn", persistentInfo->blinn);
-
-    SetShaderUniformVec3(nonPointShader, "dirLight.direction", persistentInfo->dirLight.direction);
-    SetShaderUniformVec3(nonPointShader, "dirLight.ambient", persistentInfo->dirLight.ambient);
-    SetShaderUniformVec3(nonPointShader, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
-    SetShaderUniformVec3(nonPointShader, "dirLight.specular", persistentInfo->dirLight.specular);
-
-    SetShaderUniformVec3(nonPointShader, "spotLight.position", cameraInfo->pos);
-    SetShaderUniformVec3(nonPointShader, "spotLight.direction", GetCameraForwardVector(cameraInfo));
-    SetShaderUniformFloat(nonPointShader, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
-    SetShaderUniformFloat(nonPointShader, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
-    SetShaderUniformVec3(nonPointShader, "spotLight.ambient", persistentInfo->spotLight.ambient);
-    SetShaderUniformVec3(nonPointShader, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
-    SetShaderUniformVec3(nonPointShader, "spotLight.specular", persistentInfo->spotLight.specular);
-
-    SetShaderUniformVec3(nonPointShader, "cameraPos", cameraInfo->pos);
-
-    SetShaderUniformFloat(nonPointShader, "heightScale", .1f);
-
-    glBindTextureUnit(10, rearView ? transientInfo->rearViewQuads[0] : transientInfo->mainQuads[0]);
-    glBindTextureUnit(11, rearView ? transientInfo->rearViewQuads[1] : transientInfo->mainQuads[1]);
-    glBindTextureUnit(12, rearView ? transientInfo->rearViewQuads[2] : transientInfo->mainQuads[2]);
-    glBindTextureUnit(13, transientInfo->skyboxTexture);
-    glBindTextureUnit(14, transientInfo->dirShadowMapQuad);
-    glBindTextureUnit(15, transientInfo->spotShadowMapQuad);
-}
-
 internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
 {
     glm::vec3 cameraForwardVec = GetCameraForwardVector(cameraInfo);
@@ -1728,6 +1715,46 @@ internal void GetPerspectiveRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 
     *outViewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 }
 
+internal void SetLightingShaderUniforms(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                                        PersistentDrawingInfo *persistentInfo, bool rearView)
+{
+    glBindTextureUnit(10, rearView ? transientInfo->rearViewQuads[0] : transientInfo->mainQuads[0]);
+    glBindTextureUnit(11, rearView ? transientInfo->rearViewQuads[1] : transientInfo->mainQuads[1]);
+    glBindTextureUnit(12, rearView ? transientInfo->rearViewQuads[2] : transientInfo->mainQuads[2]);
+    glBindTextureUnit(13, transientInfo->ssaoQuad);
+    glBindTextureUnit(14, transientInfo->skyboxTexture);
+    glBindTextureUnit(15, transientInfo->dirShadowMapQuad);
+    glBindTextureUnit(16, transientInfo->spotShadowMapQuad);
+
+    u32 nonPointShader = transientInfo->nonPointLightingShader.id;
+    glUseProgram(nonPointShader);
+
+    SetShaderUniformFloat(nonPointShader, "shininess", persistentInfo->materialShininess);
+    SetShaderUniformInt(nonPointShader, "blinn", persistentInfo->blinn);
+
+    SetShaderUniformVec3(nonPointShader, "dirLight.direction", persistentInfo->dirLight.direction);
+    SetShaderUniformVec3(nonPointShader, "dirLight.ambient", persistentInfo->dirLight.ambient);
+    SetShaderUniformVec3(nonPointShader, "dirLight.diffuse", persistentInfo->dirLight.diffuse);
+    SetShaderUniformVec3(nonPointShader, "dirLight.specular", persistentInfo->dirLight.specular);
+
+    SetShaderUniformVec3(nonPointShader, "spotLight.position", cameraInfo->pos);
+    SetShaderUniformVec3(nonPointShader, "spotLight.direction", GetCameraForwardVector(cameraInfo));
+    SetShaderUniformFloat(nonPointShader, "spotLight.innerCutoff", cosf(persistentInfo->spotLight.innerCutoff));
+    SetShaderUniformFloat(nonPointShader, "spotLight.outerCutoff", cosf(persistentInfo->spotLight.outerCutoff));
+    SetShaderUniformVec3(nonPointShader, "spotLight.ambient", persistentInfo->spotLight.ambient);
+    SetShaderUniformVec3(nonPointShader, "spotLight.diffuse", persistentInfo->spotLight.diffuse);
+    SetShaderUniformVec3(nonPointShader, "spotLight.specular", persistentInfo->spotLight.specular);
+
+    SetShaderUniformVec3(nonPointShader, "cameraPos", cameraInfo->pos);
+
+    SetShaderUniformFloat(nonPointShader, "heightScale", .1f);
+
+    u32 pointShader = transientInfo->pointLightingShader.id;
+    glUseProgram(pointShader);
+    SetShaderUniformInt(pointShader, "blinn", persistentInfo->blinn);
+    SetShaderUniformVec3(pointShader, "cameraPos", cameraInfo->pos);
+}
+
 internal void RenderQuad(TransientDrawingInfo *transientInfo, u32 shaderProgram)
 {
     glm::mat4 identity = glm::mat4(1.f);
@@ -1736,6 +1763,7 @@ internal void RenderQuad(TransientDrawingInfo *transientInfo, u32 shaderProgram)
     glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
 
     glBindVertexArray(transientInfo->mainQuadVao);
+    glUseProgram(shaderProgram);
     SetShaderUniformMat4(shaderProgram, "modelMatrix", &identity);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 }
@@ -1927,7 +1955,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
         SetShaderUniformFloat(pointShader, "pointLight.linear", att->linear);
         SetShaderUniformFloat(pointShader, "pointLight.quadratic", att->quadratic);
 
-        glBindTextureUnit(16, transientInfo->pointShadowMapQuad[lightIndex]);
+        glBindTextureUnit(17, transientInfo->pointShadowMapQuad[lightIndex]);
 
         for (u32 i = 0; i < model->meshCount; i++)
         {
@@ -2119,6 +2147,8 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
 
     ImGui::SliderFloat("Gamma correction", &persistentInfo->gamma, 0.f, 5.f);
     ImGui::SliderFloat("Exposure", &persistentInfo->exposure, 0.f, 5.f);
+    ImGui::SliderFloat("SSAO sampling radius", &persistentInfo->ssaoSamplingRadius, 0.f, 1.f);
+    ImGui::SliderFloat("SSAO power", &persistentInfo->ssaoPower, 0.f, 8.f);
 
     ImGui::Separator();
 
@@ -2290,21 +2320,42 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
     glPopDebugGroup();
 }
 
-internal void ExecuteSSAOPass(TransientDrawingInfo *transientInfo, bool rearView)
+internal void ExecuteSSAOPass(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
+                              CameraInfo *cameraInfo, glm::vec2 screenSize, bool rearView)
 {
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view SSAO pass" : "Main SSAO pass");
 
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Sampling subpass");
     glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->ssaoFBO);
-
-    glBindTextureUnit(10, transientInfo->mainQuads[0]);
-    glBindTextureUnit(11, transientInfo->mainQuads[1]);
-    glBindTextureUnit(12, transientInfo->ssaoNoiseTexture);
+    glClear(GL_COLOR_BUFFER_BIT);
 
     u32 shaderProgram = transientInfo->ssaoShader.id;
     glUseProgram(shaderProgram);
+    glBindTextureUnit(10, transientInfo->mainQuads[0]);
+    glBindTextureUnit(11, transientInfo->mainQuads[1]);
+    glBindTextureUnit(12, transientInfo->ssaoNoiseTexture);
+    glm::mat4 cameraViewMatrix, cameraProjectionMatrix;
+    GetPerspectiveRenderingMatrices(cameraInfo, &cameraViewMatrix, &cameraProjectionMatrix);
+    SetShaderUniformMat4(shaderProgram, "cameraViewMatrix", &cameraViewMatrix);
+    SetShaderUniformMat4(shaderProgram, "cameraProjectionMatrix", &cameraProjectionMatrix);
+    SetShaderUniformVec2(shaderProgram, "screenSize", screenSize);
+    SetShaderUniformFloat(shaderProgram, "radius", persistentInfo->ssaoSamplingRadius);
+    SetShaderUniformFloat(shaderProgram, "power", persistentInfo->ssaoPower);
     RenderQuad(transientInfo, shaderProgram);
 
-    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glPopDebugGroup();
+
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Noise subpass");
+
+    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->ssaoBlurFBO);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    shaderProgram = transientInfo->ssaoBlurShader.id;
+    glUseProgram(shaderProgram);
+    glBindTextureUnit(10, transientInfo->ssaoQuad);
+    RenderQuad(transientInfo, shaderProgram);
+
+    glPopDebugGroup();
 
     glPopDebugGroup();
 }
@@ -2410,7 +2461,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     glDisable(GL_DEPTH_TEST);
 
     // Main SSAO pass.
-    ExecuteSSAOPass(transientInfo, false);
+    glm::vec2 screenSize(width, height);
+    ExecuteSSAOPass(transientInfo, persistentInfo, cameraInfo, screenSize, false);
 
     // Main lighting pass.
     ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, false);

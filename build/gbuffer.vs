@@ -33,8 +33,8 @@ void main()
     texCoords = aTexCoords;
 	
 	// NOTE: Assimp's aiProcess_CalcTangentSpace produces unit vectors.
-	vec3 tangent = normalize(vec3(modelMatrix * vec4(aTangent, 0.f)));
-	vec3 norm = normalize(vec3(modelMatrix * vec4(aNormal, 0.f)));
+	vec3 tangent = normalize(normalMatrix * aTangent);
+	vec3 norm = normalize(normalMatrix * aNormal);
 	tangent = normalize(tangent - dot(tangent, norm) * norm);
 	// vec3 bitangent = normalize(vec3(modelMatrix * vec4(aBitangent, 0.f)));
 	vec3 bitangent = cross(norm, tangent);
