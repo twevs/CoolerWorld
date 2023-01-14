@@ -1079,13 +1079,13 @@ internal void AddObjectToShaderPass(ShaderProgram *shader, u32 objectIndex)
     myAssert(shader->numObjects <= MAX_OBJECTS);
 }
 
-// Following Lenyel's "Foundations of Game Engine Development", vol. 1 (2016), p. 35.
+// Following Lengyel's "Foundations of Game Engine Development", vol. 1 (2016), p. 35.
 internal glm::vec3 Reject(glm::vec3 a, glm::vec3 b)
 {
     return (a - b * dot(a, b) / dot(b, b));
 }
 
-// Following Lenyel's "Foundations of Game Engine Development", vol. 2 (2019), pp. 114-5.
+// Following Lengyel's "Foundations of Game Engine Development", vol. 2 (2019), pp. 114-5.
 internal void CalculateTangents(Vertex *vertices, u32 numVertices, u32 *indices, u32 numIndices, Arena *arena)
 {
     u64 allocatedSize = sizeof(glm::vec3) * numVertices * 2;
@@ -1145,7 +1145,7 @@ internal void CalculateTangents(Vertex *vertices, u32 numVertices, u32 *indices,
         // TODO: use a vec4 type for the tangent so we can forego storing the bitangent and can access
         // the handedness in the shader?
         vertices[i].tangent = tan;
-        vertices[i].bitangent = bitangent;
+        vertices[i].bitangent = normalize(bitangent);
     }
 
     ArenaPop(arena, allocatedSize);
@@ -1242,15 +1242,16 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
 
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
-    // 4 vertices per face * 6 faces * (vec3 pos + vec3 normal + vec2 texCoords).
-    f32 rectVertices[192];
+    // 4 vertices per face * 6 faces * (vec3 pos + vec3 normal + vec2 texCoords + vec3 tangent + vec3 bitangent);
+    f32 rectVertices[4 * 6 * (3 + 3 + 2 + 3 + 3)] = {};
     u32 rectIndices[36];
     fread(rectVertices, sizeof(f32), myArraySize(rectVertices), rectFile);
     fread(rectIndices, sizeof(u32), myArraySize(rectIndices), rectFile);
     fclose(rectFile);
+    CalculateTangents((Vertex *)rectVertices, 24, rectIndices, 36, texturesArena);
 
-    transientInfo->cubeVao = CreateVAO(rectVertices, sizeof(rectVertices), elemCounts, myArraySize(elemCounts),
-                                       rectIndices, sizeof(rectIndices));
+    transientInfo->cubeVao = CreateVAO(rectVertices, sizeof(rectVertices), bitangentElemCounts,
+                                       myArraySize(bitangentElemCounts), rectIndices, sizeof(rectIndices));
 
     Vertex quadVertices[4] = {{
                                   // Top-right.
@@ -1316,6 +1317,7 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
 
     Textures cubeTextures = {};
     cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
+    cubeTextures.normals = CreateTexture("flat_surface_normals.png", TextureType::Normals);
     for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
     {
         u32 curTexCubeIndex = AddObject(transientInfo, transientInfo->cubeVao, 36, CreateRandomVec3(), &cubeTextures);
@@ -1534,10 +1536,7 @@ internal void RenderObject(Object *object, u32 shaderProgram, f32 yRot = 0.f, fl
     glBindTextureUnit(11, object->textures.specular.id);
     glBindTextureUnit(12, object->textures.normals.id);
     glBindTextureUnit(13, object->textures.displacement.id);
-    if (object->textures.displacement.id > 0)
-    {
-        SetShaderUniformInt(shaderProgram, "displace", 1);
-    }
+    SetShaderUniformInt(shaderProgram, "displace", object->textures.displacement.id > 0);
 
     // Model matrix: transforms vertices from local to world space.
     glm::mat4 modelMatrix = glm::mat4(1.f);
@@ -1609,11 +1608,8 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
         {
             glBindTextureUnit(10 + textureSlot, mesh->textures[textureSlot].id);
         }
-        if (textureSlot == 4)
-        {
-            SetShaderUniformInt(shaderProgram, "displace", 1);
-        }
-        else
+        SetShaderUniformInt(shaderProgram, "displace", textureSlot == 4);
+        if (textureSlot < 4)
         {
             glBindTextureUnit(13, 0);
         }
