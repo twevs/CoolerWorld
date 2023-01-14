@@ -2053,8 +2053,8 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     GetPassTypeAsString(passType, 32, passTypeAsString);
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, passTypeAsString);
 
-    float *cc = persistentInfo->clearColor;
-    glClearColor(cc[0], cc[1], cc[2], cc[3]);
+    // NOTE: SSAO shader relies on position buffer background being (0, 0, 0).
+    glClearColor(0.f, 0.f, 0.f, 1.f);
     glStencilMask(0xff);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     glStencilMask(0x00);
@@ -2194,8 +2194,6 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     ImGui::Text("Depth-test function (press U/I to change): %s", depthTestFuncStr);
 
     ImGui::Separator();
-
-    ImGui::SliderFloat4("Clear color", persistentInfo->clearColor, 0.f, 1.f);
 
     if (ImGui::CollapsingHeader("Positions"))
     {

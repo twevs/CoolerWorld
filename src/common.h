@@ -293,7 +293,6 @@ struct PersistentDrawingInfo
     u32 numModels;
     glm::vec3 modelPositions[MAX_MODELS];
 
-    float clearColor[4] = {0.f, 0.f, 0.f, 1.f};
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;

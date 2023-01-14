@@ -37,6 +37,7 @@ void main()
 	mat3 tbn = mat3(tangent, bitangent, normalVS);
 	
 	float occlusion = 0.f;
+	int rejected = 0;
 	for (int i = 0; i < SSAO_KERNEL_SIZE; i++)
 	{
 		vec3 samplePosVS = tbn * samples[i];
@@ -46,11 +47,17 @@ void main()
 		samplePosScreen.xy /= samplePosScreen.w;
 		samplePosScreen.xy = samplePosScreen.xy * .5f + .5f;
 		
-		float sampleDepth = (cameraViewMatrix * vec4(texture(positionBuffer, samplePosScreen.xy).rgb, 1.f)).z;
+		vec3 renderedPosScreen = texture(positionBuffer, samplePosScreen.xy).rgb;
+		if (all(equal(vec3(0.f), renderedPosScreen)))
+		{
+			rejected++;
+			continue;
+		}
+		float sampleDepth = (cameraViewMatrix * vec4(renderedPosScreen, 1.f)).z;
 		float bias = .025f;
 		float rangeCheck = smoothstep(0.f, 1.f, radius / abs(fragPosVS.z - sampleDepth));
 		occlusion += ((sampleDepth >= samplePosVS.z + bias) ? 1.f : 0.f) * rangeCheck;
 	}
-	occlusion = 1.f - (occlusion / float(SSAO_KERNEL_SIZE));
+	occlusion = 1.f - (occlusion / float(SSAO_KERNEL_SIZE - rejected));
 	fragColor = pow(occlusion, power);
 }
