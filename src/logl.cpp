@@ -228,7 +228,15 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
+    if (!CreateShaderProgram(&info->viewSpaceGBufferShader, "test_gbuffer.vs", "test_gbuffer.fs"))
+    {
+        return false;
+    }
     if (!CreateShaderProgram(&info->ssaoShader, "vertex_shader.vs", "ssao.fs"))
+    {
+        return false;
+    }
+    if (!CreateShaderProgram(&info->testSsaoShader, "vertex_shader.vs", "test_ssao.fs"))
     {
         return false;
     }
@@ -912,6 +920,10 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
         CreateFramebuffer("Main G-buffer", width, height, &transientInfo->mainFBO, transientInfo->mainQuads, 3,
                           &transientInfo->mainRBO, gBufferOptions);
     myAssert(mainFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+    GLenum testFramebufferStatus =
+        CreateFramebuffer("Test G-buffer", width, height, &transientInfo->viewSpaceFBO, transientInfo->viewSpaceQuads,
+                          3, &transientInfo->viewSpaceRBO, gBufferOptions);
+    myAssert(testFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     GLenum rearViewFramebufferStatus =
         CreateFramebuffer("Rear-view G-buffer", width, height, &transientInfo->rearViewFBO,
@@ -927,6 +939,10 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
         CreateFramebuffer("SSAO", width, height, &transientInfo->ssaoFBO, &transientInfo->ssaoQuad, 1,
                           &transientInfo->ssaoRBO, &ssaoFramebufferOptions);
     myAssert(ssaoFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
+    GLenum testSsaoFramebufferStatus = CreateFramebuffer("Test SSAO", width, height, &transientInfo->viewSpaceSsaoFBO,
+                                                         &transientInfo->viewSpaceSsaoQuad, 1,
+                                                         &transientInfo->viewSpaceSsaoRBO, &ssaoFramebufferOptions);
+    myAssert(testSsaoFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
     GLenum ssaoBlurFramebufferStatus =
         CreateFramebuffer("SSAO blur", width, height, &transientInfo->ssaoBlurFBO, &transientInfo->ssaoBlurQuad, 1,
                           &transientInfo->ssaoBlurRBO, &ssaoFramebufferOptions);
@@ -1183,6 +1199,9 @@ internal void GenerateSSAOSamplesAndNoise(TransientDrawingInfo *transientInfo)
     u32 ssaoShader = transientInfo->ssaoShader.id;
     glUseProgram(ssaoShader);
     glUniform3fv(glGetUniformLocation(ssaoShader, "samples"), SSAO_KERNEL_SIZE, (f32 *)ssaoKernel);
+    u32 testSsaoShader = transientInfo->testSsaoShader.id;
+    glUseProgram(testSsaoShader);
+    glUniform3fv(glGetUniformLocation(testSsaoShader, "samples"), SSAO_KERNEL_SIZE, (f32 *)ssaoKernel);
 
     glm::vec3 ssaoNoise[SSAO_NOISE_SIZE] = {};
     for (u32 i = 0; i < SSAO_NOISE_SIZE; i++)
@@ -1236,8 +1255,10 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->pointDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->gBufferShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->viewSpaceGBufferShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->ssaoShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->testSsaoShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->ssaoBlurShader, backpackIndex);
 
     FILE *rectFile;
@@ -1325,7 +1346,9 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->gBufferShader, curTexCubeIndex);
+        AddObjectToShaderPass(&transientInfo->viewSpaceGBufferShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->ssaoShader, curTexCubeIndex);
+        AddObjectToShaderPass(&transientInfo->testSsaoShader, curTexCubeIndex);
         AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curTexCubeIndex);
     }
 
@@ -1337,7 +1360,9 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->gBufferShader, curWallIndex);
+        AddObjectToShaderPass(&transientInfo->viewSpaceGBufferShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->ssaoShader, curWallIndex);
+        AddObjectToShaderPass(&transientInfo->testSsaoShader, curWallIndex);
         AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curWallIndex);
     }
 
@@ -1514,11 +1539,11 @@ internal bool HasNewVersion(ShaderProgram *program)
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
     if (HasNewVersion(&info->gBufferShader) || HasNewVersion(&info->ssaoShader) ||
-        HasNewVersion(&info->ssaoBlurShader) || HasNewVersion(&info->nonPointLightingShader) ||
-        HasNewVersion(&info->pointLightingShader) || HasNewVersion(&info->dirDepthMapShader) ||
-        HasNewVersion(&info->spotDepthMapShader) || HasNewVersion(&info->pointDepthMapShader) ||
-        HasNewVersion(&info->instancedObjectShader) || HasNewVersion(&info->colorShader) ||
-        HasNewVersion(&info->outlineShader) || HasNewVersion(&info->glassShader) ||
+        HasNewVersion(&info->testSsaoShader) || HasNewVersion(&info->ssaoBlurShader) ||
+        HasNewVersion(&info->nonPointLightingShader) || HasNewVersion(&info->pointLightingShader) ||
+        HasNewVersion(&info->dirDepthMapShader) || HasNewVersion(&info->spotDepthMapShader) ||
+        HasNewVersion(&info->pointDepthMapShader) || HasNewVersion(&info->instancedObjectShader) ||
+        HasNewVersion(&info->colorShader) || HasNewVersion(&info->outlineShader) || HasNewVersion(&info->glassShader) ||
         HasNewVersion(&info->textureShader) || HasNewVersion(&info->postProcessShader) ||
         HasNewVersion(&info->skyboxShader) || HasNewVersion(&info->geometryShader) ||
         HasNewVersion(&info->gaussianShader))
@@ -1592,7 +1617,7 @@ enum class RenderPassType
 
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
                u32 fbo, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false,
-               RenderPassType passType = RenderPassType::Normal);
+               RenderPassType passType = RenderPassType::Normal, bool rearView = false);
 
 internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 numInstances = 1)
 {
@@ -1685,6 +1710,19 @@ internal void FillGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transien
     SetGBufferUniforms(shaderProgram, persistentInfo, cameraInfo);
 
     RenderShaderPass(&transientInfo->gBufferShader, transientInfo);
+}
+
+internal void FillViewSpaceGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
+                                   PersistentDrawingInfo *persistentInfo)
+{
+    u32 shaderProgram = transientInfo->viewSpaceGBufferShader.id;
+    glUseProgram(shaderProgram);
+
+    SetShaderUniformFloat(shaderProgram, "shininess", persistentInfo->materialShininess);
+    SetShaderUniformVec3(shaderProgram, "cameraPos", cameraInfo->pos);
+    SetShaderUniformFloat(shaderProgram, "heightScale", .1f);
+
+    RenderShaderPass(&transientInfo->viewSpaceGBufferShader, transientInfo);
 }
 
 internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
@@ -2046,15 +2084,15 @@ internal void GetPassTypeAsString(RenderPassType type, u32 bufSize, char *outStr
 }
 
 void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
-               u32 fbo, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass, RenderPassType passType)
+               u32 fbo, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass, RenderPassType passType,
+               bool rearView)
 {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     char passTypeAsString[32];
     GetPassTypeAsString(passType, 32, passTypeAsString);
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, passTypeAsString);
 
-    float *cc = persistentInfo->clearColor;
-    glClearColor(cc[0], cc[1], cc[2], cc[3]);
+    glClearColor(0.f, 0.f, 0.f, 1.f);
     glStencilMask(0xff);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     glStencilMask(0x00);
@@ -2112,6 +2150,33 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         FillGBuffer(cameraInfo, transientInfo, persistentInfo);
 
         glDisable(GL_STENCIL_TEST);
+
+        /*******************************/
+
+        if (!rearView)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->viewSpaceFBO);
+            glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Test G-buffer pass");
+
+            glClearColor(cc[0], cc[1], cc[2], cc[3]);
+            glStencilMask(0xff);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+            glStencilMask(0x00);
+
+            glEnable(GL_STENCIL_TEST);
+            glStencilMask(0xff);
+            glStencilFunc(GL_ALWAYS, 1, 0xff);
+            glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+
+            // G-buffer pass.
+            FillViewSpaceGBuffer(cameraInfo, transientInfo, persistentInfo);
+
+            glDisable(GL_STENCIL_TEST);
+
+            glPopDebugGroup();
+        }
+
+        /*******************************/
 
         // RenderWithGeometryShader(transientInfo);
 
@@ -2356,6 +2421,46 @@ internal void ExecuteSSAOPass(TransientDrawingInfo *transientInfo, PersistentDra
     glPopDebugGroup();
 }
 
+// SSAO pass which uses the G-buffer that passes positions and normals in view space.
+internal void ExecuteViewSpaceSSAOPass(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
+                                       CameraInfo *cameraInfo, glm::vec2 screenSize, bool rearView)
+{
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view test SSAO pass" : "Main test SSAO pass");
+
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Sampling subpass");
+    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->viewSpaceSsaoFBO);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    u32 shaderProgram = transientInfo->testSsaoShader.id;
+    glUseProgram(shaderProgram);
+    glBindTextureUnit(10, transientInfo->viewSpaceQuads[0]);
+    glBindTextureUnit(11, transientInfo->viewSpaceQuads[1]);
+    glBindTextureUnit(12, transientInfo->ssaoNoiseTexture);
+    glm::mat4 cameraViewMatrix, cameraProjectionMatrix;
+    GetPerspectiveRenderingMatrices(cameraInfo, &cameraViewMatrix, &cameraProjectionMatrix);
+    SetShaderUniformMat4(shaderProgram, "cameraProjectionMatrix", &cameraProjectionMatrix);
+    SetShaderUniformVec2(shaderProgram, "screenSize", screenSize);
+    SetShaderUniformFloat(shaderProgram, "radius", persistentInfo->ssaoSamplingRadius);
+    SetShaderUniformFloat(shaderProgram, "power", persistentInfo->ssaoPower);
+    RenderQuad(transientInfo, shaderProgram);
+
+    glPopDebugGroup();
+
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Noise subpass");
+
+    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->ssaoBlurFBO);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    shaderProgram = transientInfo->ssaoBlurShader.id;
+    glUseProgram(shaderProgram);
+    glBindTextureUnit(10, transientInfo->viewSpaceSsaoQuad);
+    RenderQuad(transientInfo, shaderProgram);
+
+    glPopDebugGroup();
+
+    glPopDebugGroup();
+}
+
 extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *running,
                                                  TransientDrawingInfo *transientInfo,
                                                  PersistentDrawingInfo *persistentInfo, CameraInfo *cameraInfo,
@@ -2452,13 +2557,15 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     rearViewCamera.rightVector = GetCameraRightVector(&rearViewCamera);
 
     // Rear-view pass.
-    DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, window, listArena, tempArena);
+    DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFBO, window, listArena, tempArena,
+              false, RenderPassType::Normal, true);
 
     glDisable(GL_DEPTH_TEST);
 
     // Main SSAO pass.
     glm::vec2 screenSize(width, height);
     ExecuteSSAOPass(transientInfo, persistentInfo, cameraInfo, screenSize, false);
+    ExecuteViewSpaceSSAOPass(transientInfo, persistentInfo, cameraInfo, screenSize, false);
 
     // Main lighting pass.
     ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, false);

@@ -213,7 +213,9 @@ struct TransientDrawingInfo
     u32 numModels;
     
     ShaderProgram gBufferShader;
+    ShaderProgram viewSpaceGBufferShader;
     ShaderProgram ssaoShader;
+    ShaderProgram testSsaoShader;
     ShaderProgram ssaoBlurShader;
     ShaderProgram nonPointLightingShader;
     ShaderProgram pointLightingShader;
@@ -241,6 +243,12 @@ struct TransientDrawingInfo
     u32 mainFBO;
     u32 mainQuads[3];
     u32 mainRBO;
+    
+    // G-buffer which passes positions and normals in view space instead of world space.
+    u32 viewSpaceQuadVao;
+    u32 viewSpaceFBO;
+    u32 viewSpaceQuads[3];
+    u32 viewSpaceRBO;
 
     u32 rearViewQuadVao;
     u32 rearViewFBO;
@@ -280,7 +288,12 @@ struct TransientDrawingInfo
     u32 ssaoRBO;
     u32 ssaoBlurFBO;
     u32 ssaoBlurQuad;
-    u32 ssaoBlurRBO;
+    u32 ssaoBlurRBO;    
+    
+    // SSAO framebuffer which uses the view-space G-buffer.
+    u32 viewSpaceSsaoFBO;
+    u32 viewSpaceSsaoQuad;
+    u32 viewSpaceSsaoRBO;
 };
 
 struct PersistentDrawingInfo
@@ -293,7 +306,6 @@ struct PersistentDrawingInfo
     u32 numModels;
     glm::vec3 modelPositions[MAX_MODELS];
 
-    float clearColor[4] = {0.f, 0.f, 0.f, 1.f};
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;
