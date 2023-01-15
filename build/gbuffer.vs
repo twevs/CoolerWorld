@@ -6,8 +6,6 @@ layout (location = 2) in vec2 aTexCoords;
 layout (location = 3) in vec3 aTangent;
 layout (location = 4) in vec3 aBitangent;
 
-#define NUM_POINTLIGHTS 4
-
 out vec3 fragPosWS;
 out vec2 texCoords;
 out mat3 tbn;

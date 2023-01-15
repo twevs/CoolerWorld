@@ -1,7 +1,7 @@
 #include "common.h"
 #include "skiplist.h"
 
-#define NUM_ASTEROIDS 100000
+#define NUM_ASTEROIDS 10000
 
 global_variable ImGuiContext *imGuiContext;
 global_variable ImGuiIO *imGuiIO;
@@ -319,7 +319,7 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     {
         return false;
     }
-    if (!CreateShaderProgram(&info->instancedObjectShader, "instanced.vs", "fragment_shader.fs"))
+    if (!CreateShaderProgram(&info->instancedObjectShader, "instanced.vs", "gbuffer.fs"))
     {
         return false;
     }
@@ -619,9 +619,9 @@ internal u32 CreateVAO(VaoInformation *vaoInfo)
     {
         u32 elemCount = vaoInfo->elemCounts[index];
 
-        glEnableVertexArrayAttrib(vao, index);
         glVertexArrayAttribFormat(vao, index, elemCount, GL_FLOAT, GL_FALSE, accumulator * sizeof(float));
         glVertexArrayAttribBinding(vao, index, 0);
+        glEnableVertexArrayAttrib(vao, index);
 
         accumulator += elemCount;
     }
@@ -886,7 +886,6 @@ internal void SetUpAsteroids(Model *asteroid)
     // NOTE: I originally used AppendToVAO() as I did not know that a VAO could have attribute
     // pointers into several VBOs. Out of curiosity, I profiled both methods and there is no
     // performance difference.
-    // TODO: account for tangents and bitangents.
     u32 matricesVBO[3];
     glCreateBuffers(3, matricesVBO);
     glNamedBufferData(matricesVBO[0], modelMatricesSize, modelMatrices, GL_STATIC_DRAW);
@@ -896,35 +895,36 @@ internal void SetUpAsteroids(Model *asteroid)
     for (u32 i = 0; i < asteroid->meshCount; i++)
     {
         u32 curVao = asteroid->vaos[i];
-                
-        glEnableVertexArrayAttrib(curVao, 3);
-        glEnableVertexArrayAttrib(curVao, 4);
+                        
+        // NOTE: binding index 0 is already taken by the main VBO.
+        glVertexArrayVertexBuffer(curVao, 1, matricesVBO[0], 0, 16 * sizeof(f32));
+        glVertexArrayVertexBuffer(curVao, 2, matricesVBO[1], 0, sizeof(f32));
+        glVertexArrayVertexBuffer(curVao, 3, matricesVBO[2], 0, sizeof(f32));
+        
+        glVertexArrayAttribBinding(curVao, 5, 1);
+        glVertexArrayAttribBinding(curVao, 6, 1);
+        glVertexArrayAttribBinding(curVao, 7, 1);
+        glVertexArrayAttribBinding(curVao, 8, 1);
+        glVertexArrayAttribBinding(curVao, 9, 2);
+        glVertexArrayAttribBinding(curVao, 10, 3);
+        
+        glVertexArrayBindingDivisor(curVao, 1, 1);
+        glVertexArrayBindingDivisor(curVao, 2, 1);
+        glVertexArrayBindingDivisor(curVao, 3, 1);
+        
+        glVertexArrayAttribFormat(curVao, 5, 4, GL_FLOAT, GL_FALSE, (u64)0);
+        glVertexArrayAttribFormat(curVao, 6, 4, GL_FLOAT, GL_FALSE, 0 + 4 * sizeof(f32));
+        glVertexArrayAttribFormat(curVao, 7, 4, GL_FLOAT, GL_FALSE, 0 + 8 * sizeof(f32));
+        glVertexArrayAttribFormat(curVao, 8, 4, GL_FLOAT, GL_FALSE, 0 + 12 * sizeof(f32));
+        glVertexArrayAttribFormat(curVao, 9, 1, GL_FLOAT, GL_FALSE, 0);
+        glVertexArrayAttribFormat(curVao, 10, 1, GL_FLOAT, GL_FALSE, 0);
+        
         glEnableVertexArrayAttrib(curVao, 5);
         glEnableVertexArrayAttrib(curVao, 6);
         glEnableVertexArrayAttrib(curVao, 7);
         glEnableVertexArrayAttrib(curVao, 8);
-        
-        glVertexArrayVertexBuffer(curVao, 0, matricesVBO[0], 0, 16 * sizeof(f32));
-        glVertexArrayVertexBuffer(curVao, 1, matricesVBO[1], 0, sizeof(f32));
-        glVertexArrayVertexBuffer(curVao, 2, matricesVBO[2], 0, sizeof(f32));
-        
-        glVertexArrayAttribBinding(curVao, 3, 0);
-        glVertexArrayAttribBinding(curVao, 4, 0);
-        glVertexArrayAttribBinding(curVao, 5, 0);
-        glVertexArrayAttribBinding(curVao, 6, 0);
-        glVertexArrayAttribBinding(curVao, 7, 1);
-        glVertexArrayAttribBinding(curVao, 8, 2);
-        
-        glVertexArrayBindingDivisor(curVao, 0, 1);
-        glVertexArrayBindingDivisor(curVao, 1, 1);
-        glVertexArrayBindingDivisor(curVao, 2, 1);
-        
-        glVertexArrayAttribFormat(curVao, 3, 4, GL_FLOAT, GL_FALSE, (u64)0);
-        glVertexArrayAttribFormat(curVao, 4, 4, GL_FLOAT, GL_FALSE, 0 + 4 * sizeof(f32));
-        glVertexArrayAttribFormat(curVao, 5, 4, GL_FLOAT, GL_FALSE, 0 + 8 * sizeof(f32));
-        glVertexArrayAttribFormat(curVao, 6, 4, GL_FLOAT, GL_FALSE, 0 + 12 * sizeof(f32));
-        glVertexArrayAttribFormat(curVao, 7, 1, GL_FLOAT, GL_FALSE, 0);
-        glVertexArrayAttribFormat(curVao, 8, 1, GL_FLOAT, GL_FALSE, 0);
+        glEnableVertexArrayAttrib(curVao, 9);
+        glEnableVertexArrayAttrib(curVao, 10);
     }
     FreeArena(tempArena);
 }
@@ -1250,13 +1250,13 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
                                texturesArena, meshDataArena);
     transientInfo->sphereModel = &transientInfo->models[sphereIndex];
 
-    AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->pointDepthMapShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->gBufferShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->ssaoShader, backpackIndex);
-    AddModelToShaderPass(&transientInfo->ssaoBlurShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->dirDepthMapShader, rockIndex);
+    AddModelToShaderPass(&transientInfo->spotDepthMapShader, rockIndex);
+    AddModelToShaderPass(&transientInfo->pointDepthMapShader, rockIndex);
+    AddModelToShaderPass(&transientInfo->instancedObjectShader, rockIndex);
+    AddModelToShaderPass(&transientInfo->geometryShader, rockIndex);
+    AddModelToShaderPass(&transientInfo->ssaoShader, rockIndex);
+    AddModelToShaderPass(&transientInfo->ssaoBlurShader, rockIndex);
 
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
@@ -1668,7 +1668,7 @@ internal void RenderShaderPass(ShaderProgram *shaderProgram, TransientDrawingInf
     for (u32 i = 0; i < shaderProgram->numModels; i++)
     {
         u32 curIndex = shaderProgram->modelIndices[i];
-        RenderModel(&transientInfo->models[curIndex], shaderProgram->id);
+        RenderModel(&transientInfo->models[curIndex], shaderProgram->id, transientInfo->skyboxTexture, NUM_ASTEROIDS);
     }
 }
 
@@ -1698,10 +1698,10 @@ internal void SetGBufferUniforms(u32 shaderProgram, PersistentDrawingInfo *persi
 internal void FillGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
                           PersistentDrawingInfo *persistentInfo)
 {
-    u32 shaderProgram = transientInfo->gBufferShader.id;
+    u32 shaderProgram = transientInfo->instancedObjectShader.id;
     SetGBufferUniforms(shaderProgram, persistentInfo, cameraInfo);
 
-    RenderShaderPass(&transientInfo->gBufferShader, transientInfo);
+    RenderShaderPass(&transientInfo->instancedObjectShader, transientInfo);
 }
 
 internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
