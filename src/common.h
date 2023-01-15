@@ -43,10 +43,8 @@
 
 #define myArraySize(arr) (sizeof((arr)) / sizeof((arr[0])))
 
-#define max(x, y) (((x) > (y)) ? (x) : (y))
-
-#define min(x, y) (((x) < (y)) ? (x) : (y))
-
+#define intMax(x, y) (((x) > (y)) ? (x) : (y))
+#define intMin(x, y) (((x) < (y)) ? (x) : (y))
 #define clamp(x, min, max) (((x) < (min)) ? (min) : ((x) > (max)) ? (max) : (x))
 
 typedef unsigned char uchar;

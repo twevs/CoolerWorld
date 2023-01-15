@@ -43,7 +43,7 @@ s32 RandomLevel()
     {
         level++;
     }
-    return min(level, MAX_LEVEL - 1);
+    return intMin(level, MAX_LEVEL - 1);
 }
 
 SkipListNode *CreateNode(s32 level, f32 key, glm::vec3 value, Arena *arena)

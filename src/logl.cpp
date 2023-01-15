@@ -1,10 +1,21 @@
 #include "common.h"
 #include "skiplist.h"
 
+#include "tracy/public/TracyClient.cpp"
+#include "tracy/public/tracy/Tracy.hpp"
+#include "tracy/public/tracy/TracyOpenGL.hpp"
+
 #define NUM_ASTEROIDS 10000
 
 global_variable ImGuiContext *imGuiContext;
 global_variable ImGuiIO *imGuiIO;
+
+// NOTE: current Tracy setup is incompatible with hot reloading.
+// See Tracy manual, section "Setup for multi-DLL projects" to fix this.
+extern "C" __declspec(dllexport) void InitializeTracyGPUContext()
+{
+    TracyGpuContext;
+}
 
 extern "C" __declspec(dllexport) void InitializeImGuiInModule(HWND window)
 {
@@ -613,7 +624,7 @@ internal u32 CreateVAO(VaoInformation *vaoInfo)
 
     glVertexArrayVertexBuffer(vao, 0, vbo, 0, total * sizeof(float));
     glVertexArrayElementBuffer(vao, ebo);
-    
+
     u32 accumulator = 0;
     for (u32 index = 0; index < vaoInfo->elementCountsSize; index++)
     {
@@ -895,30 +906,30 @@ internal void SetUpAsteroids(Model *asteroid)
     for (u32 i = 0; i < asteroid->meshCount; i++)
     {
         u32 curVao = asteroid->vaos[i];
-                        
+
         // NOTE: binding index 0 is already taken by the main VBO.
         glVertexArrayVertexBuffer(curVao, 1, matricesVBO[0], 0, 16 * sizeof(f32));
         glVertexArrayVertexBuffer(curVao, 2, matricesVBO[1], 0, sizeof(f32));
         glVertexArrayVertexBuffer(curVao, 3, matricesVBO[2], 0, sizeof(f32));
-        
+
         glVertexArrayAttribBinding(curVao, 5, 1);
         glVertexArrayAttribBinding(curVao, 6, 1);
         glVertexArrayAttribBinding(curVao, 7, 1);
         glVertexArrayAttribBinding(curVao, 8, 1);
         glVertexArrayAttribBinding(curVao, 9, 2);
         glVertexArrayAttribBinding(curVao, 10, 3);
-        
+
         glVertexArrayBindingDivisor(curVao, 1, 1);
         glVertexArrayBindingDivisor(curVao, 2, 1);
         glVertexArrayBindingDivisor(curVao, 3, 1);
-        
+
         glVertexArrayAttribFormat(curVao, 5, 4, GL_FLOAT, GL_FALSE, (u64)0);
         glVertexArrayAttribFormat(curVao, 6, 4, GL_FLOAT, GL_FALSE, 0 + 4 * sizeof(f32));
         glVertexArrayAttribFormat(curVao, 7, 4, GL_FLOAT, GL_FALSE, 0 + 8 * sizeof(f32));
         glVertexArrayAttribFormat(curVao, 8, 4, GL_FLOAT, GL_FALSE, 0 + 12 * sizeof(f32));
         glVertexArrayAttribFormat(curVao, 9, 1, GL_FLOAT, GL_FALSE, 0);
         glVertexArrayAttribFormat(curVao, 10, 1, GL_FLOAT, GL_FALSE, 0);
-        
+
         glEnableVertexArrayAttrib(curVao, 5);
         glEnableVertexArrayAttrib(curVao, 6);
         glEnableVertexArrayAttrib(curVao, 7);
@@ -1250,13 +1261,13 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
                                texturesArena, meshDataArena);
     transientInfo->sphereModel = &transientInfo->models[sphereIndex];
 
-    AddModelToShaderPass(&transientInfo->dirDepthMapShader, rockIndex);
-    AddModelToShaderPass(&transientInfo->spotDepthMapShader, rockIndex);
-    AddModelToShaderPass(&transientInfo->pointDepthMapShader, rockIndex);
-    AddModelToShaderPass(&transientInfo->instancedObjectShader, rockIndex);
-    AddModelToShaderPass(&transientInfo->geometryShader, rockIndex);
-    AddModelToShaderPass(&transientInfo->ssaoShader, rockIndex);
-    AddModelToShaderPass(&transientInfo->ssaoBlurShader, rockIndex);
+    AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->pointDepthMapShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->gBufferShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->ssaoShader, backpackIndex);
+    AddModelToShaderPass(&transientInfo->ssaoBlurShader, backpackIndex);
 
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
@@ -1668,7 +1679,7 @@ internal void RenderShaderPass(ShaderProgram *shaderProgram, TransientDrawingInf
     for (u32 i = 0; i < shaderProgram->numModels; i++)
     {
         u32 curIndex = shaderProgram->modelIndices[i];
-        RenderModel(&transientInfo->models[curIndex], shaderProgram->id, transientInfo->skyboxTexture, NUM_ASTEROIDS);
+        RenderModel(&transientInfo->models[curIndex], shaderProgram->id);
     }
 }
 
@@ -1698,10 +1709,10 @@ internal void SetGBufferUniforms(u32 shaderProgram, PersistentDrawingInfo *persi
 internal void FillGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
                           PersistentDrawingInfo *persistentInfo)
 {
-    u32 shaderProgram = transientInfo->instancedObjectShader.id;
+    u32 shaderProgram = transientInfo->gBufferShader.id;
     SetGBufferUniforms(shaderProgram, persistentInfo, cameraInfo);
 
-    RenderShaderPass(&transientInfo->instancedObjectShader, transientInfo);
+    RenderShaderPass(&transientInfo->gBufferShader, transientInfo);
 }
 
 internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
@@ -1785,6 +1796,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
                                   Arena *tempArena, bool rearView, bool dynamicEnvPass = false)
 {
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view lighting pass" : "Main lighting pass");
+    TracyGpuZone("Lighting pass");
 
     // TODO: find a proper way to parameterize dynamic environment mapping. We only want certain
     // objects to reflect the environment, not all of them. It should depend on their shininess.
@@ -2067,6 +2079,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     char passTypeAsString[32];
     GetPassTypeAsString(passType, 32, passTypeAsString);
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, passTypeAsString);
+    TracyGpuZone("DrawScene");
 
     // NOTE: SSAO shader relies on position buffer background being (0, 0, 0).
     glClearColor(0.f, 0.f, 0.f, 1.f);
@@ -2298,6 +2311,7 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
 {
     // Draw skybox where geometry rendering pass did not set stencil value to 1.
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view skybox pass" : "Main skybox pass");
+    TracyGpuZone("Skybox pass");
 
     u32 blitSource = rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO;
     u32 blitDest = rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO;
@@ -2333,38 +2347,46 @@ internal void ExecuteSSAOPass(TransientDrawingInfo *transientInfo, PersistentDra
                               CameraInfo *cameraInfo, glm::vec2 screenSize, bool rearView)
 {
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view SSAO pass" : "Main SSAO pass");
+    TracyGpuZone("SSAO pass");
 
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Sampling subpass");
-    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->ssaoFBO);
-    glClear(GL_COLOR_BUFFER_BIT);
+    {
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Sampling subpass");
+        TracyGpuZone("Sampling subpass");
 
-    u32 shaderProgram = transientInfo->ssaoShader.id;
-    glUseProgram(shaderProgram);
-    glBindTextureUnit(10, transientInfo->mainQuads[0]);
-    glBindTextureUnit(11, transientInfo->mainQuads[1]);
-    glBindTextureUnit(12, transientInfo->ssaoNoiseTexture);
-    glm::mat4 cameraViewMatrix, cameraProjectionMatrix;
-    GetPerspectiveRenderingMatrices(cameraInfo, &cameraViewMatrix, &cameraProjectionMatrix);
-    SetShaderUniformMat4(shaderProgram, "cameraViewMatrix", &cameraViewMatrix);
-    SetShaderUniformMat4(shaderProgram, "cameraProjectionMatrix", &cameraProjectionMatrix);
-    SetShaderUniformVec2(shaderProgram, "screenSize", screenSize);
-    SetShaderUniformFloat(shaderProgram, "radius", persistentInfo->ssaoSamplingRadius);
-    SetShaderUniformFloat(shaderProgram, "power", persistentInfo->ssaoPower);
-    RenderQuad(transientInfo, shaderProgram);
+        glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->ssaoFBO);
+        glClear(GL_COLOR_BUFFER_BIT);
 
-    glPopDebugGroup();
+        u32 shaderProgram = transientInfo->ssaoShader.id;
+        glUseProgram(shaderProgram);
+        glBindTextureUnit(10, transientInfo->mainQuads[0]);
+        glBindTextureUnit(11, transientInfo->mainQuads[1]);
+        glBindTextureUnit(12, transientInfo->ssaoNoiseTexture);
+        glm::mat4 cameraViewMatrix, cameraProjectionMatrix;
+        GetPerspectiveRenderingMatrices(cameraInfo, &cameraViewMatrix, &cameraProjectionMatrix);
+        SetShaderUniformMat4(shaderProgram, "cameraViewMatrix", &cameraViewMatrix);
+        SetShaderUniformMat4(shaderProgram, "cameraProjectionMatrix", &cameraProjectionMatrix);
+        SetShaderUniformVec2(shaderProgram, "screenSize", screenSize);
+        SetShaderUniformFloat(shaderProgram, "radius", persistentInfo->ssaoSamplingRadius);
+        SetShaderUniformFloat(shaderProgram, "power", persistentInfo->ssaoPower);
+        RenderQuad(transientInfo, shaderProgram);
 
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Noise subpass");
+        glPopDebugGroup();
+    }
 
-    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->ssaoBlurFBO);
-    glClear(GL_COLOR_BUFFER_BIT);
+    {
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Noise subpass");
+        TracyGpuZone("Noise subpass");
 
-    shaderProgram = transientInfo->ssaoBlurShader.id;
-    glUseProgram(shaderProgram);
-    glBindTextureUnit(10, transientInfo->ssaoQuad);
-    RenderQuad(transientInfo, shaderProgram);
+        glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->ssaoBlurFBO);
+        glClear(GL_COLOR_BUFFER_BIT);
 
-    glPopDebugGroup();
+        u32 shaderProgram = transientInfo->ssaoBlurShader.id;
+        glUseProgram(shaderProgram);
+        glBindTextureUnit(10, transientInfo->ssaoQuad);
+        RenderQuad(transientInfo, shaderProgram);
+
+        glPopDebugGroup();
+    }
 
     glPopDebugGroup();
 }
@@ -2445,9 +2467,6 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         u32 lightingShaderProgram = transientInfo->pointLightingShader.id;
         glUseProgram(lightingShaderProgram);
         SetShaderUniformFloat(lightingShaderProgram, "pointFar", pointFar);
-        u32 instancedObjectShaderProgram = transientInfo->instancedObjectShader.id;
-        glUseProgram(instancedObjectShaderProgram);
-        SetShaderUniformFloat(instancedObjectShaderProgram, "pointFar", pointFar);
 
         DrawScene(&pointCameraInfo, transientInfo, persistentInfo, transientInfo->pointShadowMapFBO[i], window,
                   listArena, tempArena, false, RenderPassType::PointShadowMap);
@@ -2485,23 +2504,26 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     DrawSkybox(transientInfo, &rearViewCamera, width, height, true);
 
     // Apply Gaussian blur to brightness texture to generate bloom.
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Gaussian blur for bloom");
-    bool horizontal = true;
-    u32 gaussianShader = transientInfo->gaussianShader.id;
-    u32 gaussianQuad = transientInfo->lightingQuads[1];
-    glUseProgram(gaussianShader);
-    for (u32 i = 0; i < 10; i++)
     {
-        glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->gaussianFBOs[horizontal]);
-        SetShaderUniformInt(gaussianShader, "horizontal", horizontal);
-        glBindTextureUnit(10, gaussianQuad);
-        horizontal = !horizontal;
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Gaussian blur for bloom");
+        TracyGpuZone("Gaussian blur for bloom");
+        bool horizontal = true;
+        u32 gaussianShader = transientInfo->gaussianShader.id;
+        u32 gaussianQuad = transientInfo->lightingQuads[1];
+        glUseProgram(gaussianShader);
+        for (u32 i = 0; i < 10; i++)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->gaussianFBOs[horizontal]);
+            SetShaderUniformInt(gaussianShader, "horizontal", horizontal);
+            glBindTextureUnit(10, gaussianQuad);
+            horizontal = !horizontal;
 
-        RenderQuad(transientInfo, gaussianShader);
+            RenderQuad(transientInfo, gaussianShader);
 
-        gaussianQuad = transientInfo->gaussianQuads[!horizontal];
+            gaussianQuad = transientInfo->gaussianQuads[!horizontal];
+        }
+        glPopDebugGroup();
     }
-    glPopDebugGroup();
 
     // NOTE: in the case of the rear-view mirror, since a multisampled framebuffer cannot be blitted
     // to only a portion of a non-multisampled framebuffer, there are 3 options:
@@ -2530,6 +2552,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // Main quad.
     {
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Main quad post-processing");
+        TracyGpuZone("Main quad post-processing");
 
         glBindTextureUnit(10, transientInfo->lightingQuads[0]);
         glBindTextureUnit(11, transientInfo->gaussianQuads[0]);
@@ -2542,6 +2565,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // Rear-view quad.
     {
         glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Rear-view post-processing");
+        TracyGpuZone("Rear-view quad post-processing");
 
         glBindTextureUnit(10, transientInfo->rearViewLightingQuads[0]);
         // NOTE: for now we don't bother with bloom in the rear-view mirror, since our bloom blur buffer
@@ -2561,15 +2585,19 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // Point lights.
     // TODO: fix effect of outlining on meshes that appear between the camera and the outlined
     // object.
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Point lights");
-    glBlitNamedFramebuffer(transientInfo->mainFBO, 0, 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT,
-                           GL_NEAREST);
-    glm::mat4 viewMatrix, projectionMatrix;
-    GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
-    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
-    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
-    RenderWithColorShader(transientInfo, persistentInfo);
-    glPopDebugGroup();
+    {
+        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Point lights");
+        TracyGpuZone("Point lights");
+
+        glBlitNamedFramebuffer(transientInfo->mainFBO, 0, 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT,
+                               GL_NEAREST);
+        glm::mat4 viewMatrix, projectionMatrix;
+        GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
+        glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
+        glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
+        RenderWithColorShader(transientInfo, persistentInfo);
+        glPopDebugGroup();
+    }
 
     DrawDebugWindow(cameraInfo, transientInfo, persistentInfo);
 
@@ -2580,4 +2608,6 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
             *running = false;
         }
     }
+    
+    TracyGpuCollect;
 }

@@ -1,6 +1,9 @@
 #include "arena.h"
 #include "common.h"
 
+typedef void (*InitializeTracyGPUContext_t)();
+InitializeTracyGPUContext_t InitializeTracyGPUContext;
+
 typedef bool (*InitializeImGuiInModule_t)(HWND window);
 InitializeImGuiInModule_t InitializeImGuiInModule;
 
@@ -247,14 +250,14 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
             case 'U': {
                 s32 depthFunc;
                 glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
-                depthFunc = max(depthFunc - 1, 0x200);
+                depthFunc = intMax(depthFunc - 1, 0x200);
                 glDepthFunc(depthFunc);
                 break;
             }
             case 'I': {
                 s32 depthFunc;
                 glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
-                depthFunc = min(depthFunc + 1, 0x207);
+                depthFunc = intMin(depthFunc + 1, 0x207);
                 glDepthFunc(depthFunc);
                 break;
             }
@@ -395,6 +398,7 @@ void LoadRenderingCode(HWND window)
     loglLib = LoadLibraryW(L"logl_runtime.dll");
     myAssert(loglLib != NULL);
 
+    InitializeTracyGPUContext = (InitializeTracyGPUContext_t)GetProcAddress(loglLib, "InitializeTracyGPUContext");
     InitializeImGuiInModule = (InitializeImGuiInModule_t)GetProcAddress(loglLib, "InitializeImGuiInModule");
     InitializeImGuiInModule(window);
     GetImGuiIO = (GetImGuiIO_t)GetProcAddress(loglLib, "GetImGuiIO");
@@ -566,6 +570,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         // Shader initialization.
 
         LoadRenderingCode(window);
+        InitializeTracyGPUContext();
 
         TransientDrawingInfo *transientInfo = &appState.transientInfo;
         PersistentDrawingInfo *drawingInfo = &appState.persistentInfo;
