@@ -595,20 +595,15 @@ internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 
 internal u32 CreateVAO(VaoInformation *vaoInfo)
 {
     u32 vao;
-    glGenVertexArrays(1, &vao);
-    glBindVertexArray(vao);
+    glCreateVertexArrays(1, &vao);
 
     u32 vbo;
-    glGenBuffers(1, &vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, vbo);
-
-    glBufferData(GL_ARRAY_BUFFER, vaoInfo->verticesSize, vaoInfo->vertices, GL_STATIC_DRAW);
+    glCreateBuffers(1, &vbo);
+    glNamedBufferData(vbo, vaoInfo->verticesSize, vaoInfo->vertices, GL_STATIC_DRAW);
 
     u32 ebo;
-    glGenBuffers(1, &ebo);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, vaoInfo->indicesSize, vaoInfo->indices, GL_STATIC_DRAW);
+    glCreateBuffers(1, &ebo);
+    glNamedBufferData(ebo, vaoInfo->indicesSize, vaoInfo->indices, GL_STATIC_DRAW);
 
     u32 total = 0;
     for (u32 elemCount = 0; elemCount < vaoInfo->elementCountsSize; elemCount++)
@@ -616,17 +611,19 @@ internal u32 CreateVAO(VaoInformation *vaoInfo)
         total += vaoInfo->elemCounts[elemCount];
     }
 
+    glVertexArrayVertexBuffer(vao, 0, vbo, 0, total * sizeof(float));
+    glVertexArrayElementBuffer(vao, ebo);
+    
     u32 accumulator = 0;
     for (u32 index = 0; index < vaoInfo->elementCountsSize; index++)
     {
         u32 elemCount = vaoInfo->elemCounts[index];
 
-        glVertexAttribPointer(index, elemCount, GL_FLOAT, GL_FALSE, total * sizeof(float),
-                              (void *)(accumulator * sizeof(float)));
+        glEnableVertexArrayAttrib(vao, index);
+        glVertexArrayAttribFormat(vao, index, elemCount, GL_FLOAT, GL_FALSE, accumulator * sizeof(float));
+        glVertexArrayAttribBinding(vao, index, 0);
 
         accumulator += elemCount;
-
-        glEnableVertexAttribArray(index);
     }
 
     return vao;
@@ -814,13 +811,13 @@ internal u32 AppendToVAO(u32 vao, void *data, u32 dataSize)
 {
     glBindVertexArray(vao);
     s32 bufferSize;
-    glGetBufferParameteriv(GL_ARRAY_BUFFER, GL_BUFFER_SIZE, &bufferSize);
+    glGetNamedBufferParameteriv(vao, GL_BUFFER_SIZE, &bufferSize);
     Arena *tempArena = AllocArena(bufferSize);
     void *savedBuffer = ArenaPush(tempArena, bufferSize);
-    glGetBufferSubData(GL_ARRAY_BUFFER, 0, bufferSize, savedBuffer);
-    glBufferData(GL_ARRAY_BUFFER, bufferSize + dataSize, NULL, GL_STATIC_DRAW);
-    glBufferSubData(GL_ARRAY_BUFFER, 0, bufferSize, savedBuffer);
-    glBufferSubData(GL_ARRAY_BUFFER, bufferSize, dataSize, data);
+    glGetNamedBufferSubData(vao, 0, bufferSize, savedBuffer);
+    glNamedBufferData(vao, bufferSize + dataSize, NULL, GL_STATIC_DRAW);
+    glNamedBufferSubData(vao, 0, bufferSize, savedBuffer);
+    glNamedBufferSubData(vao, bufferSize, dataSize, data);
     FreeArena(tempArena);
     return bufferSize;
 }
@@ -891,39 +888,43 @@ internal void SetUpAsteroids(Model *asteroid)
     // performance difference.
     // TODO: account for tangents and bitangents.
     u32 matricesVBO[3];
-    glGenBuffers(3, matricesVBO);
-    glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[0]);
-    glBufferData(GL_ARRAY_BUFFER, modelMatricesSize, modelMatrices, GL_STATIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[1]);
-    glBufferData(GL_ARRAY_BUFFER, radiiSize, radii, GL_STATIC_DRAW);
-    glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[2]);
-    glBufferData(GL_ARRAY_BUFFER, yValuesSize, yValues, GL_STATIC_DRAW);
+    glCreateBuffers(3, matricesVBO);
+    glNamedBufferData(matricesVBO[0], modelMatricesSize, modelMatrices, GL_STATIC_DRAW);
+    glNamedBufferData(matricesVBO[1], radiiSize, radii, GL_STATIC_DRAW);
+    glNamedBufferData(matricesVBO[2], yValuesSize, yValues, GL_STATIC_DRAW);
 
     for (u32 i = 0; i < asteroid->meshCount; i++)
     {
         u32 curVao = asteroid->vaos[i];
-        glBindVertexArray(curVao);
-        glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[0]);
-        glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(u64)0);
-        glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(0 + 4 * sizeof(f32)));
-        glVertexAttribPointer(5, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(0 + 8 * sizeof(f32)));
-        glVertexAttribPointer(6, 4, GL_FLOAT, GL_FALSE, 16 * sizeof(f32), (void *)(0 + 12 * sizeof(f32)));
-        glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[1]);
-        glVertexAttribPointer(7, 1, GL_FLOAT, GL_FALSE, sizeof(f32), (void *)0);
-        glBindBuffer(GL_ARRAY_BUFFER, matricesVBO[2]);
-        glVertexAttribPointer(8, 1, GL_FLOAT, GL_FALSE, sizeof(f32), (void *)0);
-        glEnableVertexAttribArray(3);
-        glEnableVertexAttribArray(4);
-        glEnableVertexAttribArray(5);
-        glEnableVertexAttribArray(6);
-        glEnableVertexAttribArray(7);
-        glEnableVertexAttribArray(8);
-        glVertexAttribDivisor(3, 1);
-        glVertexAttribDivisor(4, 1);
-        glVertexAttribDivisor(5, 1);
-        glVertexAttribDivisor(6, 1);
-        glVertexAttribDivisor(7, 1);
-        glVertexAttribDivisor(8, 1);
+                
+        glEnableVertexArrayAttrib(curVao, 3);
+        glEnableVertexArrayAttrib(curVao, 4);
+        glEnableVertexArrayAttrib(curVao, 5);
+        glEnableVertexArrayAttrib(curVao, 6);
+        glEnableVertexArrayAttrib(curVao, 7);
+        glEnableVertexArrayAttrib(curVao, 8);
+        
+        glVertexArrayVertexBuffer(curVao, 0, matricesVBO[0], 0, 16 * sizeof(f32));
+        glVertexArrayVertexBuffer(curVao, 1, matricesVBO[1], 0, sizeof(f32));
+        glVertexArrayVertexBuffer(curVao, 2, matricesVBO[2], 0, sizeof(f32));
+        
+        glVertexArrayAttribBinding(curVao, 3, 0);
+        glVertexArrayAttribBinding(curVao, 4, 0);
+        glVertexArrayAttribBinding(curVao, 5, 0);
+        glVertexArrayAttribBinding(curVao, 6, 0);
+        glVertexArrayAttribBinding(curVao, 7, 1);
+        glVertexArrayAttribBinding(curVao, 8, 2);
+        
+        glVertexArrayBindingDivisor(curVao, 0, 1);
+        glVertexArrayBindingDivisor(curVao, 1, 1);
+        glVertexArrayBindingDivisor(curVao, 2, 1);
+        
+        glVertexArrayAttribFormat(curVao, 3, 4, GL_FLOAT, GL_FALSE, (u64)0);
+        glVertexArrayAttribFormat(curVao, 4, 4, GL_FLOAT, GL_FALSE, 0 + 4 * sizeof(f32));
+        glVertexArrayAttribFormat(curVao, 5, 4, GL_FLOAT, GL_FALSE, 0 + 8 * sizeof(f32));
+        glVertexArrayAttribFormat(curVao, 6, 4, GL_FLOAT, GL_FALSE, 0 + 12 * sizeof(f32));
+        glVertexArrayAttribFormat(curVao, 7, 1, GL_FLOAT, GL_FALSE, 0);
+        glVertexArrayAttribFormat(curVao, 8, 1, GL_FLOAT, GL_FALSE, 0);
     }
     FreeArena(tempArena);
 }
@@ -1368,11 +1369,10 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     CreateSkybox(transientInfo);
     glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
 
-    glGenBuffers(1, &transientInfo->matricesUBO);
-    glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
+    glCreateBuffers(1, &transientInfo->matricesUBO);
     char label[] = "UBO: matrices";
     glObjectLabel(GL_BUFFER, transientInfo->matricesUBO, -1, label);
-    glBufferData(GL_UNIFORM_BUFFER, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
+    glNamedBufferData(transientInfo->matricesUBO, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
     glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
 
     GenerateSSAOSamplesAndNoise(transientInfo);
@@ -1771,9 +1771,8 @@ internal void SetLightingShaderUniforms(CameraInfo *cameraInfo, TransientDrawing
 internal void RenderQuad(TransientDrawingInfo *transientInfo, u32 shaderProgram)
 {
     glm::mat4 identity = glm::mat4(1.f);
-    glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &identity);
-    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &identity);
+    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &identity);
+    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &identity);
 
     glBindVertexArray(transientInfo->mainQuadVao);
     glUseProgram(shaderProgram);
@@ -1856,9 +1855,8 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
             ArenaPop(tempArena, 1920 * 1080 * 4);
 
             glBindFramebuffer(GL_FRAMEBUFFER, savedFBO);
-            glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
-            glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &savedViewMatrix);
-            glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &savedProjectionMatrix);
+            glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &savedViewMatrix);
+            glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &savedProjectionMatrix);
         }
         else
         {
@@ -1887,9 +1885,8 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
 
     glm::mat4 viewMatrix, projectionMatrix;
     GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
-    glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
-    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
 
     RECT clientRect;
     GetClientRect(window, &clientRect);
@@ -2097,11 +2094,10 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), GetCameraUpVector(cameraInfo));
     glm::mat4 spotLightSpaceMatrix = projectionMatrix * spotLightViewMatrix;
 
-    glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
-    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
-    glBufferSubData(GL_UNIFORM_BUFFER, 128, 64, &dirLightSpaceMatrix);
-    glBufferSubData(GL_UNIFORM_BUFFER, 192, 64, &spotLightSpaceMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 128, 64, &dirLightSpaceMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 192, 64, &spotLightSpaceMatrix);
 
     if (passType == RenderPassType::DirShadowMap)
     {
@@ -2319,8 +2315,8 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
     glm::mat4 viewMatrix, projectionMatrix;
     GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
     glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &skyboxViewMatrix);
-    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &skyboxViewMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
 
     glBindVertexArray(transientInfo->cubeVao);
     glBindTextureUnit(10, transientInfo->skyboxTexture);
@@ -2438,10 +2434,9 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
             pointShadowProjection * LookAt(&pointCameraInfo, pointCameraInfo.pos + glm::vec3(0.f, 0.f, -1.f),
                                            glm::vec3(0.f, -1.f, 0.f), pointFar);
 
-        glBindBuffer(GL_UNIFORM_BUFFER, transientInfo->matricesUBO);
         for (u32 j = 0; j < 6; j++)
         {
-            glBufferSubData(GL_UNIFORM_BUFFER, 256 + j * 64, 64, &pointShadowMatrices[j]);
+            glNamedBufferSubData(transientInfo->matricesUBO, 256 + j * 64, 64, &pointShadowMatrices[j]);
         }
         u32 pointShaderProgram = transientInfo->pointDepthMapShader.id;
         glUseProgram(pointShaderProgram);
@@ -2571,8 +2566,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
                            GL_NEAREST);
     glm::mat4 viewMatrix, projectionMatrix;
     GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
-    glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
-    glBufferSubData(GL_UNIFORM_BUFFER, 64, 64, &projectionMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
+    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
     RenderWithColorShader(transientInfo, persistentInfo);
     glPopDebugGroup();
 
