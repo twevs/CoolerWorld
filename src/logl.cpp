@@ -742,8 +742,7 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
 {
     myAssert(numTextures <= MAX_ATTACHMENTS);
 
-    glGenFramebuffers(1, fbo);
-    glBindFramebuffer(GL_FRAMEBUFFER, *fbo);
+    glCreateFramebuffers(1, fbo);
     char framebufferLabel[64];
     sprintf_s(framebufferLabel, "Framebuffer: %s", label);
     glObjectLabel(GL_FRAMEBUFFER, *fbo, -1, framebufferLabel);
@@ -784,19 +783,19 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
         glBindTexture(GL_TEXTURE_2D, 0);
 
         GLenum attachment = depthMap ? GL_DEPTH_ATTACHMENT : (GL_COLOR_ATTACHMENT0 + i);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, *currentTexture, 0);
+        glNamedFramebufferTexture(*fbo, attachment, *currentTexture, 0);
 
         attachments[i] = attachment;
     }
 
     if (IsDepthbufferFormat(options[0].internalFormat))
     {
-        glDrawBuffer(GL_NONE);
-        glReadBuffer(GL_NONE);
+        glNamedFramebufferDrawBuffer(*fbo, GL_NONE);
+        glNamedFramebufferReadBuffer(*fbo, GL_NONE);
     }
     else
     {
-        glDrawBuffers(numTextures, attachments);
+        glNamedFramebufferDrawBuffers(*fbo, numTextures, attachments);
         glGenRenderbuffers(1, rbo);
         glBindRenderbuffer(GL_RENDERBUFFER, *rbo);
         char renderbufferLabel[64];
@@ -804,10 +803,10 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
         glObjectLabel(GL_RENDERBUFFER, *rbo, -1, renderbufferLabel);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
         glBindRenderbuffer(GL_RENDERBUFFER, 0);
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
+        glNamedFramebufferRenderbuffer(*fbo, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, *rbo);
     }
 
-    return glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    return glCheckNamedFramebufferStatus(*fbo, GL_FRAMEBUFFER);
 }
 
 // Returns the size of the previous buffer.
@@ -947,16 +946,15 @@ internal GLenum CreateDepthCubemap(const char *label, u32 *depthCubemap, u32 *de
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-    glGenFramebuffers(1, depthCubemapFBO);
-    glBindFramebuffer(GL_FRAMEBUFFER, *depthCubemapFBO);
+    glCreateFramebuffers(1, depthCubemapFBO);
     char framebufferLabel[64];
     sprintf_s(framebufferLabel, "Framebuffer (cube map): %s", label);
     glObjectLabel(GL_FRAMEBUFFER, *depthCubemapFBO, -1, framebufferLabel);
-    glFramebufferTexture(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, *depthCubemap, 0);
-    glDrawBuffer(GL_NONE);
-    glReadBuffer(GL_NONE);
+    glNamedFramebufferTexture(*depthCubemapFBO, GL_DEPTH_ATTACHMENT, *depthCubemap, 0);
+    glNamedFramebufferDrawBuffer(*depthCubemapFBO, GL_NONE);
+    glNamedFramebufferReadBuffer(*depthCubemapFBO, GL_NONE);
 
-    return glCheckFramebufferStatus(GL_FRAMEBUFFER);
+    return glCheckNamedFramebufferStatus(*depthCubemapFBO, GL_FRAMEBUFFER);
 }
 
 internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInfo)
@@ -1902,10 +1900,11 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     SetShaderUniformVec2(pointShader, "screenSize", screenSize);
 
     glEnable(GL_STENCIL_TEST);
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-    glDrawBuffers(2, attachments);
+    u32 blitSource = rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO;
+    u32 blitDest = rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO;
+    glBlitNamedFramebuffer(blitSource, blitDest, 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT,
+                           GL_NEAREST);
+    glNamedFramebufferDrawBuffers(blitDest, 2, attachments);
 
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE);
@@ -2304,9 +2303,10 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
     // Draw skybox where geometry rendering pass did not set stencil value to 1.
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view skybox pass" : "Main skybox pass");
 
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_STENCIL_BUFFER_BIT, GL_NEAREST);
+    u32 blitSource = rearView ? transientInfo->rearViewFBO : transientInfo->mainFBO;
+    u32 blitDest = rearView ? transientInfo->rearViewLightingFBO : transientInfo->lightingFBO;
+    glBlitNamedFramebuffer(blitSource, blitDest, 0, 0, width, height, 0, 0, width, height, GL_STENCIL_BUFFER_BIT,
+                           GL_NEAREST);
 
     glEnable(GL_STENCIL_TEST);
     glStencilMask(0x00);
@@ -2325,7 +2325,7 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
     glBindVertexArray(transientInfo->cubeVao);
     glBindTextureUnit(10, transientInfo->skyboxTexture);
 
-    glDrawBuffer(GL_COLOR_ATTACHMENT0);
+    glBindFramebuffer(GL_FRAMEBUFFER, blitDest);
     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
 
     glDisable(GL_STENCIL_TEST);
@@ -2567,9 +2567,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     // TODO: fix effect of outlining on meshes that appear between the camera and the outlined
     // object.
     glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Point lights");
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->mainFBO);
-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    glBlitNamedFramebuffer(transientInfo->mainFBO, 0, 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT,
+                           GL_NEAREST);
     glm::mat4 viewMatrix, projectionMatrix;
     GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
     glBufferSubData(GL_UNIFORM_BUFFER, 0, 64, &viewMatrix);
