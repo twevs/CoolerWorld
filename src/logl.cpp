@@ -222,6 +222,65 @@ internal bool CreateShaderProgram(ShaderProgram *program, const char *vertexShad
     return true;
 }
 
+internal f32 lerp(f32 a, f32 b, f32 alpha)
+{
+    return a + alpha * (b - a);
+}
+
+#define SSAO_KERNEL_SIZE 64
+#define SSAO_NOISE_SIZE 16
+
+internal void GenerateSSAOSamplesAndNoise(TransientDrawingInfo *transientInfo)
+{
+    srand((u32)Win32GetWallClock());
+
+    glm::vec3 ssaoKernel[SSAO_KERNEL_SIZE] = {};
+    for (u32 i = 0; i < SSAO_KERNEL_SIZE; i++)
+    {
+        f32 xOffset = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
+        f32 yOffset = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
+        f32 zOffset = ((f32)rand() / RAND_MAX);
+        glm::vec3 sample(xOffset, yOffset, zOffset);
+        sample = glm::normalize(sample);
+
+        sample *= ((f32)rand() / RAND_MAX);
+        f32 scale = (f32)i / SSAO_KERNEL_SIZE;
+        scale = lerp(.1f, 1.f, scale * scale);
+        sample *= scale;
+
+        ssaoKernel[i] = sample;
+    }
+
+    u32 ssaoShader = transientInfo->ssaoShader.id;
+    glUseProgram(ssaoShader);
+    glUniform3fv(glGetUniformLocation(ssaoShader, "samples"), SSAO_KERNEL_SIZE, (f32 *)ssaoKernel);
+
+    glm::vec3 ssaoNoise[SSAO_NOISE_SIZE] = {};
+    for (u32 i = 0; i < SSAO_NOISE_SIZE; i++)
+    {
+        f32 x = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
+        f32 y = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
+        glm::vec3 sample(x, y, 0.f);
+        sample = glm::normalize(sample);
+
+        ssaoNoise[i] = sample;
+    }
+
+    if (glIsTexture(transientInfo->ssaoNoiseTexture))
+    {
+        glDeleteTextures(1, &transientInfo->ssaoNoiseTexture);
+    }
+    u32 *ssaoNoiseTexture = &transientInfo->ssaoNoiseTexture;
+    glCreateTextures(GL_TEXTURE_2D, 1, ssaoNoiseTexture);
+    u32 sideLength = (u32)(sqrtf(SSAO_NOISE_SIZE));
+    glTextureStorage2D(*ssaoNoiseTexture, 1, GL_RGBA16F, sideLength, sideLength);
+    glTextureSubImage2D(*ssaoNoiseTexture, 0, 0, 0, sideLength, sideLength, GL_RGB, GL_FLOAT, &ssaoNoise);
+    glTextureParameteri(*ssaoNoiseTexture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(*ssaoNoiseTexture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTextureParameteri(*ssaoNoiseTexture, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTextureParameteri(*ssaoNoiseTexture, GL_TEXTURE_WRAP_T, GL_REPEAT);
+}
+
 internal bool CreateShaderPrograms(TransientDrawingInfo *info)
 {
     if (!CreateShaderProgram(&info->gBufferShader, "gbuffer.vs", "gbuffer.fs"))
@@ -231,6 +290,10 @@ internal bool CreateShaderPrograms(TransientDrawingInfo *info)
     if (!CreateShaderProgram(&info->ssaoShader, "vertex_shader.vs", "ssao.fs"))
     {
         return false;
+    }
+    else
+    {
+        GenerateSSAOSamplesAndNoise(info);
     }
     if (!CreateShaderProgram(&info->ssaoBlurShader, "vertex_shader.vs", "ssao_blur.fs"))
     {
@@ -336,30 +399,32 @@ internal u32 CreateTextureFromImage(const char *filename, bool sRGB, GLenum wrap
     myAssert(textureData);
 
     u32 texture;
-    glGenTextures(1, &texture);
-    glBindTexture(GL_TEXTURE_2D, texture);
+    glCreateTextures(GL_TEXTURE_2D, 1, &texture);
     char label[64];
     sprintf_s(label, "Texture: %s", filename);
     glObjectLabel(GL_TEXTURE, texture, -1, label);
 
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTextureParameteri(texture, GL_TEXTURE_WRAP_S, wrapMode);
+    glTextureParameteri(texture, GL_TEXTURE_WRAP_T, wrapMode);
+    glTextureParameteri(texture, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTextureParameteri(texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
     bool alpha = (numChannels == 4);
+    GLenum sizedFormat = alpha ? GL_RGBA8 : (numChannels == 3) ? GL_RGB8 : GL_R8;
     GLenum pixelFormat = alpha ? GL_RGBA : (numChannels == 3) ? GL_RGB : GL_RED;
     if (sRGB)
     {
-        GLenum internalFormat = alpha ? GL_SRGB_ALPHA : GL_SRGB;
-        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
+        GLenum internalFormat = alpha ? GL_SRGB8_ALPHA8 : GL_SRGB8;
+        glTextureStorage2D(texture, 1, internalFormat, width, height);
+        glTextureSubImage2D(texture, 0, 0, 0, width, height, pixelFormat, GL_UNSIGNED_BYTE, textureData);
     }
     else
     {
         glPixelStorei(GL_UNPACK_ALIGNMENT, alpha ? 4 : 1);
-        glTexImage2D(GL_TEXTURE_2D, 0, pixelFormat, width, height, 0, pixelFormat, GL_UNSIGNED_BYTE, textureData);
+        glTextureStorage2D(texture, 1, sizedFormat, width, height);
+        glTextureSubImage2D(texture, 0, 0, 0, width, height, pixelFormat, GL_UNSIGNED_BYTE, textureData);
     }
-    glGenerateMipmap(GL_TEXTURE_2D);
+    glGenerateTextureMipmap(texture);
 
     stbi_image_free(textureData);
 
@@ -659,12 +724,18 @@ internal bool LoadDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDra
 
 struct FramebufferOptions
 {
-    GLenum internalFormat = GL_RGB;
+    GLenum internalFormat = GL_RGB8;
+    GLenum pixelFormat = GL_RGB;
     GLenum type = GL_UNSIGNED_BYTE;
     GLenum filteringMethod = GL_LINEAR;
     GLenum wrapMode = GL_REPEAT;
     f32 borderColor[4] = {1.f, 1.f, 1.f, 1.f};
 };
+
+internal bool IsDepthbufferFormat(GLenum format)
+{
+    return format == GL_DEPTH_COMPONENT32F || format == GL_DEPTH_COMPONENT24 || format == GL_DEPTH_COMPONENT16;
+}
 
 internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 *fbo, u32 *quadTextures,
                                   u32 numTextures, u32 *rbo, FramebufferOptions *options)
@@ -677,48 +748,48 @@ internal GLenum CreateFramebuffer(const char *label, s32 width, s32 height, u32 
     sprintf_s(framebufferLabel, "Framebuffer: %s", label);
     glObjectLabel(GL_FRAMEBUFFER, *fbo, -1, framebufferLabel);
 
-    glGenTextures(numTextures, quadTextures);
     GLenum attachments[MAX_ATTACHMENTS] = {};
     for (u32 i = 0; i < numTextures; i++)
     {
-        glBindTexture(GL_TEXTURE_2D, quadTextures[i]);
+        u32 *currentTexture = &quadTextures[i];
+        glCreateTextures(GL_TEXTURE_2D, 1, currentTexture);
         char textureLabel[64];
         sprintf_s(textureLabel, "Framebuffer: %s - Attached texture %i", label, i);
-        glObjectLabel(GL_TEXTURE, quadTextures[i], -1, textureLabel);
+        glObjectLabel(GL_TEXTURE, *currentTexture, -1, textureLabel);
 
         GLenum internalFormat = options[i].internalFormat;
-        bool depthMap = (internalFormat == GL_DEPTH_COMPONENT);
+        bool depthMap = IsDepthbufferFormat(internalFormat);
         bool hdr = (internalFormat == GL_RGBA16F);
         myAssert(!(depthMap && hdr));
         myAssert(!(depthMap && (numTextures > 1)));
 
-        GLenum format = hdr ? GL_RGBA : internalFormat;
-        myAssert(!((depthMap || hdr) && (options->type != GL_FLOAT)));
-        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, options->type, NULL);
+        myAssert(!((depthMap || hdr) && (options[i].type != GL_FLOAT)));
+        glTextureStorage2D(*currentTexture, 1, internalFormat, width, height);
+        glTextureSubImage2D(*currentTexture, 0, 0, 0, width, height, options[i].pixelFormat, options[i].type, NULL);
         GLint filteringMethod = options[i].filteringMethod;
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filteringMethod);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filteringMethod);
+        glTextureParameteri(*currentTexture, GL_TEXTURE_MIN_FILTER, filteringMethod);
+        glTextureParameteri(*currentTexture, GL_TEXTURE_MAG_FILTER, filteringMethod);
         GLenum wrapMode = options[i].wrapMode;
         if (wrapMode != GL_REPEAT)
         {
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, wrapMode);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrapMode);
+            glTextureParameteri(*currentTexture, GL_TEXTURE_WRAP_S, wrapMode);
+            glTextureParameteri(*currentTexture, GL_TEXTURE_WRAP_T, wrapMode);
 
             if (wrapMode == GL_CLAMP_TO_BORDER)
             {
-                glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, options[i].borderColor);
+                glTextureParameterfv(*currentTexture, GL_TEXTURE_BORDER_COLOR, options[i].borderColor);
             }
         }
         // TODO: non-depth map texture wrapping parameters?
         glBindTexture(GL_TEXTURE_2D, 0);
 
         GLenum attachment = depthMap ? GL_DEPTH_ATTACHMENT : (GL_COLOR_ATTACHMENT0 + i);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, quadTextures[i], 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, attachment, GL_TEXTURE_2D, *currentTexture, 0);
 
         attachments[i] = attachment;
     }
 
-    if (options[0].internalFormat == GL_DEPTH_COMPONENT)
+    if (IsDepthbufferFormat(options[0].internalFormat))
     {
         glDrawBuffer(GL_NONE);
         glReadBuffer(GL_NONE);
@@ -899,6 +970,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     FramebufferOptions hdrBuffer = {};
     hdrBuffer.internalFormat = GL_RGBA16F;
+    hdrBuffer.pixelFormat = GL_RGBA;
     hdrBuffer.type = GL_FLOAT;
 
     // Main G-buffer, with 3 colour buffers:
@@ -919,7 +991,8 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     myAssert(rearViewFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     FramebufferOptions ssaoFramebufferOptions = {};
-    ssaoFramebufferOptions.internalFormat = GL_RED;
+    ssaoFramebufferOptions.internalFormat = GL_R8;
+    ssaoFramebufferOptions.pixelFormat = GL_RED;
     ssaoFramebufferOptions.type = GL_FLOAT;
     ssaoFramebufferOptions.filteringMethod = GL_NEAREST;
 
@@ -951,7 +1024,8 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     myAssert(postProcessingFramebufferStatus == GL_FRAMEBUFFER_COMPLETE);
 
     FramebufferOptions depthBufferOptions = {};
-    depthBufferOptions.internalFormat = GL_DEPTH_COMPONENT;
+    depthBufferOptions.internalFormat = GL_DEPTH_COMPONENT24;
+    depthBufferOptions.pixelFormat = GL_DEPTH_COMPONENT;
     depthBufferOptions.type = GL_FLOAT;
     depthBufferOptions.filteringMethod = GL_NEAREST;
     depthBufferOptions.wrapMode = GL_CLAMP_TO_BORDER;
@@ -1149,61 +1223,6 @@ internal void CalculateTangents(Vertex *vertices, u32 numVertices, u32 *indices,
     }
 
     ArenaPop(arena, allocatedSize);
-}
-
-internal f32 lerp(f32 a, f32 b, f32 alpha)
-{
-    return a + alpha * (b - a);
-}
-
-#define SSAO_KERNEL_SIZE 64
-#define SSAO_NOISE_SIZE 16
-
-internal void GenerateSSAOSamplesAndNoise(TransientDrawingInfo *transientInfo)
-{
-    srand((u32)Win32GetWallClock());
-
-    glm::vec3 ssaoKernel[SSAO_KERNEL_SIZE] = {};
-    for (u32 i = 0; i < SSAO_KERNEL_SIZE; i++)
-    {
-        f32 xOffset = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
-        f32 yOffset = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
-        f32 zOffset = ((f32)rand() / RAND_MAX);
-        glm::vec3 sample(xOffset, yOffset, zOffset);
-        sample = glm::normalize(sample);
-
-        sample *= ((f32)rand() / RAND_MAX);
-        f32 scale = (f32)i / SSAO_KERNEL_SIZE;
-        scale = lerp(.1f, 1.f, scale * scale);
-        sample *= scale;
-
-        ssaoKernel[i] = sample;
-    }
-
-    u32 ssaoShader = transientInfo->ssaoShader.id;
-    glUseProgram(ssaoShader);
-    glUniform3fv(glGetUniformLocation(ssaoShader, "samples"), SSAO_KERNEL_SIZE, (f32 *)ssaoKernel);
-
-    glm::vec3 ssaoNoise[SSAO_NOISE_SIZE] = {};
-    for (u32 i = 0; i < SSAO_NOISE_SIZE; i++)
-    {
-        f32 x = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
-        f32 y = ((f32)rand() / RAND_MAX) * 2.f - 1.f;
-        glm::vec3 sample(x, y, 0.f);
-        sample = glm::normalize(sample);
-
-        ssaoNoise[i] = sample;
-    }
-
-    u32 *ssaoNoiseTexture = &transientInfo->ssaoNoiseTexture;
-    glGenTextures(1, ssaoNoiseTexture);
-    glBindTexture(GL_TEXTURE_2D, *ssaoNoiseTexture);
-    u32 sideLength = (u32)(sqrtf(SSAO_NOISE_SIZE));
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, sideLength, sideLength, 0, GL_RGB, GL_FLOAT, &ssaoNoise);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 }
 
 extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,

@@ -55,6 +55,8 @@ void main()
 		}
 		float sampleDepth = (cameraViewMatrix * vec4(renderedPosScreen, 1.f)).z;
 		float bias = .025f;
+		// TODO: figure out whether smoothstep() really is better than an abrupt cutoff given
+		// the possibility of relatively distant geometry contributing to the occlusion factor.
 		float rangeCheck = smoothstep(0.f, 1.f, radius / abs(fragPosVS.z - sampleDepth));
 		occlusion += ((sampleDepth >= samplePosVS.z + bias) ? 1.f : 0.f) * rangeCheck;
 	}
