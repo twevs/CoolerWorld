@@ -151,7 +151,7 @@ struct Mesh
     u32 verticesSize;
     u32 *indices;
     u32 indicesSize;
-    Texture *textures;
+    Texture textures[4];
     u32 numTextures;
     
     glm::mat4 relativeTransform;
@@ -161,7 +161,11 @@ struct Model
 {
     Mesh *meshes;
     u32 meshCount;
-    u32 *vaos;
+    u32 *meshVAOs;
+    u32 vao;
+    u32 vbo;
+    u32 ebo;
+    u32 icb;
     glm::vec3 position;
     glm::vec3 scale;
 };

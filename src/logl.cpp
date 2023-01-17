@@ -10,6 +10,18 @@
 global_variable ImGuiContext *imGuiContext;
 global_variable ImGuiIO *imGuiIO;
 
+struct DrawElementsIndirectCommand
+{
+    u32 count;
+    u32 instanceCount;
+    u32 firstIndex;
+    s32 baseVertex;
+    u32 baseInstance;
+};
+
+global_variable DrawElementsIndirectCommand indirectCommandsBuffer[200];
+global_variable u32 numIndirectCommands;
+
 // NOTE: current Tracy setup is incompatible with hot reloading.
 // See Tracy manual, section "Setup for multi-DLL projects" to fix this.
 extern "C" __declspec(dllexport) void InitializeTracyGPUContext()
@@ -502,14 +514,20 @@ internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureT
             loadedTextures->textures[loadedTextures->numTextures++] = *texture;
         }
         mesh->numTextures++;
+        myAssert(mesh->numTextures <= myArraySize(mesh->textures));
     }
 }
 
-internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures,
+internal Mesh ProcessMesh(aiMesh *mesh, DrawElementsIndirectCommand *command, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures,
                           Arena *meshDataArena)
 {
     Mesh result = {};
-
+    
+    command->instanceCount = 1;
+    command->baseVertex = (u32)(meshDataArena->stackPointer / sizeof(f32));
+    command->firstIndex = 0;
+    command->baseInstance = 0;
+    
     result.verticesSize = mesh->mNumVertices * sizeof(Vertex);
     result.vertices = (Vertex *)ArenaPush(meshDataArena, result.verticesSize);
     myAssert(((u8 *)result.vertices + result.verticesSize) ==
@@ -539,7 +557,7 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
             result.vertices[i].texCoords.y = mesh->mTextureCoords[0][i].y;
         }
     }
-
+    
     result.indices = (u32 *)((u8 *)result.vertices + result.verticesSize);
     u32 indicesCount = 0;
     for (u32 i = 0; i < mesh->mNumFaces; i++)
@@ -553,6 +571,9 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
             indicesCount++;
         }
     }
+    
+    command->count = indicesCount;
+    
     result.indicesSize = indicesCount * sizeof(u32);
     myAssert(((u8 *)result.indices + result.indicesSize) ==
              ((u8 *)meshDataArena->memory + meshDataArena->stackPointer));
@@ -568,7 +589,6 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         u32 numTextures = numDiffuse + numSpecular + numNormals + numDisp;
 
         u64 texturesSize = sizeof(Texture) * numTextures;
-        result.textures = (Texture *)ArenaPush(meshDataArena, texturesSize);
 
         LoadTextures(&result, numDiffuse, material, aiTextureType_DIFFUSE, texturesArena, loadedTextures);
         LoadTextures(&result, numSpecular, material, aiTextureType_SPECULAR, texturesArena, loadedTextures);
@@ -588,7 +608,11 @@ internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 
     for (u32 i = 0; i < node->mNumMeshes; i++)
     {
         aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
-        Mesh processedMesh = ProcessMesh(mesh, scene, texturesArena, loadedTextures, meshDataArena);
+        DrawElementsIndirectCommand *command = &indirectCommandsBuffer[numIndirectCommands + i];
+        numIndirectCommands++;
+        
+        Mesh processedMesh = ProcessMesh(mesh, command, scene, texturesArena, loadedTextures, meshDataArena);
+        
         aiMatrix4x4 trans = node->mTransformation;
         glm::mat4 rowMajorTrans = {trans.a1, trans.a2, trans.a3, trans.a4, trans.b1, trans.b2, trans.b3, trans.b4,
                                    trans.c1, trans.c2, trans.c3, trans.c4, trans.d1, trans.d2, trans.d3, trans.d4};
@@ -649,12 +673,52 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
     const aiScene *scene =
         importer.ReadFile(filename, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcess_CalcTangentSpace);
     myAssert(scene);
-    Mesh *meshes = (Mesh *)ArenaPush(meshDataArena, 100 * sizeof(Mesh));
+    // TODO: fix this hack.
+    Mesh meshes[100];
     u32 meshCount = 0;
 
     LoadedTextures loadedTextures = {};
     loadedTextures.textures = (Texture *)texturesArena->memory;
     ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures, meshDataArena);
+    
+    // For MDI.
+    {
+        u32 *vao = &result.vao;
+        glCreateVertexArrays(1, vao);
+
+        u32 *vbo = &result.vbo;
+        glCreateBuffers(1, vbo);
+        glNamedBufferData(*vbo, meshDataArena->stackPointer, meshDataArena->memory, GL_STATIC_DRAW);
+
+        u32 *ebo = &result.ebo;
+        glCreateBuffers(1, ebo);
+        glNamedBufferData(*ebo, meshDataArena->stackPointer, meshDataArena->memory, GL_STATIC_DRAW);
+
+        u32 total = 0;
+        for (u32 elemCount = 0; elemCount < elemCountsSize; elemCount++)
+        {
+            total += elemCounts[elemCount];
+        }
+
+        glVertexArrayVertexBuffer(*vao, 0, *vbo, 0, total * sizeof(float));
+        glVertexArrayElementBuffer(*vao, *ebo);
+
+        u32 accumulator = 0;
+        for (u32 index = 0; index < elemCountsSize; index++)
+        {
+            u32 elemCount = elemCounts[index];
+
+            glVertexArrayAttribFormat(*vao, index, elemCount, GL_FLOAT, GL_FALSE, accumulator * sizeof(float));
+            glVertexArrayAttribBinding(*vao, index, 0);
+            glEnableVertexArrayAttrib(*vao, index);
+
+            accumulator += elemCount;
+        }
+    }
+    
+    u32 *icb = &result.icb;
+    glCreateBuffers(1, icb);
+    glNamedBufferData(*icb, numIndirectCommands * sizeof(DrawElementsIndirectCommand), indirectCommandsBuffer, GL_STATIC_DRAW);
 
     u32 *meshVAOs = (u32 *)ArenaPush(meshDataArena, 100 * sizeof(u32));
     for (u32 i = 0; i < meshCount; i++)
@@ -671,9 +735,12 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
 
         meshVAOs[i] = CreateVAO(&meshVaoInfo);
     }
-    result.meshes = meshes;
+    
+    Mesh *allocatedMeshes = (Mesh *)ArenaPush(meshDataArena, 100 * sizeof(Mesh));
+    memcpy_s(allocatedMeshes, 100 * sizeof(Mesh), meshes, 100 * sizeof(Mesh));
+    result.meshes = allocatedMeshes;
     result.meshCount = meshCount;
-    result.vaos = meshVAOs;
+    result.meshVAOs = meshVAOs;
     result.scale = glm::vec3(scale);
 
     return result;
@@ -905,7 +972,7 @@ internal void SetUpAsteroids(Model *asteroid)
 
     for (u32 i = 0; i < asteroid->meshCount; i++)
     {
-        u32 curVao = asteroid->vaos[i];
+        u32 curVao = asteroid->meshVAOs[i];
 
         // NOTE: binding index 0 is already taken by the main VBO.
         glVertexArrayVertexBuffer(curVao, 1, matricesVBO[0], 0, 16 * sizeof(f32));
@@ -1624,10 +1691,42 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
 
 internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 numInstances = 1)
 {
+    if (model->vao == 0)
+    {
+        return;
+    }
+    
+    glBindVertexArray(model->vao);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, model->icb);
     glUseProgram(shaderProgram);
+    
+    Mesh *mesh = &model->meshes[0];
+    u32 textureSlot = 0;
+    for (; textureSlot < mesh->numTextures; textureSlot++)
+    {
+        glBindTextureUnit(10 + textureSlot, mesh->textures[textureSlot].id);
+    }
+    SetShaderUniformInt(shaderProgram, "displace", textureSlot == 4);
+    if (textureSlot < 4)
+    {
+        glBindTextureUnit(13, 0);
+    }
+    
+    // Model matrix: transforms vertices from local to world space.
+    glm::mat4 modelMatrix = glm::mat4(1.f);
+    modelMatrix = glm::translate(modelMatrix, model->position);
+    modelMatrix = glm::scale(modelMatrix, model->scale);
 
+    glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+
+    SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+    SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+    
+    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, model->meshCount, 0);
+    
     for (u32 i = 0; i < model->meshCount; i++)
     {
+        /*
         glBindVertexArray(model->vaos[i]);
 
         Mesh *mesh = &model->meshes[i];
@@ -1663,6 +1762,7 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
             SetShaderUniformFloat(shaderProgram, "time", Win32GetTime());
             glDrawElementsInstanced(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0, numInstances);
         }
+        */
     }
 }
 
@@ -1939,7 +2039,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
         Model *model = transientInfo->sphereModel;
         for (u32 i = 0; i < model->meshCount; i++)
         {
-            glBindVertexArray(model->vaos[i]);
+            glBindVertexArray(model->meshVAOs[i]);
 
             Mesh *mesh = &model->meshes[i];
             glm::mat4 lightModelMatrix = glm::mat4(1.f);
