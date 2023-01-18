@@ -137,7 +137,7 @@ struct Texture
     u64 hash;
 };
 
-struct Textures
+struct Material
 {
     Texture diffuse;
     Texture specular;
@@ -151,7 +151,7 @@ struct Mesh
     u32 verticesSize;
     u32 *indices;
     u32 indicesSize;
-    Texture textures[4];
+    Material material;
     u32 numTextures;
     
     glm::mat4 relativeTransform;
@@ -161,7 +161,7 @@ struct Model
 {
     u32 vao;
     u32 ebo;
-    u32 icb;
+    u32 commandBuffer;
     u32 meshCount;
     glm::vec3 position;
     glm::vec3 scale;
@@ -182,7 +182,7 @@ struct Object
     u32 VAO;
     u32 numIndices;
     glm::vec3 position;
-    Textures textures = {};
+    Material textures = {};
 };
 
 #define MAX_OBJECTS 20

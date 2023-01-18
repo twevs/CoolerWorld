@@ -1,5 +1,6 @@
 #version 450 core
 
+// NOTE: make sure this tracks gbuffer.vs.
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
 layout (location = 2) in vec2 aTexCoords;
