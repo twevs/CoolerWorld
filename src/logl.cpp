@@ -10,6 +10,15 @@
 global_variable ImGuiContext *imGuiContext;
 global_variable ImGuiIO *imGuiIO;
 
+struct DrawElementsIndirectCommand
+{
+    u32 count;
+    u32 instanceCount = 1;
+    u32 firstIndex = 0;
+    s32 baseVertex;
+    u32 baseInstance;
+};
+
 // NOTE: current Tracy setup is incompatible with hot reloading.
 // See Tracy manual, section "Setup for multi-DLL projects" to fix this.
 extern "C" __declspec(dllexport) void InitializeTracyGPUContext()
@@ -470,9 +479,10 @@ internal TextureType GetTextureTypeFromAssimp(aiTextureType type)
     return TextureType::Diffuse;
 }
 
-internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureType type, Arena *texturesArena,
-                           LoadedTextures *loadedTextures)
+internal void LoadTextures(Mesh *mesh, Texture *texture, u64 num, aiMaterial *material, aiTextureType type,
+                           Arena *texturesArena, LoadedTextures *loadedTextures)
 {
+    myAssert(num <= 1); // NOTE: for now we only handle one texture per texture type.
     for (u32 i = 0; i < num; i++)
     {
         aiString path;
@@ -483,37 +493,54 @@ internal void LoadTextures(Mesh *mesh, u64 num, aiMaterial *material, aiTextureT
         {
             if (loadedTextures->textures[j].hash == hash)
             {
-                mesh->textures[mesh->numTextures].id = loadedTextures->textures[j].id;
-                mesh->textures[mesh->numTextures].type = loadedTextures->textures[j].type;
-                mesh->textures[mesh->numTextures].hash = hash;
+                texture->id = loadedTextures->textures[j].id;
+                texture->type = loadedTextures->textures[j].type;
+                texture->hash = hash;
                 skip = true;
                 break;
             }
         }
         if (!skip)
         {
-            Texture *texture = (Texture *)ArenaPush(texturesArena, sizeof(Texture));
-            texture->id = CreateTextureFromImage(path.C_Str(), type == aiTextureType_DIFFUSE);
-            texture->type = GetTextureTypeFromAssimp(type);
-            texture->hash = hash;
-            mesh->textures[mesh->numTextures].id = texture->id;
-            mesh->textures[mesh->numTextures].type = texture->type;
-            mesh->textures[mesh->numTextures].hash = texture->hash;
-            loadedTextures->textures[loadedTextures->numTextures++] = *texture;
+            Texture *newTexture = (Texture *)ArenaPush(texturesArena, sizeof(Texture));
+            newTexture->id = CreateTextureFromImage(path.C_Str(), type == aiTextureType_DIFFUSE);
+            newTexture->type = GetTextureTypeFromAssimp(type);
+            newTexture->hash = hash;
+            texture->id = newTexture->id;
+            texture->type = newTexture->type;
+            texture->hash = newTexture->hash;
+            loadedTextures->textures[loadedTextures->numTextures++] = *newTexture;
         }
         mesh->numTextures++;
     }
 }
 
+internal u64 GetTextureHandle(u32 textureID)
+{
+    u64 result = 0;
+
+    if (textureID > 0)
+    {
+        result = glGetTextureHandleARB(textureID);
+        if (!glIsTextureHandleResidentARB(result))
+        {
+            glMakeTextureHandleResidentARB(result);
+        }
+    }
+
+    return result;
+}
+
 internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures,
-                          Arena *meshDataArena)
+                          Arena *vertices, Arena *indices, DrawElementsIndirectCommand *command,
+                          TextureHandles *handles)
 {
     Mesh result = {};
 
+    command->baseVertex = (u32)(vertices->stackPointer / sizeof(Vertex));
     result.verticesSize = mesh->mNumVertices * sizeof(Vertex);
-    result.vertices = (Vertex *)ArenaPush(meshDataArena, result.verticesSize);
-    myAssert(((u8 *)result.vertices + result.verticesSize) ==
-             ((u8 *)meshDataArena->memory + meshDataArena->stackPointer));
+    result.vertices = (Vertex *)ArenaPush(vertices, result.verticesSize);
+    myAssert(((u8 *)result.vertices + result.verticesSize) == ((u8 *)vertices->memory + vertices->stackPointer));
 
     for (u32 i = 0; i < mesh->mNumVertices; i++)
     {
@@ -540,22 +567,23 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         }
     }
 
-    result.indices = (u32 *)((u8 *)result.vertices + result.verticesSize);
+    command->firstIndex = (u32)(indices->stackPointer / sizeof(u32));
+    result.indices = (u32 *)((u8 *)indices->memory + indices->stackPointer);
     u32 indicesCount = 0;
     for (u32 i = 0; i < mesh->mNumFaces; i++)
     {
         aiFace face = mesh->mFaces[i];
 
-        u32 *faceIndices = (u32 *)ArenaPush(meshDataArena, sizeof(u32) * face.mNumIndices);
+        u32 *faceIndices = (u32 *)ArenaPush(indices, sizeof(u32) * face.mNumIndices);
         for (u32 j = 0; j < face.mNumIndices; j++)
         {
             faceIndices[j] = face.mIndices[j];
             indicesCount++;
         }
     }
+    command->count = indicesCount;
     result.indicesSize = indicesCount * sizeof(u32);
-    myAssert(((u8 *)result.indices + result.indicesSize) ==
-             ((u8 *)meshDataArena->memory + meshDataArena->stackPointer));
+    myAssert(((u8 *)result.indices + result.indicesSize) == ((u8 *)indices->memory + indices->stackPointer));
 
     if (mesh->mMaterialIndex >= 0)
     {
@@ -568,27 +596,51 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         u32 numTextures = numDiffuse + numSpecular + numNormals + numDisp;
 
         u64 texturesSize = sizeof(Texture) * numTextures;
-        result.textures = (Texture *)ArenaPush(meshDataArena, texturesSize);
 
-        LoadTextures(&result, numDiffuse, material, aiTextureType_DIFFUSE, texturesArena, loadedTextures);
-        LoadTextures(&result, numSpecular, material, aiTextureType_SPECULAR, texturesArena, loadedTextures);
-        LoadTextures(&result, numNormals, material, aiTextureType_HEIGHT, texturesArena, loadedTextures);
-        if (numDisp > 0)
-        {
-            LoadTextures(&result, numDisp, material, aiTextureType_DISPLACEMENT, texturesArena, loadedTextures);
-        }
+        Material *textures = &result.material;
+        LoadTextures(&result, &textures->diffuse, numDiffuse, material, aiTextureType_DIFFUSE, texturesArena,
+                     loadedTextures);
+        LoadTextures(&result, &textures->specular, numSpecular, material, aiTextureType_SPECULAR, texturesArena,
+                     loadedTextures);
+        LoadTextures(&result, &textures->normals, numNormals, material, aiTextureType_HEIGHT, texturesArena,
+                     loadedTextures);
+        LoadTextures(&result, &textures->displacement, numDisp, material, aiTextureType_DISPLACEMENT, texturesArena,
+                     loadedTextures);
+
+        handles->diffuseHandle = GetTextureHandle(textures->diffuse.id);
+        handles->specularHandle = GetTextureHandle(textures->specular.id);
+        handles->normalsHandle = GetTextureHandle(textures->normals.id);
+        handles->displacementHandle = GetTextureHandle(textures->displacement.id);
     }
 
     return result;
 }
 
+struct IndirectCommandBuffer
+{
+    DrawElementsIndirectCommand commands[MAX_MESHES_PER_MODEL];
+    u32 numCommands = 0;
+};
+
 internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 *meshCount, Arena *texturesArena,
-                          LoadedTextures *loadedTextures, Arena *meshDataArena)
+                          LoadedTextures *loadedTextures, Arena *vertices, Arena *indices,
+                          IndirectCommandBuffer *commandBuffer, TextureHandleBuffer *texHandleBuffer)
 {
     for (u32 i = 0; i < node->mNumMeshes; i++)
     {
         aiMesh *mesh = scene->mMeshes[node->mMeshes[i]];
-        Mesh processedMesh = ProcessMesh(mesh, scene, texturesArena, loadedTextures, meshDataArena);
+
+        DrawElementsIndirectCommand *command = &commandBuffer->commands[commandBuffer->numCommands];
+        TextureHandles *handles = &texHandleBuffer->handleGroups[texHandleBuffer->numHandleGroups];
+        Mesh processedMesh =
+            ProcessMesh(mesh, scene, texturesArena, loadedTextures, vertices, indices, command, handles);
+        commandBuffer->numCommands++;
+        texHandleBuffer->numHandleGroups++;
+
+        myAssert(commandBuffer->numCommands <= MAX_MESHES_PER_MODEL);
+        myAssert(texHandleBuffer->numHandleGroups <= MAX_MESHES_PER_MODEL);
+        myAssert(commandBuffer->numCommands == texHandleBuffer->numHandleGroups);
+
         aiMatrix4x4 trans = node->mTransformation;
         glm::mat4 rowMajorTrans = {trans.a1, trans.a2, trans.a3, trans.a4, trans.b1, trans.b2, trans.b3, trans.b4,
                                    trans.c1, trans.c2, trans.c3, trans.c4, trans.d1, trans.d2, trans.d3, trans.d4};
@@ -599,7 +651,8 @@ internal void ProcessNode(aiNode *node, const aiScene *scene, Mesh *meshes, u32 
 
     for (u32 i = 0; i < node->mNumChildren; i++)
     {
-        ProcessNode(node->mChildren[i], scene, meshes, meshCount, texturesArena, loadedTextures, meshDataArena);
+        ProcessNode(node->mChildren[i], scene, meshes, meshCount, texturesArena, loadedTextures, vertices, indices,
+                    commandBuffer, texHandleBuffer);
     }
 }
 
@@ -654,26 +707,55 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
 
     LoadedTextures loadedTextures = {};
     loadedTextures.textures = (Texture *)texturesArena->memory;
-    ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures, meshDataArena);
 
-    u32 *meshVAOs = (u32 *)ArenaPush(meshDataArena, 100 * sizeof(u32));
-    for (u32 i = 0; i < meshCount; i++)
-    {
-        Mesh *mesh = &meshes[i];
+    Arena *vertices = AllocArena(1000000 * sizeof(Vertex));
+    Arena *indices = AllocArena(1500000 * sizeof(u32));
+    IndirectCommandBuffer commandBuffer = {};
+    TextureHandleBuffer *texHandleBuffer = &result.textureHandleBuffer;
+    ProcessNode(scene->mRootNode, scene, meshes, &meshCount, texturesArena, &loadedTextures, vertices, indices,
+                &commandBuffer, texHandleBuffer);
+    myAssert(commandBuffer.numCommands == meshCount);
+    myAssert(texHandleBuffer->numHandleGroups == meshCount);
 
-        VaoInformation meshVaoInfo;
-        meshVaoInfo.vertices = (f32 *)mesh->vertices;
-        meshVaoInfo.verticesSize = mesh->verticesSize;
-        meshVaoInfo.elemCounts = elemCounts;
-        meshVaoInfo.elementCountsSize = elemCountsSize;
-        meshVaoInfo.indices = mesh->indices;
-        meshVaoInfo.indicesSize = mesh->indicesSize;
+    u32 *vao = &result.vao;
+    glCreateVertexArrays(1, vao);
 
-        meshVAOs[i] = CreateVAO(&meshVaoInfo);
-    }
-    result.meshes = meshes;
+    u32 vbo;
+    glCreateBuffers(1, &vbo);
+    glNamedBufferStorage(vbo, vertices->stackPointer, vertices->memory, 0);
+
+    u32 ebo;
+    glCreateBuffers(1, &ebo);
+    glNamedBufferStorage(ebo, indices->stackPointer, indices->memory, 0);
+
+    glVertexArrayVertexBuffer(*vao, 0, vbo, 0, sizeof(Vertex));
+    glVertexArrayElementBuffer(*vao, ebo);
+
+    glVertexArrayAttribFormat(*vao, 0, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribFormat(*vao, 1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(f32));
+    glVertexArrayAttribFormat(*vao, 2, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(f32));
+    glVertexArrayAttribFormat(*vao, 3, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(f32));
+    glVertexArrayAttribFormat(*vao, 4, 3, GL_FLOAT, GL_FALSE, 11 * sizeof(f32));
+    glVertexArrayAttribBinding(*vao, 0, 0);
+    glVertexArrayAttribBinding(*vao, 1, 0);
+    glVertexArrayAttribBinding(*vao, 2, 0);
+    glVertexArrayAttribBinding(*vao, 3, 0);
+    glVertexArrayAttribBinding(*vao, 4, 0);
+    glEnableVertexArrayAttrib(*vao, 0);
+    glEnableVertexArrayAttrib(*vao, 1);
+    glEnableVertexArrayAttrib(*vao, 2);
+    glEnableVertexArrayAttrib(*vao, 3);
+    glEnableVertexArrayAttrib(*vao, 4);
+
+    u32 *icb = &result.commandBuffer;
+    glCreateBuffers(1, icb);
+    glNamedBufferStorage(*icb, sizeof(DrawElementsIndirectCommand) * commandBuffer.numCommands, commandBuffer.commands,
+                         0);
+
+    FreeArena(vertices);
+    FreeArena(indices);
+
     result.meshCount = meshCount;
-    result.vaos = meshVAOs;
     result.scale = glm::vec3(scale);
 
     return result;
@@ -903,6 +985,7 @@ internal void SetUpAsteroids(Model *asteroid)
     glNamedBufferData(matricesVBO[1], radiiSize, radii, GL_STATIC_DRAW);
     glNamedBufferData(matricesVBO[2], yValuesSize, yValues, GL_STATIC_DRAW);
 
+    /*
     for (u32 i = 0; i < asteroid->meshCount; i++)
     {
         u32 curVao = asteroid->vaos[i];
@@ -937,6 +1020,7 @@ internal void SetUpAsteroids(Model *asteroid)
         glEnableVertexArrayAttrib(curVao, 9);
         glEnableVertexArrayAttrib(curVao, 10);
     }
+    */
     FreeArena(tempArena);
 }
 
@@ -1124,10 +1208,10 @@ internal Texture CreateTexture(const char *filename, TextureType type, GLenum wr
     return result;
 }
 
-internal Textures CreateTextures(const char *diffusePath, const char *specularPath = "", const char *normalsPath = "",
+internal Material CreateTextures(const char *diffusePath, const char *specularPath = "", const char *normalsPath = "",
                                  const char *displacementPath = "")
 {
-    Textures result = {};
+    Material result = {};
     result.diffuse = CreateTexture(diffusePath, TextureType::Diffuse);
     result.specular = CreateTexture(specularPath, TextureType::Specular);
     result.normals = CreateTexture(normalsPath, TextureType::Normals);
@@ -1136,7 +1220,7 @@ internal Textures CreateTextures(const char *diffusePath, const char *specularPa
 }
 
 internal u32 AddObject(TransientDrawingInfo *transientInfo, u32 vao, u32 numIndices, glm::vec3 position,
-                       Textures *textures = nullptr)
+                       Material *textures = nullptr)
 {
     u32 objectIndex = transientInfo->numObjects;
     transientInfo->objects[objectIndex] = {vao, numIndices, position};
@@ -1344,30 +1428,30 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
     }
 
-    Textures cubeTextures = {};
+    Material cubeTextures = {};
     cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
     cubeTextures.normals = CreateTexture("flat_surface_normals.png", TextureType::Normals);
     for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
     {
         u32 curTexCubeIndex = AddObject(transientInfo, transientInfo->cubeVao, 36, CreateRandomVec3(), &cubeTextures);
-        AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curTexCubeIndex);
-        AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
-        AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curTexCubeIndex);
-        AddObjectToShaderPass(&transientInfo->gBufferShader, curTexCubeIndex);
-        AddObjectToShaderPass(&transientInfo->ssaoShader, curTexCubeIndex);
-        AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curTexCubeIndex);
+        // AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curTexCubeIndex);
+        // AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
+        // AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curTexCubeIndex);
+        // AddObjectToShaderPass(&transientInfo->gBufferShader, curTexCubeIndex);
+        // AddObjectToShaderPass(&transientInfo->ssaoShader, curTexCubeIndex);
+        // AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curTexCubeIndex);
     }
 
-    Textures wallTextures = CreateTextures("bricks2.jpg", "", "bricks2_normal.jpg", "bricks2_disp.jpg");
+    Material wallTextures = CreateTextures("bricks2.jpg", "", "bricks2_normal.jpg", "bricks2_disp.jpg");
     for (u32 wallIndex = 0; wallIndex < NUM_OBJECTS; wallIndex++)
     {
         u32 curWallIndex = AddObject(transientInfo, transientInfo->mainQuadVao, 6, CreateRandomVec3(), &wallTextures);
-        AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curWallIndex);
-        AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curWallIndex);
-        AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curWallIndex);
-        AddObjectToShaderPass(&transientInfo->gBufferShader, curWallIndex);
-        AddObjectToShaderPass(&transientInfo->ssaoShader, curWallIndex);
-        AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curWallIndex);
+        // AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curWallIndex);
+        // AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curWallIndex);
+        // AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curWallIndex);
+        // AddObjectToShaderPass(&transientInfo->gBufferShader, curWallIndex);
+        // AddObjectToShaderPass(&transientInfo->ssaoShader, curWallIndex);
+        // AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curWallIndex);
     }
 
     drawingInfo->dirLight.direction =
@@ -1380,11 +1464,17 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     CreateSkybox(transientInfo);
     glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
 
-    glCreateBuffers(1, &transientInfo->matricesUBO);
+    u32 *matricesUBO = &transientInfo->matricesUBO;
+    glCreateBuffers(1, matricesUBO);
     char label[] = "UBO: matrices";
-    glObjectLabel(GL_BUFFER, transientInfo->matricesUBO, -1, label);
-    glNamedBufferData(transientInfo->matricesUBO, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, transientInfo->matricesUBO);
+    glObjectLabel(GL_BUFFER, *matricesUBO, -1, label);
+    glNamedBufferData(*matricesUBO, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, *matricesUBO);
+
+    u32 *textureHandlesUBO = &transientInfo->textureHandlesUBO;
+    glCreateBuffers(1, textureHandlesUBO);
+    glNamedBufferData(*textureHandlesUBO, sizeof(TextureHandles) * MAX_MESHES_PER_MODEL, NULL, GL_STATIC_DRAW);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 1, *textureHandlesUBO);
 
     GenerateSSAOSamplesAndNoise(transientInfo);
 
@@ -1558,6 +1648,7 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
 
 internal void RenderObject(Object *object, u32 shaderProgram, f32 yRot = 0.f, float scale = 1.f)
 {
+    myAssert(false);
     glBindVertexArray(object->VAO);
 
     glBindTextureUnit(10, object->textures.diffuse.id);
@@ -1622,39 +1713,37 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
                u32 fbo, HWND window, Arena *listArena, Arena *tempArena, bool dynamicEnvPass = false,
                RenderPassType passType = RenderPassType::Normal);
 
-internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0, u32 numInstances = 1)
+internal void RenderModel(Model *model, u32 shaderProgram, u32 textureHandlesUBO, u32 skyboxTexture = 0,
+                          u32 numInstances = 1)
 {
     glUseProgram(shaderProgram);
+    glBindVertexArray(model->vao);
+    glBindBuffer(GL_DRAW_INDIRECT_BUFFER, model->commandBuffer);
+    glNamedBufferSubData(textureHandlesUBO, 0, sizeof(model->textureHandleBuffer.handleGroups),
+                         model->textureHandleBuffer.handleGroups);
 
+    // Model matrix: transforms vertices from local to world space.
+    glm::mat4 modelMatrix = glm::mat4(1.f);
+    modelMatrix = glm::translate(modelMatrix, model->position);
+    modelMatrix = glm::scale(modelMatrix, model->scale);
+
+    // TODO: store relative transforms and textures somewhere indexed and shader-accessible.
+    // modelMatrix *= mesh->relativeTransform;
+
+    glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
+
+    SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
+    SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+
+    // TODO: just have a single command buffer and have each model keep an offset into it?
+    glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, model->meshCount, 0);
+
+    // TODO: figure out instanced rendering with MDI.
+    /*
     for (u32 i = 0; i < model->meshCount; i++)
     {
-        glBindVertexArray(model->vaos[i]);
-
-        Mesh *mesh = &model->meshes[i];
-        u32 textureSlot = 0;
-        for (; textureSlot < mesh->numTextures; textureSlot++)
-        {
-            glBindTextureUnit(10 + textureSlot, mesh->textures[textureSlot].id);
-        }
-        SetShaderUniformInt(shaderProgram, "displace", textureSlot == 4);
-        if (textureSlot < 4)
-        {
-            glBindTextureUnit(13, 0);
-        }
-
         if (numInstances == 1)
         {
-            // Model matrix: transforms vertices from local to world space.
-            glm::mat4 modelMatrix = glm::mat4(1.f);
-            modelMatrix = glm::translate(modelMatrix, model->position);
-            modelMatrix = glm::scale(modelMatrix, model->scale);
-
-            modelMatrix *= mesh->relativeTransform;
-
-            glm::mat3 normalMatrix = glm::mat3(glm::transpose(glm::inverse(modelMatrix)));
-
-            SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
-            SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
 
             glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
         }
@@ -1664,6 +1753,7 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 skyboxTexture = 0
             glDrawElementsInstanced(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0, numInstances);
         }
     }
+    */
 }
 
 internal void RenderShaderPass(ShaderProgram *shaderProgram, TransientDrawingInfo *transientInfo)
@@ -1679,7 +1769,7 @@ internal void RenderShaderPass(ShaderProgram *shaderProgram, TransientDrawingInf
     for (u32 i = 0; i < shaderProgram->numModels; i++)
     {
         u32 curIndex = shaderProgram->modelIndices[i];
-        RenderModel(&transientInfo->models[curIndex], shaderProgram->id);
+        RenderModel(&transientInfo->models[curIndex], shaderProgram->id, transientInfo->textureHandlesUBO);
     }
 }
 
@@ -1937,28 +2027,29 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
         glStencilOpSeparate(GL_BACK, GL_KEEP, GL_INCR_WRAP, GL_KEEP);
 
         Model *model = transientInfo->sphereModel;
-        for (u32 i = 0; i < model->meshCount; i++)
-        {
-            glBindVertexArray(model->vaos[i]);
 
-            Mesh *mesh = &model->meshes[i];
-            glm::mat4 lightModelMatrix = glm::mat4(1.f);
-            lightModelMatrix = glm::translate(lightModelMatrix, light.position);
-            f32 constant = 1.f;
-            f32 linear = att->linear;
-            f32 quadratic = att->quadratic;
-            f32 lightMax = fmax(fmax(light.diffuse.r, light.diffuse.g), light.diffuse.b);
-            f32 radius = (-linear + sqrtf(linear * linear - 4.f * quadratic * (constant - (256.f / 5.f) * lightMax))) /
-                         (2.f * quadratic);
-            lightModelMatrix = glm::scale(lightModelMatrix, glm::vec3(radius));
-            lightModelMatrix *= mesh->relativeTransform;
-            glm::mat3 lightNormalMatrix = glm::mat3(glm::transpose(glm::inverse(lightModelMatrix)));
+        // glBindVertexArray(model->vao);
+        // glBindBuffer(GL_DRAW_INDIRECT_BUFFER, model->commandBuffer);
 
-            SetShaderUniformMat4(pointShader, "modelMatrix", &lightModelMatrix);
-            SetShaderUniformMat3(pointShader, "normalMatrix", &lightNormalMatrix);
+        // glm::mat4 lightModelMatrix = glm::mat4(1.f);
+        // lightModelMatrix = glm::translate(lightModelMatrix, light.position);
+        // f32 constant = 1.f;
+        // f32 linear = att->linear;
+        // f32 quadratic = att->quadratic;
+        // f32 lightMax = fmax(fmax(light.diffuse.r, light.diffuse.g), light.diffuse.b);
+        // f32 radius = (-linear + sqrtf(linear * linear - 4.f * quadratic * (constant - (256.f / 5.f) * lightMax))) /
+        //              (2.f * quadratic);
+        // lightModelMatrix = glm::scale(lightModelMatrix, glm::vec3(radius));
 
-            glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
-        }
+        // // TODO: restore use of relativeTransform.
+        // // lightModelMatrix *= mesh->relativeTransform;
+
+        // glm::mat3 lightNormalMatrix = glm::mat3(glm::transpose(glm::inverse(lightModelMatrix)));
+
+        // SetShaderUniformMat4(pointShader, "modelMatrix", &lightModelMatrix);
+        // SetShaderUniformMat3(pointShader, "normalMatrix", &lightNormalMatrix);
+
+        // glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, model->meshCount, 0);
 
         glColorMask(0xff, 0xff, 0xff, 0xff);
 
@@ -1980,11 +2071,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
 
         glBindTextureUnit(17, transientInfo->pointShadowMapQuad[lightIndex]);
 
-        for (u32 i = 0; i < model->meshCount; i++)
-        {
-            Mesh *mesh = &model->meshes[i];
-            glDrawElements(GL_TRIANGLES, mesh->indicesSize / sizeof(u32), GL_UNSIGNED_INT, 0);
-        }
+        // glMultiDrawElementsIndirect(GL_TRIANGLES, GL_UNSIGNED_INT, 0, model->meshCount, 0);
 
         glCullFace(GL_BACK);
         glDisable(GL_CULL_FACE);
@@ -2595,7 +2682,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
         glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
         glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
-        RenderWithColorShader(transientInfo, persistentInfo);
+        // RenderWithColorShader(transientInfo, persistentInfo);
         glPopDebugGroup();
     }
 
@@ -2608,6 +2695,6 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
             *running = false;
         }
     }
-    
+
     TracyGpuCollect;
 }

@@ -1,9 +1,12 @@
 #version 450 core
     
-layout (binding = 10) uniform sampler2D diffuse;
-layout (binding = 11) uniform sampler2D specular;
-layout (binding = 12) uniform sampler2D normals;
-layout (binding = 13) uniform sampler2D displacement;
+#extension GL_ARB_gpu_shader_int64 : enable
+#extension GL_ARB_bindless_texture : enable    
+    
+layout (binding = 10) uniform sampler2D diffuseTex;
+layout (binding = 11) uniform sampler2D specularTex;
+layout (binding = 12) uniform sampler2D normalsTex;
+layout (binding = 13) uniform sampler2D displacementTex;
 uniform float shininess;
 
 layout (location = 0) out vec4 positionBuffer; // Alpha = specular.
@@ -17,9 +20,12 @@ in vec2 texCoords;
 in mat3 tbn;
 in vec3 cameraPosTS;
 in vec3 fragPosTS;
+in flat uvec2 diffuseHandle;
+in flat uvec2 specularHandle;
+in flat uvec2 normalsHandle;
+in flat uvec2 displacementHandle;
 
 // Displacement mapping.
-uniform bool displace;
 uniform float heightScale;
 
 vec2 GetDisplacedTexCoords(vec3 viewDir)
@@ -31,6 +37,8 @@ vec2 GetDisplacedTexCoords(vec3 viewDir)
     float curLayerDepth = 0.f;
     vec2 p = viewDir.xy * heightScale;
     vec2 deltaTexCoords = p / numLayers;
+    
+    sampler2D displacement = sampler2D(displacementHandle);
     
     vec2 result = texCoords;
     float curMapDepth = texture(displacement, result).r;
@@ -54,8 +62,12 @@ vec2 GetDisplacedTexCoords(vec3 viewDir)
 
 void main()
 {    
+    sampler2D diffuse = sampler2D(diffuseHandle);
+    sampler2D specular = sampler2D(specularHandle);
+    sampler2D normals = sampler2D(normalsHandle);
+    
     vec3 cameraDir = normalize(cameraPosTS - fragPosTS);
-    vec2 displacedTexCoords = displace ? GetDisplacedTexCoords(cameraDir) : texCoords;
+    vec2 displacedTexCoords = all(equal(displacementHandle, uvec2(0))) ? texCoords : GetDisplacedTexCoords(cameraDir);
     if (any(lessThan(displacedTexCoords, vec2(0.f)))
         || any(greaterThan(displacedTexCoords, vec2(1.f))))
     {

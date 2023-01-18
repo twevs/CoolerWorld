@@ -1,4 +1,7 @@
-#version 450 core
+#version 460 core
+    
+#extension GL_ARB_gpu_shader_int64 : enable
+#extension GL_ARB_bindless_texture : enable    
 	
 layout (location = 0) in vec3 aPos;
 layout (location = 1) in vec3 aNormal;
@@ -11,6 +14,10 @@ out vec2 texCoords;
 out mat3 tbn;
 out vec3 cameraPosTS;
 out vec3 fragPosTS;
+out uvec2 diffuseHandle;
+out uvec2 specularHandle;
+out uvec2 normalsHandle;
+out uvec2 displacementHandle;
 
 layout (std140, binding = 0) uniform Matrices
 {
@@ -23,6 +30,21 @@ layout (std140, binding = 0) uniform Matrices
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;
 uniform vec3 cameraPos;
+
+struct TextureHandle
+{
+    uvec2 aDiffuseHandle;
+    uvec2 aSpecularHandle;
+    uvec2 aNormalsHandle;
+    uvec2 aDisplacementHandle;
+};
+
+#define MAX_MESHES_PER_MODEL 100
+
+layout (std140, binding = 1) uniform TextureHandles
+{
+	TextureHandle handles[100];
+};
 
 void main()
 {
@@ -41,4 +63,9 @@ void main()
 	mat3 invTbn = transpose(tbn);
 	cameraPosTS = invTbn * cameraPos;
 	fragPosTS = invTbn * fragPosWS;
+	
+	diffuseHandle = handles[gl_DrawID].aDiffuseHandle;
+	specularHandle = handles[gl_DrawID].aSpecularHandle;
+	normalsHandle = handles[gl_DrawID].aNormalsHandle;
+	displacementHandle = handles[gl_DrawID].aDisplacementHandle;
 }

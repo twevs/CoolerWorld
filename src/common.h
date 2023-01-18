@@ -137,7 +137,7 @@ struct Texture
     u64 hash;
 };
 
-struct Textures
+struct Material
 {
     Texture diffuse;
     Texture specular;
@@ -151,17 +151,34 @@ struct Mesh
     u32 verticesSize;
     u32 *indices;
     u32 indicesSize;
-    Texture *textures;
+    Material material;
     u32 numTextures;
     
     glm::mat4 relativeTransform;
 };
 
+#define MAX_MESHES_PER_MODEL 100
+
+struct TextureHandles
+{
+    u64 diffuseHandle;
+    u64 specularHandle;
+    u64 normalsHandle;
+    u64 displacementHandle;
+};
+
+struct TextureHandleBuffer
+{
+    TextureHandles handleGroups[MAX_MESHES_PER_MODEL];
+    u32 numHandleGroups = 0;
+};
+
 struct Model
 {
-    Mesh *meshes;
+    u32 vao;
+    u32 commandBuffer;
     u32 meshCount;
-    u32 *vaos;
+    TextureHandleBuffer textureHandleBuffer;
     glm::vec3 position;
     glm::vec3 scale;
 };
@@ -181,7 +198,7 @@ struct Object
     u32 VAO;
     u32 numIndices;
     glm::vec3 position;
-    Textures textures = {};
+    Material textures = {};
 };
 
 #define MAX_OBJECTS 20
@@ -229,6 +246,7 @@ struct TransientDrawingInfo
     ShaderProgram gaussianShader;
     
     u32 matricesUBO;
+    u32 textureHandlesUBO;
 
     u32 cubeVao;
     Model *sphereModel;
