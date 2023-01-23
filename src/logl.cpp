@@ -1464,12 +1464,15 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     CreateSkybox(transientInfo);
     glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
 
-    u32 *matricesUBO = &transientInfo->matricesUBO;
-    glCreateBuffers(1, matricesUBO);
+    u32 matricesUBO;
+    glCreateBuffers(1, &matricesUBO);
     char label[] = "UBO: matrices";
-    glObjectLabel(GL_BUFFER, *matricesUBO, -1, label);
-    glNamedBufferData(*matricesUBO, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, *matricesUBO);
+    glObjectLabel(GL_BUFFER, matricesUBO, -1, label);
+    GLbitfield flags = GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT | GL_MAP_COHERENT_BIT;
+    u32 matBufSize = 3 * 10 * sizeof(glm::mat4);
+    glNamedBufferStorage(matricesUBO, matBufSize, NULL, flags);
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0, matricesUBO);
+    transientInfo->matricesUBO = (ShaderMatrices *)glMapNamedBufferRange(matricesUBO, 0, matBufSize, flags);
 
     u32 *textureHandlesUBO = &transientInfo->textureHandlesUBO;
     glCreateBuffers(1, textureHandlesUBO);
@@ -1756,9 +1759,37 @@ internal void RenderModel(Model *model, u32 shaderProgram, u32 textureHandlesUBO
     */
 }
 
+internal void WaitBuffer(TransientDrawingInfo *transientInfo)
+{
+    GLsync *curSync = &transientInfo->matSyncs[transientInfo->matricesIndex];
+    if (*curSync)
+    {
+        while (1)
+        {
+            GLenum syncResult = glClientWaitSync(*curSync, GL_SYNC_FLUSH_COMMANDS_BIT, 1);
+            if (syncResult == GL_ALREADY_SIGNALED || syncResult == GL_CONDITION_SATISFIED)
+            {
+                return;
+            }
+        }
+    }
+}
+
+internal void LockBuffer(TransientDrawingInfo *transientInfo)
+{
+    GLsync *curSync = &transientInfo->matSyncs[transientInfo->matricesIndex];
+    if (*curSync)
+    {
+        glDeleteSync(*curSync);
+    }
+    *curSync = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    transientInfo->matricesIndex = ((transientInfo->matricesIndex + 1) % 3);
+}
+
 internal void RenderShaderPass(ShaderProgram *shaderProgram, TransientDrawingInfo *transientInfo)
 {
     glUseProgram(shaderProgram->id);
+    SetShaderUniformInt(shaderProgram->id, "matricesIndex", transientInfo->matricesIndex);
 
     for (u32 i = 0; i < shaderProgram->numObjects; i++)
     {
@@ -1771,6 +1802,8 @@ internal void RenderShaderPass(ShaderProgram *shaderProgram, TransientDrawingInf
         u32 curIndex = shaderProgram->modelIndices[i];
         RenderModel(&transientInfo->models[curIndex], shaderProgram->id, transientInfo->textureHandlesUBO);
     }
+    
+    LockBuffer(transientInfo);
 }
 
 internal void FlipImage(u8 *data, s32 width, s32 height, u32 bytesPerPixel, Arena *tempArena)
@@ -1869,16 +1902,44 @@ internal void SetLightingShaderUniforms(CameraInfo *cameraInfo, TransientDrawing
     SetShaderUniformVec3(pointShader, "cameraPos", cameraInfo->pos);
 }
 
+internal void UpdateMatrices(TransientDrawingInfo *transientInfo, glm::mat4 *view = nullptr, glm::mat4 *projection = nullptr, glm::mat4 *dir = nullptr, glm::mat4 *spot = nullptr, glm::mat4 *point = nullptr)
+{
+    ShaderMatrices *matrices = &transientInfo->matrices;
+    if (view)
+    {
+        matrices->viewMatrix = *view;
+    }
+    if (projection)
+    {
+        matrices->projectionMatrix = *projection;
+    }
+    if (dir)
+    {
+        matrices->dirLightSpaceMatrix = *dir;
+    }
+    if (spot)
+    {
+        matrices->spotLightSpaceMatrix = *spot;
+    }
+    if (point)
+    {
+        memcpy(&matrices->pointShadowMatrices, point, 6 * sizeof(glm::mat4));
+    }
+    WaitBuffer(transientInfo);
+    transientInfo->matricesUBO[transientInfo->matricesIndex] = *matrices;
+}
+
 internal void RenderQuad(TransientDrawingInfo *transientInfo, u32 shaderProgram)
 {
     glm::mat4 identity = glm::mat4(1.f);
-    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &identity);
-    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &identity);
+    UpdateMatrices(transientInfo, &identity, &identity);
 
     glBindVertexArray(transientInfo->mainQuadVao);
     glUseProgram(shaderProgram);
+    SetShaderUniformInt(shaderProgram, "matricesIndex", transientInfo->matricesIndex);
     SetShaderUniformMat4(shaderProgram, "modelMatrix", &identity);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+    LockBuffer(transientInfo);
 }
 
 internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
@@ -1987,8 +2048,8 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
 
     glm::mat4 viewMatrix, projectionMatrix;
     GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
-    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
-    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
+    UpdateMatrices(transientInfo, &viewMatrix, &projectionMatrix);
+    SetShaderUniformInt(pointShader, "matricesIndex", transientInfo->matricesIndex);
 
     RECT clientRect;
     GetClientRect(window, &clientRect);
@@ -2194,10 +2255,7 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
         glm::lookAt(spotEye, spotEye + GetCameraForwardVector(cameraInfo), GetCameraUpVector(cameraInfo));
     glm::mat4 spotLightSpaceMatrix = projectionMatrix * spotLightViewMatrix;
 
-    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
-    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
-    glNamedBufferSubData(transientInfo->matricesUBO, 128, 64, &dirLightSpaceMatrix);
-    glNamedBufferSubData(transientInfo->matricesUBO, 192, 64, &spotLightSpaceMatrix);
+    UpdateMatrices(transientInfo, &viewMatrix, &projectionMatrix, &dirLightSpaceMatrix, &spotLightSpaceMatrix);
 
     if (passType == RenderPassType::DirShadowMap)
     {
@@ -2416,14 +2474,15 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
     glm::mat4 viewMatrix, projectionMatrix;
     GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
     glm::mat4 skyboxViewMatrix = glm::mat4(glm::mat3(viewMatrix));
-    glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &skyboxViewMatrix);
-    glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
+    UpdateMatrices(transientInfo, &skyboxViewMatrix, &projectionMatrix);
+    SetShaderUniformInt(shaderProgram, "matricesIndex", transientInfo->matricesIndex);
 
     glBindVertexArray(transientInfo->cubeVao);
     glBindTextureUnit(10, transientInfo->skyboxTexture);
 
     glBindFramebuffer(GL_FRAMEBUFFER, blitDest);
     glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, 0);
+    LockBuffer(transientInfo);
 
     glDisable(GL_STENCIL_TEST);
 
@@ -2543,12 +2602,11 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
             pointShadowProjection * LookAt(&pointCameraInfo, pointCameraInfo.pos + glm::vec3(0.f, 0.f, -1.f),
                                            glm::vec3(0.f, -1.f, 0.f), pointFar);
 
-        for (u32 j = 0; j < 6; j++)
-        {
-            glNamedBufferSubData(transientInfo->matricesUBO, 256 + j * 64, 64, &pointShadowMatrices[j]);
-        }
         u32 pointShaderProgram = transientInfo->pointDepthMapShader.id;
         glUseProgram(pointShaderProgram);
+        
+        UpdateMatrices(transientInfo, nullptr, nullptr, nullptr, nullptr, pointShadowMatrices);
+        SetShaderUniformInt(pointShaderProgram, "matricesIndex", transientInfo->matricesIndex);
         SetShaderUniformVec3(pointShaderProgram, "lightPos", pointCameraInfo.pos);
         SetShaderUniformFloat(pointShaderProgram, "farPlane", pointFar);
         u32 lightingShaderProgram = transientInfo->pointLightingShader.id;
@@ -2663,6 +2721,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glm::mat4 identity(1.f);
         SetShaderUniformMat4(shaderProgram, "modelMatrix", &identity);
         glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+        LockBuffer(transientInfo);
 
         glPopDebugGroup();
     }
@@ -2680,8 +2739,8 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
                                GL_NEAREST);
         glm::mat4 viewMatrix, projectionMatrix;
         GetPerspectiveRenderingMatrices(cameraInfo, &viewMatrix, &projectionMatrix);
-        glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &viewMatrix);
-        glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &projectionMatrix);
+        UpdateMatrices(transientInfo, &viewMatrix, &projectionMatrix);
+        SetShaderUniformInt(shaderProgram, "matricesIndex", transientInfo->matricesIndex);
         // RenderWithColorShader(transientInfo, persistentInfo);
         glPopDebugGroup();
     }

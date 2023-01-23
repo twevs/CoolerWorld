@@ -16,7 +16,7 @@ out mat3 tbn;
 out vec3 cameraPosTS;
 out vec3 fragPosTS;
 
-layout (std140, binding = 0) uniform Matrices
+struct Matrices
 {
 	mat4 viewMatrix;
 	mat4 projectionMatrix;
@@ -24,6 +24,11 @@ layout (std140, binding = 0) uniform Matrices
 	mat4 spotLightSpaceMatrix;
     mat4 pointShadowMatrices[6];
 };
+layout (std140, binding = 0) uniform MatricesArray
+{
+	Matrices matrices[3];
+};
+uniform int matricesIndex;
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;
 uniform vec3 cameraPos;
@@ -33,6 +38,8 @@ uniform float time;
 
 void main()
 {
+	Matrices mat = matrices[matricesIndex];
+	
     float angle = (float(gl_InstanceID) * (time / 60.f) / 100000.f) * 2 * PI;
 	float radius = aRadius;
     float x = cos(angle) * radius;
@@ -43,7 +50,7 @@ void main()
 	modelMatrix[3][1] = y;
 	modelMatrix[3][2] = z;
 	
-    gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(aPos, 1.f);
+    gl_Position = mat.projectionMatrix * mat.viewMatrix * modelMatrix * vec4(aPos, 1.f);
     fragPosWS = vec3(modelMatrix * vec4(aPos, 1.f));
     texCoords = aTexCoords;
 	

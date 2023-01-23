@@ -10,7 +10,7 @@ layout (location = 4) in vec3 aBitangent;
 
 out vec2 texCoords;
 
-layout (std140, binding = 0) uniform Matrices
+struct Matrices
 {
 	mat4 viewMatrix;
 	mat4 projectionMatrix;
@@ -18,11 +18,17 @@ layout (std140, binding = 0) uniform Matrices
 	mat4 spotLightSpaceMatrix;
     mat4 pointShadowMatrices[6];
 };
+layout (std140, binding = 0) uniform MatricesArray
+{
+	Matrices matrices[3];
+};
+uniform int matricesIndex;
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;
 
 void main()
 {
-    gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(aPos, 1.f);
+	Matrices mat = matrices[matricesIndex];
+    gl_Position = mat.projectionMatrix * mat.viewMatrix * modelMatrix * vec4(aPos, 1.f);
     texCoords = aTexCoords;
 }

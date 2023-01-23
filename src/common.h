@@ -220,6 +220,15 @@ struct ShaderProgram
     u32 numModels;
 };
 
+struct ShaderMatrices
+{
+    glm::mat4 viewMatrix;
+    glm::mat4 projectionMatrix;
+    glm::mat4 dirLightSpaceMatrix;
+    glm::mat4 spotLightSpaceMatrix;
+    glm::mat4 pointShadowMatrices[6];
+};
+
 struct TransientDrawingInfo
 {
     Object objects[MAX_OBJECTS];
@@ -245,7 +254,12 @@ struct TransientDrawingInfo
     ShaderProgram geometryShader;
     ShaderProgram gaussianShader;
     
-    u32 matricesUBO;
+    // Triple-buffered matrices UBO.
+    ShaderMatrices matrices;
+    ShaderMatrices *matricesUBO;
+    GLsync matSyncs[3];
+    u32 matricesIndex = 0;
+    
     u32 textureHandlesUBO;
 
     u32 cubeVao;

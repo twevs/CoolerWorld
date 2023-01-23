@@ -19,7 +19,7 @@ out uvec2 specularHandle;
 out uvec2 normalsHandle;
 out uvec2 displacementHandle;
 
-layout (std140, binding = 0) uniform Matrices
+struct Matrices
 {
 	mat4 viewMatrix;
 	mat4 projectionMatrix;
@@ -27,6 +27,11 @@ layout (std140, binding = 0) uniform Matrices
 	mat4 spotLightSpaceMatrix;
     mat4 pointShadowMatrices[6];
 };
+layout (std140, binding = 0) uniform MatricesArray
+{
+	Matrices matrices[3];
+};
+uniform int matricesIndex;
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;
 uniform vec3 cameraPos;
@@ -48,7 +53,9 @@ layout (std140, binding = 1) uniform TextureHandles
 
 void main()
 {
-    gl_Position = projectionMatrix * viewMatrix * modelMatrix * vec4(aPos, 1.f);
+	Matrices mat = matrices[matricesIndex];
+	
+    gl_Position = mat.projectionMatrix * mat.viewMatrix * modelMatrix * vec4(aPos, 1.f);
     fragPosWS = vec3(modelMatrix * vec4(aPos, 1.f));
     texCoords = aTexCoords;
 	
