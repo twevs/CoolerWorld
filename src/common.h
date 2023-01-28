@@ -220,6 +220,15 @@ struct ShaderProgram
     u32 numModels;
 };
 
+#define MAX_ATTACHMENTS 8
+
+struct Framebuffer
+{
+    u32 fbo;
+    u32 attachments[MAX_ATTACHMENTS];
+    u32 rbo;
+};
+
 struct TransientDrawingInfo
 {
     Object objects[MAX_OBJECTS];
@@ -254,49 +263,23 @@ struct TransientDrawingInfo
     u32 skyboxTexture;
 
     u32 mainQuadVao;
-    u32 mainFBO;
-    u32 mainQuads[3];
-    u32 mainRBO;
-
+    Framebuffer mainFramebuffer;
     u32 rearViewQuadVao;
-    u32 rearViewFBO;
-    u32 rearViewQuads[3];
-    u32 rearViewRBO;
-    
-    u32 lightingQuads[2];
-    u32 lightingFBO;
-    u32 lightingRBO;
-    
-    u32 rearViewLightingQuads[2];
-    u32 rearViewLightingFBO;
-    u32 rearViewLightingRBO;
-    
-    u32 postProcessingFBO;
-    u32 postProcessingQuad;
-    u32 postProcessingRBO;
-    
-    u32 dirShadowMapFBO;
-    u32 dirShadowMapQuad;
-    u32 dirShadowMapRBO;
-    
-    u32 spotShadowMapFBO;
-    u32 spotShadowMapQuad;
-    u32 spotShadowMapRBO;
+    Framebuffer rearViewFramebuffer;
+    Framebuffer lightingFramebuffer;
+    Framebuffer rearViewLightingFramebuffer;
+    Framebuffer postProcessingFramebuffer;
+    Framebuffer dirShadowMapFramebuffer;
+    Framebuffer spotShadowMapFramebuffer;
     
     u32 pointShadowMapQuad[NUM_POINTLIGHTS];
     u32 pointShadowMapFBO[NUM_POINTLIGHTS];
     
-    u32 gaussianQuads[2];
-    u32 gaussianFBOs[2];
-    u32 gaussianRBOs[2];
+    Framebuffer gaussianFramebuffers[2];
     
     u32 ssaoNoiseTexture;
-    u32 ssaoFBO;
-    u32 ssaoQuad;
-    u32 ssaoRBO;
-    u32 ssaoBlurFBO;
-    u32 ssaoBlurQuad;
-    u32 ssaoBlurRBO;
+    Framebuffer ssaoFramebuffer;
+    Framebuffer ssaoBlurFramebuffer;
 };
 
 struct PersistentDrawingInfo
