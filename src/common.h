@@ -63,7 +63,7 @@ typedef double f64;
 
 #define PI 3.1415926535f
 #define NUM_POINTLIGHTS 4
-#define NUM_OBJECTS 5
+#define NUM_CUBES 5
 #define DIR_SHADOW_MAP_SIZE 4096
 #define POINT_SHADOW_MAP_SIZE 1024
 
@@ -183,6 +183,15 @@ struct Model
     glm::vec3 scale;
 };
 
+#define MAX_CUBES 100
+
+struct Cubes
+{
+    glm::vec3 positions[MAX_CUBES];
+    TextureHandles textures[MAX_CUBES];
+    u32 numCubes = 0;
+};
+
 struct VaoInformation
 {
     f32 *vertices;
@@ -195,10 +204,11 @@ struct VaoInformation
 
 struct Object
 {
-    u32 VAO;
+    u32 vao;
+    // u32 commandBuffer;
     u32 numIndices;
     glm::vec3 position;
-    Material textures = {};
+    TextureHandles textures = {};
 };
 
 #define MAX_OBJECTS 20
@@ -254,6 +264,8 @@ struct TransientDrawingInfo
     ShaderProgram geometryShader;
     ShaderProgram gaussianShader;
     
+    Cubes cubes;
+    
     u32 matricesUBO;
     u32 textureHandlesUBO;
 
@@ -262,12 +274,9 @@ struct TransientDrawingInfo
 
     u32 skyboxTexture;
 
-    u32 mainQuadVao;
+    u32 quadVao;
     Framebuffer mainFramebuffer;
-    u32 rearViewQuadVao;
-    Framebuffer rearViewFramebuffer;
     Framebuffer lightingFramebuffer;
-    Framebuffer rearViewLightingFramebuffer;
     Framebuffer postProcessingFramebuffer;
     Framebuffer dirShadowMapFramebuffer;
     Framebuffer spotShadowMapFramebuffer;

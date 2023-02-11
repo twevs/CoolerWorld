@@ -10,6 +10,9 @@
 global_variable ImGuiContext *imGuiContext;
 global_variable ImGuiIO *imGuiIO;
 
+global_variable s32 gElemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
+global_variable s32 gBitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
+
 struct DrawElementsIndirectCommand
 {
     u32 count;
@@ -531,6 +534,18 @@ internal u64 GetTextureHandle(u32 textureID)
     return result;
 }
 
+internal TextureHandles CreateTextureHandlesFromMaterial(Material *material)
+{
+    TextureHandles result;
+    
+    result.diffuseHandle = GetTextureHandle(material->diffuse.id);
+    result.specularHandle = GetTextureHandle(material->specular.id);
+    result.normalsHandle = GetTextureHandle(material->normals.id);
+    result.displacementHandle = GetTextureHandle(material->displacement.id);
+    
+    return result;
+}
+
 internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesArena, LoadedTextures *loadedTextures,
                           Arena *vertices, Arena *indices, DrawElementsIndirectCommand *command,
                           TextureHandles *handles)
@@ -607,10 +622,7 @@ internal Mesh ProcessMesh(aiMesh *mesh, const aiScene *scene, Arena *texturesAre
         LoadTextures(&result, &textures->displacement, numDisp, material, aiTextureType_DISPLACEMENT, texturesArena,
                      loadedTextures);
 
-        handles->diffuseHandle = GetTextureHandle(textures->diffuse.id);
-        handles->specularHandle = GetTextureHandle(textures->specular.id);
-        handles->normalsHandle = GetTextureHandle(textures->normals.id);
-        handles->displacementHandle = GetTextureHandle(textures->displacement.id);
+        *handles = CreateTextureHandlesFromMaterial(textures);
     }
 
     return result;
@@ -1081,8 +1093,6 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     transientInfo->mainFramebuffer = CreateFramebuffer("Main G-buffer", width, height, 3, gBufferOptions);
 
-    transientInfo->rearViewFramebuffer = CreateFramebuffer("Rear-view G-buffer", width, height, 3, gBufferOptions);
-
     FramebufferOptions ssaoFramebufferOptions = {};
     ssaoFramebufferOptions.internalFormat = GL_R8;
     ssaoFramebufferOptions.pixelFormat = GL_RED;
@@ -1097,9 +1107,6 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
 
     transientInfo->lightingFramebuffer =
         CreateFramebuffer("Main lighting pass", width, height, 2, lightingFramebufferOptions);
-
-    transientInfo->rearViewLightingFramebuffer =
-        CreateFramebuffer("Rear-view lighting pass", width, height, 2, lightingFramebufferOptions);
 
     transientInfo->postProcessingFramebuffer = CreateFramebuffer("Post-processing", width, height, 1, &hdrBuffer);
 
@@ -1205,7 +1212,7 @@ internal u32 AddObject(TransientDrawingInfo *transientInfo, u32 vao, u32 numIndi
     transientInfo->objects[objectIndex] = {vao, numIndices, position};
     if (textures)
     {
-        transientInfo->objects[objectIndex].textures = *textures;
+        transientInfo->objects[objectIndex].textures = CreateTextureHandlesFromMaterial(textures);
     }
     transientInfo->numObjects++;
     myAssert(transientInfo->numObjects <= MAX_OBJECTS);
@@ -1298,29 +1305,17 @@ internal void CalculateTangents(Vertex *vertices, u32 numVertices, u32 *indices,
     ArenaPop(arena, allocatedSize);
 }
 
-extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
-                                                            PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo,
-                                                            Arena *texturesArena, Arena *meshDataArena)
+internal void LoadModels(TransientDrawingInfo *transientInfo, Arena *texturesArena, Arena *meshDataArena)
 {
-    u64 arenaSize = 100 * 1024 * 1024;
-
-    if (!CreateShaderPrograms(transientInfo))
-    {
-        return false;
-    }
-
-    s32 elemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
-    s32 bitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
-
-    u32 backpackIndex = AddModel("backpack.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+    u32 backpackIndex = AddModel("backpack.obj", transientInfo, gBitangentElemCounts, myArraySize(gBitangentElemCounts),
                                  texturesArena, meshDataArena);
-    u32 planetIndex = AddModel("planet.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+    u32 planetIndex = AddModel("planet.obj", transientInfo, gBitangentElemCounts, myArraySize(gBitangentElemCounts),
                                texturesArena, meshDataArena);
-    u32 rockIndex = AddModel("rock.obj", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+    u32 rockIndex = AddModel("rock.obj", transientInfo, gBitangentElemCounts, myArraySize(gBitangentElemCounts),
                              texturesArena, meshDataArena);
-    u32 deccerCubesIndex = AddModel("SM_Deccer_Cubes_Textured_Complex.fbx", transientInfo, bitangentElemCounts,
-                                    myArraySize(bitangentElemCounts), texturesArena, meshDataArena, .01f);
-    u32 sphereIndex = AddModel("sphere.fbx", transientInfo, bitangentElemCounts, myArraySize(bitangentElemCounts),
+    u32 deccerCubesIndex = AddModel("SM_Deccer_Cubes_Textured_Complex.fbx", transientInfo, gBitangentElemCounts,
+                                    myArraySize(gBitangentElemCounts), texturesArena, meshDataArena, .01f);
+    u32 sphereIndex = AddModel("sphere.fbx", transientInfo, gBitangentElemCounts, myArraySize(gBitangentElemCounts),
                                texturesArena, meshDataArena);
     transientInfo->sphereModel = &transientInfo->models[sphereIndex];
 
@@ -1332,6 +1327,10 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     AddModelToShaderPass(&transientInfo->ssaoShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->ssaoBlurShader, backpackIndex);
 
+}
+
+internal void LoadCube(TransientDrawingInfo *transientInfo, Arena *texturesArena)
+{
     FILE *rectFile;
     fopen_s(&rectFile, "rect.bin", "rb");
     // 4 vertices per face * 6 faces * (vec3 pos + vec3 normal + vec2 texCoords + vec3 tangent + vec3 bitangent);
@@ -1342,9 +1341,38 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     fclose(rectFile);
     CalculateTangents((Vertex *)rectVertices, 24, rectIndices, 36, texturesArena);
 
-    transientInfo->cubeVao = CreateVAO(rectVertices, sizeof(rectVertices), bitangentElemCounts,
-                                       myArraySize(bitangentElemCounts), rectIndices, sizeof(rectIndices));
+    transientInfo->cubeVao = CreateVAO(rectVertices, sizeof(rectVertices), gBitangentElemCounts,
+                                       myArraySize(gBitangentElemCounts), rectIndices, sizeof(rectIndices));
+}
 
+internal void InitializeCubes(TransientDrawingInfo *info)
+{
+    Material cubeTextures = {};
+    cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
+    cubeTextures.normals = CreateTexture("flat_surface_normals.png", TextureType::Normals);
+    
+    Cubes *cubes = &info->cubes;
+    cubes->numCubes = NUM_CUBES;
+    
+    for (u32 i = 0; i < NUM_CUBES; i++)
+    {
+        glm::vec3 randomPos = CreateRandomVec3();
+        cubes->positions[i] = randomPos;
+        cubes->textures[i] = CreateTextureHandlesFromMaterial(&cubeTextures);
+        
+        u32 curi = AddObject(info, info->cubeVao, 36, randomPos, &cubeTextures);
+        AddObjectToShaderPass(&info->dirDepthMapShader, curi);
+        AddObjectToShaderPass(&info->spotDepthMapShader, curi);
+        AddObjectToShaderPass(&info->pointDepthMapShader, curi);
+        AddObjectToShaderPass(&info->gBufferShader, curi);
+        AddObjectToShaderPass(&info->ssaoShader, curi);
+        AddObjectToShaderPass(&info->ssaoBlurShader, curi);
+    }
+
+}
+
+internal void CreateQuad(TransientDrawingInfo *transientInfo, Arena *texturesArena)
+{
     Vertex quadVertices[4] = {{
                                   // Top-right.
                                   glm::vec3(1.f, 1.f, 0.f), // Position.
@@ -1379,16 +1407,28 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
                               }};
     u32 quadIndices[] = {0, 1, 3, 1, 2, 3};
     CalculateTangents(quadVertices, 4, quadIndices, 6, texturesArena);
-    u32 mainQuadVao = CreateVAO((f32 *)quadVertices, sizeof(quadVertices), bitangentElemCounts,
-                                myArraySize(bitangentElemCounts), quadIndices, sizeof(quadIndices));
-    transientInfo->mainQuadVao = mainQuadVao;
+    u32 mainQuadVao = CreateVAO((f32 *)quadVertices, sizeof(quadVertices), gBitangentElemCounts,
+                                myArraySize(gBitangentElemCounts), quadIndices, sizeof(quadIndices));
+    transientInfo->quadVao = mainQuadVao;
+}
 
-    f32 rearViewQuadVertices[] = {.5f,  1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f, .5f,  .7f, 0.f, 0.f, 0.f, 1.f, 1.f, 0.f,
-                                  -.5f, .7f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, -.5f, 1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 1.f};
-    u32 rearViewQuadIndices[] = {0, 1, 3, 1, 2, 3};
-    transientInfo->rearViewQuadVao =
-        CreateVAO(rearViewQuadVertices, sizeof(rearViewQuadVertices), elemCounts, myArraySize(elemCounts),
-                  rearViewQuadIndices, sizeof(rearViewQuadIndices));
+extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
+                                                            PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo,
+                                                            Arena *texturesArena, Arena *meshDataArena)
+{
+    u64 arenaSize = 100 * 1024 * 1024;
+
+    if (!CreateShaderPrograms(transientInfo))
+    {
+        return false;
+    }
+
+    // TODO: sort out arena usage; don't use texturesArena for anything other than texture, or if you do
+    // then rename it.
+    LoadModels(transientInfo, texturesArena, meshDataArena);
+    LoadCube(transientInfo, texturesArena);
+    InitializeCubes(transientInfo);
+    CreateQuad(transientInfo, texturesArena);
 
     srand((u32)Win32GetWallClock());
 
@@ -1405,32 +1445,6 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
         u32 attIndex = rand() % myArraySize(globalAttenuationTable);
         // NOTE: constant-range point lights makes for easier visualization of light effects.
         pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
-    }
-
-    Material cubeTextures = {};
-    cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
-    cubeTextures.normals = CreateTexture("flat_surface_normals.png", TextureType::Normals);
-    for (u32 texCubeIndex = 0; texCubeIndex < NUM_OBJECTS; texCubeIndex++)
-    {
-        u32 curTexCubeIndex = AddObject(transientInfo, transientInfo->cubeVao, 36, CreateRandomVec3(), &cubeTextures);
-        // AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curTexCubeIndex);
-        // AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curTexCubeIndex);
-        // AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curTexCubeIndex);
-        // AddObjectToShaderPass(&transientInfo->gBufferShader, curTexCubeIndex);
-        // AddObjectToShaderPass(&transientInfo->ssaoShader, curTexCubeIndex);
-        // AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curTexCubeIndex);
-    }
-
-    Material wallTextures = CreateTextures("bricks2.jpg", "", "bricks2_normal.jpg", "bricks2_disp.jpg");
-    for (u32 wallIndex = 0; wallIndex < NUM_OBJECTS; wallIndex++)
-    {
-        u32 curWallIndex = AddObject(transientInfo, transientInfo->mainQuadVao, 6, CreateRandomVec3(), &wallTextures);
-        // AddObjectToShaderPass(&transientInfo->dirDepthMapShader, curWallIndex);
-        // AddObjectToShaderPass(&transientInfo->spotDepthMapShader, curWallIndex);
-        // AddObjectToShaderPass(&transientInfo->pointDepthMapShader, curWallIndex);
-        // AddObjectToShaderPass(&transientInfo->gBufferShader, curWallIndex);
-        // AddObjectToShaderPass(&transientInfo->ssaoShader, curWallIndex);
-        // AddObjectToShaderPass(&transientInfo->ssaoBlurShader, curWallIndex);
     }
 
     drawingInfo->dirLight.direction =
@@ -1625,16 +1639,13 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
     }
 }
 
-internal void RenderObject(Object *object, u32 shaderProgram, f32 yRot = 0.f, float scale = 1.f)
+internal void RenderObject(Object *object, u32 shaderProgram, u32 textureHandlesUBO, f32 yRot = 0.f, float scale = 1.f)
 {
-    myAssert(false);
-    glBindVertexArray(object->VAO);
+    glBindVertexArray(object->vao);
 
-    glBindTextureUnit(10, object->textures.diffuse.id);
-    glBindTextureUnit(11, object->textures.specular.id);
-    glBindTextureUnit(12, object->textures.normals.id);
-    glBindTextureUnit(13, object->textures.displacement.id);
-    SetShaderUniformInt(shaderProgram, "displace", object->textures.displacement.id > 0);
+    glNamedBufferSubData(textureHandlesUBO, 0, sizeof(object->textures),
+                         &object->textures);
+    SetShaderUniformInt(shaderProgram, "displace", object->textures.displacementHandle > 0);
 
     // Model matrix: transforms vertices from local to world space.
     glm::mat4 modelMatrix = glm::mat4(1.f);
@@ -1667,14 +1678,14 @@ internal void RenderWithColorShader(TransientDrawingInfo *transientInfo, Persist
 
         SetShaderUniformVec3(shaderProgram, "color", curLight->diffuse);
         Object lightObject = {transientInfo->cubeVao, 36, curLight->position};
-        RenderObject(&lightObject, shaderProgram, 0.f, .1f);
+        RenderObject(&lightObject, shaderProgram, transientInfo->textureHandlesUBO, 0.f, .1f);
 
         glStencilMask(0x00);
         glStencilFunc(GL_NOTEQUAL, 1, 0xff);
 
         glm::vec4 stencilColor = glm::vec4(0.f, 0.f, 1.f, 1.f);
         SetShaderUniformVec3(shaderProgram, "color", stencilColor);
-        RenderObject(&lightObject, shaderProgram, 0.f, .11f);
+        RenderObject(&lightObject, shaderProgram, transientInfo->textureHandlesUBO, 0.f, .11f);
 
         glDisable(GL_STENCIL_TEST);
     }
@@ -1743,7 +1754,7 @@ internal void RenderShaderPass(ShaderProgram *shaderProgram, TransientDrawingInf
     {
         u32 curIndex = shaderProgram->objectIndices[i];
         Object *curObject = &transientInfo->objects[curIndex];
-        RenderObject(curObject, shaderProgram->id);
+        RenderObject(curObject, shaderProgram->id, transientInfo->textureHandlesUBO);
     }
     for (u32 i = 0; i < shaderProgram->numModels; i++)
     {
@@ -1809,13 +1820,12 @@ internal void GetPerspectiveRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 
 }
 
 internal void SetLightingShaderUniforms(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
-                                        PersistentDrawingInfo *persistentInfo, bool rearView)
+                                        PersistentDrawingInfo *persistentInfo)
 {
-    u32 *rearViewQuads = transientInfo->rearViewFramebuffer.attachments;
     u32 *mainQuads = transientInfo->mainFramebuffer.attachments;
-    glBindTextureUnit(10, rearView ? rearViewQuads[0] : mainQuads[0]);
-    glBindTextureUnit(11, rearView ? rearViewQuads[1] : mainQuads[1]);
-    glBindTextureUnit(12, rearView ? rearViewQuads[2] : mainQuads[2]);
+    glBindTextureUnit(10, mainQuads[0]);
+    glBindTextureUnit(11, mainQuads[1]);
+    glBindTextureUnit(12, mainQuads[2]);
     glBindTextureUnit(13, transientInfo->ssaoFramebuffer.attachments[0]);
     glBindTextureUnit(14, transientInfo->skyboxTexture);
     glBindTextureUnit(15, transientInfo->dirShadowMapFramebuffer.attachments[0]);
@@ -1856,7 +1866,7 @@ internal void RenderQuad(TransientDrawingInfo *transientInfo, u32 shaderProgram)
     glNamedBufferSubData(transientInfo->matricesUBO, 0, 64, &identity);
     glNamedBufferSubData(transientInfo->matricesUBO, 64, 64, &identity);
 
-    glBindVertexArray(transientInfo->mainQuadVao);
+    glBindVertexArray(transientInfo->quadVao);
     glUseProgram(shaderProgram);
     SetShaderUniformMat4(shaderProgram, "modelMatrix", &identity);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
@@ -1864,9 +1874,9 @@ internal void RenderQuad(TransientDrawingInfo *transientInfo, u32 shaderProgram)
 
 internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
                                   PersistentDrawingInfo *persistentInfo, HWND window, Arena *listArena,
-                                  Arena *tempArena, bool rearView, bool dynamicEnvPass = false)
+                                  Arena *tempArena, bool dynamicEnvPass = false)
 {
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view lighting pass" : "Main lighting pass");
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Lighting pass");
     TracyGpuZone("Lighting pass");
 
     // TODO: find a proper way to parameterize dynamic environment mapping. We only want certain
@@ -1948,8 +1958,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     }
 #endif
 
-    glBindFramebuffer(GL_FRAMEBUFFER, rearView ? transientInfo->rearViewLightingFramebuffer.fbo
-                                               : transientInfo->lightingFramebuffer.fbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, transientInfo->lightingFramebuffer.fbo);
     GLenum attachments[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
     glDrawBuffers(2, attachments);
     glClearColor(1.f, 1.f, 1.f, 1.f);
@@ -1958,7 +1967,7 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     // Non-point lighting.
     u32 nonPointShaderProgram = transientInfo->nonPointLightingShader.id;
     glUseProgram(nonPointShaderProgram);
-    SetLightingShaderUniforms(cameraInfo, transientInfo, persistentInfo, rearView);
+    SetLightingShaderUniforms(cameraInfo, transientInfo, persistentInfo);
 
     RenderQuad(transientInfo, nonPointShaderProgram);
 
@@ -1981,8 +1990,8 @@ internal void ExecuteLightingPass(CameraInfo *cameraInfo, TransientDrawingInfo *
     SetShaderUniformVec2(pointShader, "screenSize", screenSize);
 
     glEnable(GL_STENCIL_TEST);
-    u32 blitSource = rearView ? transientInfo->rearViewFramebuffer.fbo : transientInfo->mainFramebuffer.fbo;
-    u32 blitDest = rearView ? transientInfo->rearViewLightingFramebuffer.fbo : transientInfo->lightingFramebuffer.fbo;
+    u32 blitSource = transientInfo->mainFramebuffer.fbo;
+    u32 blitDest = transientInfo->lightingFramebuffer.fbo;
     glBlitNamedFramebuffer(blitSource, blitDest, 0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT,
                            GL_NEAREST);
     glNamedFramebufferDrawBuffers(blitDest, 2, attachments);
@@ -2102,13 +2111,13 @@ internal void RenderWithGlassShader(CameraInfo *cameraInfo, TransientDrawingInfo
 
     SkipList list = CreateNewList(listArena);
     // TODO: account for in refactor.
-    // for (u32 i = 0; i < NUM_OBJECTS; i++)
+    // for (u32 i = 0; i < NUM_CUBES; i++)
     // {
     //     f32 dist = glm::distance(cameraInfo->pos, persistentInfo->windowPos[i]);
     //     Insert(&list, dist, persistentInfo->windowPos[i], listArena, tempArena);
     // }
 
-    // for (u32 i = 0; i < NUM_OBJECTS; i++)
+    // for (u32 i = 0; i < NUM_CUBES; i++)
     // {
     //     glm::vec3 pos = GetValue(&list, i);
 
@@ -2355,7 +2364,7 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     // if (ImGui::CollapsingHeader("Windows"))
     // {
     //     glm::vec3 *windows = persistentInfo->windowPos;
-    //     for (u32 index = 0; index < NUM_OBJECTS; index++)
+    //     for (u32 index = 0; index < NUM_CUBES; index++)
     //     {
     //         ImGui::PushID(id++);
     //         char treeName[32];
@@ -2375,15 +2384,14 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 }
 
-internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *cameraInfo, s32 width, s32 height,
-                         bool rearView)
+internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *cameraInfo, s32 width, s32 height)
 {
     // Draw skybox where geometry rendering pass did not set stencil value to 1.
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view skybox pass" : "Main skybox pass");
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Skybox pass");
     TracyGpuZone("Skybox pass");
 
-    u32 blitSource = rearView ? transientInfo->rearViewFramebuffer.fbo : transientInfo->mainFramebuffer.fbo;
-    u32 blitDest = rearView ? transientInfo->rearViewLightingFramebuffer.fbo : transientInfo->lightingFramebuffer.fbo;
+    u32 blitSource = transientInfo->mainFramebuffer.fbo;
+    u32 blitDest = transientInfo->lightingFramebuffer.fbo;
     glBlitNamedFramebuffer(blitSource, blitDest, 0, 0, width, height, 0, 0, width, height, GL_STENCIL_BUFFER_BIT,
                            GL_NEAREST);
 
@@ -2413,9 +2421,9 @@ internal void DrawSkybox(TransientDrawingInfo *transientInfo, CameraInfo *camera
 }
 
 internal void ExecuteSSAOPass(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo,
-                              CameraInfo *cameraInfo, glm::vec2 screenSize, bool rearView)
+                              CameraInfo *cameraInfo, glm::vec2 screenSize)
 {
-    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, rearView ? "Rear-view SSAO pass" : "Main SSAO pass");
+    glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "SSAO pass");
     TracyGpuZone("SSAO pass");
 
     {
@@ -2546,33 +2554,17 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     DrawScene(cameraInfo, transientInfo, persistentInfo, transientInfo->mainFramebuffer.fbo, window, listArena,
               tempArena);
 
-    CameraInfo rearViewCamera = *cameraInfo;
-    rearViewCamera.yaw += PI;
-    rearViewCamera.pitch *= -1.f;
-    rearViewCamera.forwardVector = GetCameraForwardVector(&rearViewCamera);
-    rearViewCamera.rightVector = GetCameraRightVector(&rearViewCamera);
-
-    // Rear-view pass.
-    DrawScene(&rearViewCamera, transientInfo, persistentInfo, transientInfo->rearViewFramebuffer.fbo, window, listArena,
-              tempArena);
-
     glDisable(GL_DEPTH_TEST);
 
     // Main SSAO pass.
     glm::vec2 screenSize(width, height);
-    ExecuteSSAOPass(transientInfo, persistentInfo, cameraInfo, screenSize, false);
+    ExecuteSSAOPass(transientInfo, persistentInfo, cameraInfo, screenSize);
 
     // Main lighting pass.
-    ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, false);
-
-    // Rear-view lighting pass.
-    ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena, true);
+    ExecuteLightingPass(cameraInfo, transientInfo, persistentInfo, window, listArena, tempArena);
 
     // Main skybox pass.
-    DrawSkybox(transientInfo, cameraInfo, width, height, false);
-
-    // Rear-view skybox pass.
-    DrawSkybox(transientInfo, &rearViewCamera, width, height, true);
+    DrawSkybox(transientInfo, cameraInfo, width, height);
 
     // Apply Gaussian blur to brightness texture to generate bloom.
     {
@@ -2596,20 +2588,6 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glPopDebugGroup();
     }
 
-    // NOTE: in the case of the rear-view mirror, since a multisampled framebuffer cannot be blitted
-    // to only a portion of a non-multisampled framebuffer, there are 3 options:
-    // 1. blit a non-multisampled framebuffer to a portion of the main buffer;
-    // 2. draw the texture attached to a non-multisampled buffer to the screen;
-    // 3. draw the texture attached to a multisampled buffer to the screen.
-    // I went with option 2 here since it results in less aliasing than option 1 and unlike option 3
-    // doesn't require maintaining a second shader to apply the same post-processing effects to the
-    // multisampled rear-view framebuffer (see: postprocess_ms.fs).
-    // See also: ResizeGLViewport().
-    /*
-    glBindFramebuffer(GL_READ_FRAMEBUFFER, transientInfo->rearViewFBO);
-    glBlitFramebuffer(0, 0, width, height, width / 4, height * 17 / 20, width * 3 / 4, height,
-    GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    */
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glClearColor(1.f, 1.f, 1.f, 1.f);
     glClear(GL_COLOR_BUFFER_BIT);
@@ -2629,24 +2607,6 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glBindTextureUnit(11, transientInfo->gaussianFramebuffers[0].attachments[0]);
 
         RenderQuad(transientInfo, shaderProgram);
-
-        glPopDebugGroup();
-    }
-
-    // Rear-view quad.
-    {
-        glPushDebugGroup(GL_DEBUG_SOURCE_APPLICATION, 0, -1, "Rear-view post-processing");
-        TracyGpuZone("Rear-view quad post-processing");
-
-        glBindTextureUnit(10, transientInfo->rearViewLightingFramebuffer.attachments[0]);
-        // NOTE: for now we don't bother with bloom in the rear-view mirror, since our bloom blur buffer
-        // is of the same size as the main framebuffer.
-        glBindTextureUnit(11, 0);
-
-        glBindVertexArray(transientInfo->rearViewQuadVao);
-        glm::mat4 identity(1.f);
-        SetShaderUniformMat4(shaderProgram, "modelMatrix", &identity);
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 
         glPopDebugGroup();
     }

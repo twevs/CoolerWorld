@@ -56,37 +56,28 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
 
     if (persistentInfo->initialized)
     {
-        // TODO: move this code into the DLL.
+        // TODO: fix this code and move it into the DLL.
         for (u32 i = 0; i < 2; i++)
         {
             glBindTexture(GL_TEXTURE_2D, transientInfo->mainFramebuffer.attachments[i]);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
             glBindTexture(GL_TEXTURE_2D, 0);
         }
-        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->mainFramebuffer.RBO);
+        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->mainFramebuffer.rbo);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
 
         // See also: note about rear-view quad in DrawWindow().
         /*
         glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->rearViewQuad);
         glTexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, transientInfo->numSamples, GL_RGB, width,
-        height, GL_TRUE); glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->rearViewRBO);
+        height, GL_TRUE); glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->rearViewrbo);
         glRenderbufferStorageMultisample(GL_RENDERBUFFER, transientInfo->numSamples,
         GL_DEPTH24_STENCIL8, width, height);
         */
 
-        for (u32 i = 0; i < 2; i++)
-        {
-            glBindTexture(GL_TEXTURE_2D, transientInfo->rearViewFramebuffer.attachments[i]);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
-            glBindTexture(GL_TEXTURE_2D, 0);
-        }
-        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->rearViewFramebuffer.RBO);
-        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
-
         glBindTexture(GL_TEXTURE_2D, transientInfo->postProcessingFramebuffer.attachments[0]);
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
-        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->postProcessingFramebuffer.RBO);
+        glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->postProcessingFramebuffer.rbo);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
 
         glBindTexture(GL_TEXTURE_2D, transientInfo->dirShadowMapFramebuffer.attachments[0]);
@@ -97,7 +88,7 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
         {
             glBindTexture(GL_TEXTURE_2D, transientInfo->gaussianFramebuffers[i].attachments[0]);
             glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, width, height, 0, GL_RGBA, GL_FLOAT, NULL);
-            glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->gaussianFramebuffers[i].RBO);
+            glBindRenderbuffer(GL_RENDERBUFFER, transientInfo->gaussianFramebuffers[i].rbo);
             glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
         }
     }
