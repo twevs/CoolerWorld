@@ -87,6 +87,12 @@ extern "C" __declspec(dllexport) void PrintDepthTestFunc(u32 val, char *outputBu
     }
 }
 
+extern "C" __declspec(dllexport) void GameHandleClick(CWInput button, CWPoint coordinates)
+{
+    // Raycast into world, see if we hit a known cube.
+    DebugPrintA("Clicked at (%i, %i)\n", coordinates.x, coordinates.y);
+}
+
 internal bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shaderFilename)
 {
 

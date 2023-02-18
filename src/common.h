@@ -378,3 +378,15 @@ struct EnvironmentMap
 
     u32 skyboxTexture;
 };
+
+enum class CWInput
+{
+    LeftButton
+};
+
+struct CWPoint
+{
+    s32 x;
+    s32 y;
+};
+

@@ -33,6 +33,9 @@ DrawWindow_t DrawWindow;
 typedef void (*PrintDepthTestFunc_t)(u32 val, char *outputBuffer, u32 bufSize);
 PrintDepthTestFunc_t PrintDepthTestFunc;
 
+typedef void (*GameHandleClick_t)(CWInput button, CWPoint coordinates);
+GameHandleClick_t GameHandleClick;
+
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 
 PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
@@ -133,6 +136,14 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
         {
         case WM_QUIT:
             *running = false;
+            break;
+        case WM_LBUTTONDOWN:
+            {
+                // NOTE: received coordinates will be relative to the top left of the client area,
+                // so we convert them into OpenGL's lower-left-origin coordinate system.
+                CWPoint coordinates = {GET_X_LPARAM(message.lParam), clientRect.bottom - GET_Y_LPARAM(message.lParam)};
+                GameHandleClick(CWInput::LeftButton, coordinates);
+            }
             break;
         case WM_RBUTTONDOWN:
             SetCapture(window);
@@ -394,12 +405,11 @@ void LoadRenderingCode(HWND window)
     InitializeImGuiInModule(window);
     GetImGuiIO = (GetImGuiIO_t)GetProcAddress(loglLib, "GetImGuiIO");
     ImGui_WndProcHandler = (ImGui_WndProcHandler_t)GetProcAddress(loglLib, "ImGui_WndProcHandler");
-
     DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
     InitializeDrawingInfo = (InitializeDrawingInfo_t)GetProcAddress(loglLib, "InitializeDrawingInfo");
     SaveDrawingInfo = (SaveDrawingInfo_t)GetProcAddress(loglLib, "SaveDrawingInfo");
-
     PrintDepthTestFunc = (PrintDepthTestFunc_t)GetProcAddress(loglLib, "PrintDepthTestFunc");
+    GameHandleClick = (GameHandleClick_t)GetProcAddress(loglLib, "GameHandleClick");
 
     ProvideCameraVectors = (ProvideCameraVectors_t)GetProcAddress(loglLib, "ProvideCameraVectors");
 }
@@ -647,7 +657,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 totalDeltaTime += deltaTimeBuffer.deltaTimes[i];
             }
             f32 averageDeltaTime = totalDeltaTime / 60;
-            DebugPrintA("averageDeltaTime: %f\n", averageDeltaTime);
+            // DebugPrintA("averageDeltaTime: %f\n", averageDeltaTime);
         }
     }
 
