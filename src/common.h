@@ -63,7 +63,6 @@ typedef double f64;
 
 #define PI 3.1415926535f
 #define NUM_POINTLIGHTS 4
-#define NUM_CUBES 5
 #define DIR_SHADOW_MAP_SIZE 4096
 #define POINT_SHADOW_MAP_SIZE 1024
 
@@ -187,7 +186,7 @@ struct Model
 
 struct Cubes
 {
-    glm::vec3 positions[MAX_CUBES];
+    glm::ivec3 positions[MAX_CUBES];
     TextureHandles textures[MAX_CUBES];
     u32 numCubes = 0;
 };

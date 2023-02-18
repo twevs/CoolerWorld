@@ -436,7 +436,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return -1;
     }
 
-    WCHAR windowClassName[] = L"LearnOpenGLWindowClass";
+    WCHAR windowClassName[] = L"CoolerWorldWindowClass";
 
     WNDCLASSW windowClass = {};
     windowClass.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
@@ -450,7 +450,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     ApplicationState appState = {};
 
     HWND window = CreateWindowW(windowClassName,     // lpClassName,
-                                L"Learn OpenGL",     // lpWindowName,
+                                L"Cooler World",     // lpWindowName,
                                 WS_OVERLAPPEDWINDOW, // dwStyle,
                                 CW_USEDEFAULT,       // x,
                                 CW_USEDEFAULT,       // y,

@@ -1319,6 +1319,10 @@ internal void LoadModels(TransientDrawingInfo *transientInfo, Arena *texturesAre
                                texturesArena, meshDataArena);
     transientInfo->sphereModel = &transientInfo->models[sphereIndex];
 
+    // NOTE: for now we just load models without renderin any.
+    return;
+    
+    /*
     AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->pointDepthMapShader, backpackIndex);
@@ -1326,7 +1330,7 @@ internal void LoadModels(TransientDrawingInfo *transientInfo, Arena *texturesAre
     AddModelToShaderPass(&transientInfo->geometryShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->ssaoShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->ssaoBlurShader, backpackIndex);
-
+    */
 }
 
 internal void LoadCube(TransientDrawingInfo *transientInfo, Arena *texturesArena)
@@ -1345,30 +1349,27 @@ internal void LoadCube(TransientDrawingInfo *transientInfo, Arena *texturesArena
                                        myArraySize(gBitangentElemCounts), rectIndices, sizeof(rectIndices));
 }
 
-internal void InitializeCubes(TransientDrawingInfo *info)
+internal void AddCube(TransientDrawingInfo *info, glm::ivec3 position)
 {
     Material cubeTextures = {};
     cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
     cubeTextures.normals = CreateTexture("flat_surface_normals.png", TextureType::Normals);
     
     Cubes *cubes = &info->cubes;
-    cubes->numCubes = NUM_CUBES;
+    u32 i = cubes->numCubes;
     
-    for (u32 i = 0; i < NUM_CUBES; i++)
-    {
-        glm::vec3 randomPos = CreateRandomVec3();
-        cubes->positions[i] = randomPos;
-        cubes->textures[i] = CreateTextureHandlesFromMaterial(&cubeTextures);
-        
-        u32 curi = AddObject(info, info->cubeVao, 36, randomPos, &cubeTextures);
-        AddObjectToShaderPass(&info->dirDepthMapShader, curi);
-        AddObjectToShaderPass(&info->spotDepthMapShader, curi);
-        AddObjectToShaderPass(&info->pointDepthMapShader, curi);
-        AddObjectToShaderPass(&info->gBufferShader, curi);
-        AddObjectToShaderPass(&info->ssaoShader, curi);
-        AddObjectToShaderPass(&info->ssaoBlurShader, curi);
-    }
-
+    cubes->positions[i] = position;
+    cubes->textures[i] = CreateTextureHandlesFromMaterial(&cubeTextures);
+    
+    u32 curi = AddObject(info, info->cubeVao, 36, position, &cubeTextures);
+    AddObjectToShaderPass(&info->dirDepthMapShader, curi);
+    AddObjectToShaderPass(&info->spotDepthMapShader, curi);
+    AddObjectToShaderPass(&info->pointDepthMapShader, curi);
+    AddObjectToShaderPass(&info->gBufferShader, curi);
+    AddObjectToShaderPass(&info->ssaoShader, curi);
+    AddObjectToShaderPass(&info->ssaoBlurShader, curi);
+    
+    cubes->numCubes++;
 }
 
 internal void CreateQuad(TransientDrawingInfo *transientInfo, Arena *texturesArena)
@@ -1427,7 +1428,6 @@ extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, Transie
     // then rename it.
     LoadModels(transientInfo, texturesArena, meshDataArena);
     LoadCube(transientInfo, texturesArena);
-    InitializeCubes(transientInfo);
     CreateQuad(transientInfo, texturesArena);
 
     srand((u32)Win32GetWallClock());
@@ -2230,10 +2230,10 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glPopDebugGroup();
 }
 
-void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo)
+void DrawEditorMenu(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo)
 {
     u32 id = 0;
-    ImGui::Begin("Debug Window");
+    ImGui::Begin("Editor Menu");
 
     ImGui::SliderFloat3("Camera position", glm::value_ptr(cameraInfo->pos), -150.f, 150.f);
     ImGui::SliderFloat2("Camera rotation", &cameraInfo->yaw, -PI, PI);
@@ -2299,6 +2299,16 @@ void DrawDebugWindow(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo
     ImGui::Text("Depth-test function (press U/I to change): %s", depthTestFuncStr);
 
     ImGui::Separator();
+    
+    if (ImGui::CollapsingHeader("Cubes"))
+    {
+        local_persist glm::ivec3 position;
+        ImGui::SliderInt3("Position", glm::value_ptr(position), -10, 10);
+        if (ImGui::Button("Add cube"))
+        {
+            AddCube(transientInfo, position);
+        }
+    }
 
     if (ImGui::CollapsingHeader("Positions"))
     {
@@ -2630,7 +2640,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glPopDebugGroup();
     }
 
-    DrawDebugWindow(cameraInfo, transientInfo, persistentInfo);
+    DrawEditorMenu(cameraInfo, transientInfo, persistentInfo);
 
     if (!SwapBuffers(hdc))
     {
