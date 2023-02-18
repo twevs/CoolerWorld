@@ -28,9 +28,6 @@ ProvideCameraVectors_t ProvideCameraVectors;
 typedef void (*DrawWindow_t)(HWND window, HDC hdc, ApplicationState *appState, Arena *listArena, Arena *tempArena);
 DrawWindow_t DrawWindow;
 
-typedef void (*PrintDepthTestFunc_t)(u32 val, char *outputBuffer, u32 bufSize);
-PrintDepthTestFunc_t PrintDepthTestFunc;
-
 typedef void (*GameHandleClick_t)(TransientDrawingInfo *transientInfo, CWInput button, CWPoint coordinates,
                                   CWPoint screenSize);
 GameHandleClick_t GameHandleClick;
@@ -250,20 +247,6 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
                 persistentInfo->wireframeMode = !persistentInfo->wireframeMode;
                 glPolygonMode(GL_FRONT_AND_BACK, persistentInfo->wireframeMode ? GL_LINE : GL_FILL);
                 break;
-            case 'U': {
-                s32 depthFunc;
-                glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
-                depthFunc = intMax(depthFunc - 1, 0x200);
-                glDepthFunc(depthFunc);
-                break;
-            }
-            case 'I': {
-                s32 depthFunc;
-                glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
-                depthFunc = intMin(depthFunc + 1, 0x207);
-                glDepthFunc(depthFunc);
-                break;
-            }
             case 'O':
                 break;
             case 'J':
@@ -409,7 +392,6 @@ void LoadRenderingCode(HWND window)
     DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
     InitializeDrawingInfo = (InitializeDrawingInfo_t)GetProcAddress(loglLib, "InitializeDrawingInfo");
     SaveDrawingInfo = (SaveDrawingInfo_t)GetProcAddress(loglLib, "SaveDrawingInfo");
-    PrintDepthTestFunc = (PrintDepthTestFunc_t)GetProcAddress(loglLib, "PrintDepthTestFunc");
     GameHandleClick = (GameHandleClick_t)GetProcAddress(loglLib, "GameHandleClick");
 
     ProvideCameraVectors = (ProvideCameraVectors_t)GetProcAddress(loglLib, "ProvideCameraVectors");

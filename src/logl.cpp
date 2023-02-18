@@ -57,40 +57,6 @@ extern "C" __declspec(dllexport) LRESULT ImGui_WndProcHandler(HWND hWnd, UINT uM
     return ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
 }
 
-extern "C" __declspec(dllexport) void PrintDepthTestFunc(u32 val, char *outputBuffer, u32 bufSize)
-{
-    switch (val)
-    {
-    case GL_NEVER:
-        sprintf_s(outputBuffer, bufSize, "GL_NEVER\n");
-        break;
-    case GL_LESS:
-        sprintf_s(outputBuffer, bufSize, "GL_LESS\n");
-        break;
-    case GL_EQUAL:
-        sprintf_s(outputBuffer, bufSize, "GL_EQUAL\n");
-        break;
-    case GL_LEQUAL:
-        sprintf_s(outputBuffer, bufSize, "GL_LEQUAL\n");
-        break;
-    case GL_GREATER:
-        sprintf_s(outputBuffer, bufSize, "GL_GREATER\n");
-        break;
-    case GL_NOTEQUAL:
-        sprintf_s(outputBuffer, bufSize, "GL_NOTEQUAL\n");
-        break;
-    case GL_GEQUAL:
-        sprintf_s(outputBuffer, bufSize, "GL_GEQUAL\n");
-        break;
-    case GL_ALWAYS:
-        sprintf_s(outputBuffer, bufSize, "GL_ALWAYS\n");
-        break;
-    default:
-        myAssert(false);
-        break;
-    }
-}
-
 internal void AddCube(TransientDrawingInfo *info, glm::ivec3 position);
 
 extern "C" __declspec(dllexport) void GameHandleClick(TransientDrawingInfo *transientInfo, CWInput button,
@@ -2339,41 +2305,6 @@ void DrawEditorMenu(ApplicationState *appState, CameraInfo *cameraInfo)
             persistentInfo->blinn = !persistentInfo->blinn;
         }
     }
-
-    ImGui::Separator();
-
-    ImGui::Text("Multisampling: %s", glIsEnabled(GL_MULTISAMPLE) ? "enabled" : "disabled");
-    ImGui::SameLine();
-    if (ImGui::Button("Toggle multisampling"))
-    {
-        if (glIsEnabled(GL_MULTISAMPLE))
-        {
-            glDisable(GL_MULTISAMPLE);
-        }
-        else
-        {
-            glEnable(GL_MULTISAMPLE);
-        }
-    }
-    ImGui::Text("Blending: %s", glIsEnabled(GL_BLEND) ? "enabled" : "disabled");
-    ImGui::SameLine();
-    if (ImGui::Button("Toggle blending"))
-    {
-        if (glIsEnabled(GL_BLEND))
-        {
-            glDisable(GL_BLEND);
-        }
-        else
-        {
-            glEnable(GL_BLEND);
-        }
-    }
-
-    char depthTestFuncStr[16];
-    s32 depthFunc;
-    glGetIntegerv(GL_DEPTH_FUNC, &depthFunc);
-    PrintDepthTestFunc(depthFunc, depthTestFuncStr, sizeof(depthTestFuncStr));
-    ImGui::Text("Depth-test function (press U/I to change): %s", depthTestFuncStr);
 
     ImGui::Separator();
 
