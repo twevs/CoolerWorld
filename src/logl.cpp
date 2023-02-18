@@ -13,8 +13,6 @@ global_variable ImGuiIO *imGuiIO;
 global_variable s32 gElemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
 global_variable s32 gBitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
 
-global_variable bool gPlaying = false;
-
 // NOTE: for now we put this here as a convenient way to share IDs between models and objects.
 // Will no longer be a global if we get rid of that distinction and only use models.
 global_variable u32 gObjectId = 0;
@@ -2284,15 +2282,19 @@ void DrawScene(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, Pers
     glPopDebugGroup();
 }
 
-void DrawEditorMenu(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo, PersistentDrawingInfo *persistentInfo)
+void DrawEditorMenu(ApplicationState *appState, CameraInfo *cameraInfo)
 {
+    TransientDrawingInfo *transientInfo = &appState->transientInfo;
+    PersistentDrawingInfo *persistentInfo = &appState->persistentInfo;
+    
     u32 id = 0;
     ImGui::Begin("Editor Menu");
 
     if (ImGui::Button("Toggle playing"))
     {
-        gPlaying = !gPlaying;
-        if (gPlaying)
+        bool *playing = &appState->playing;
+        *playing = !*playing;
+        if (*playing)
         {
             // TODO: fix this disgusting hard-coding. Model-related functions should really be
             // operating with Model pointers, not indices. See also:
@@ -2553,14 +2555,16 @@ internal void ExecuteSSAOPass(TransientDrawingInfo *transientInfo, PersistentDra
     glPopDebugGroup();
 }
 
-extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *running,
-                                                 TransientDrawingInfo *transientInfo,
-                                                 PersistentDrawingInfo *persistentInfo, CameraInfo *inCameraInfo,
-                                                 Arena *listArena, Arena *tempArena)
+extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, ApplicationState *appState, Arena *listArena,
+                                                 Arena *tempArena)
 {
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplWin32_NewFrame();
     ImGui::NewFrame();
+    
+    TransientDrawingInfo *transientInfo = &appState->transientInfo;
+    PersistentDrawingInfo *persistentInfo = &appState->persistentInfo;
+    CameraInfo *inCameraInfo = &appState->cameraInfo;
 
     if (!persistentInfo->initialized)
     {
@@ -2582,7 +2586,7 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     playingCameraInfo.forwardVector = GetCameraForwardVector(&playingCameraInfo);
     playingCameraInfo.rightVector = GetCameraRightVector(&playingCameraInfo);
 
-    CameraInfo *cameraInfo = gPlaying ? &playingCameraInfo : inCameraInfo;
+    CameraInfo *cameraInfo = appState->playing ? &playingCameraInfo : inCameraInfo;
 
     // Directional shadow map pass.
     // NOTE: front-face culling is a sledgehammer solution to Peter-Panning and may break down with
@@ -2725,13 +2729,13 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
         glPopDebugGroup();
     }
 
-    DrawEditorMenu(cameraInfo, transientInfo, persistentInfo);
+    DrawEditorMenu(appState, cameraInfo);
 
     if (!SwapBuffers(hdc))
     {
         if (MessageBoxW(window, L"Failed to swap buffers", L"OpenGL error", MB_OK) == S_OK)
         {
-            *running = false;
+            appState->running = false;
         }
     }
 

@@ -25,9 +25,7 @@ SaveDrawingInfo_t SaveDrawingInfo;
 typedef void (*ProvideCameraVectors_t)(CameraInfo *cameraInfo);
 ProvideCameraVectors_t ProvideCameraVectors;
 
-typedef void (*DrawWindow_t)(HWND window, HDC hdc, bool *running, TransientDrawingInfo *transientInfo,
-                             PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo, Arena *listArena,
-                             Arena *tempArena);
+typedef void (*DrawWindow_t)(HWND window, HDC hdc, ApplicationState *appState, Arena *listArena, Arena *tempArena);
 DrawWindow_t DrawWindow;
 
 typedef void (*PrintDepthTestFunc_t)(u32 val, char *outputBuffer, u32 bufSize);
@@ -642,7 +640,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // OutputDebugStringW(frameTimeString);
 
             cameraInfo->pos += movementPerFrame * deltaTime;
-            DrawWindow(window, hdc, &appState.running, transientInfo, persistentInfo, cameraInfo, listArena, tempArena);
+            DrawWindow(window, hdc, &appState, listArena, tempArena);
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);

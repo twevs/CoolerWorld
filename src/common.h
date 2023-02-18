@@ -346,6 +346,7 @@ struct ApplicationState
     PersistentDrawingInfo persistentInfo;
     CameraInfo cameraInfo;
     bool running;
+    bool playing;
 };
 
 struct Vec3
