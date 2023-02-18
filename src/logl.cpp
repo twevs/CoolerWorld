@@ -13,6 +13,8 @@ global_variable ImGuiIO *imGuiIO;
 global_variable s32 gElemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
 global_variable s32 gBitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
 
+global_variable bool gPlaying = false;
+
 // NOTE: for now we put this here as a convenient way to share IDs between models and objects.
 // Will no longer be a global if we get rid of that distinction and only use models.
 global_variable u32 gObjectId = 0;
@@ -112,7 +114,7 @@ extern "C" __declspec(dllexport) void GameHandleClick(TransientDrawingInfo *tran
     s8 facingZ = ((faceInfo & 0x3)) - 1;
     DebugPrintA("Value: %u, %i, %i, %i\n", id, facingX, facingY, facingZ);
     FreeArena(pixelsArena);
-    
+
     for (u32 i = 0; i < transientInfo->numObjects; i++)
     {
         Object *obj = &transientInfo->objects[i];
@@ -1138,7 +1140,8 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     positionBuffer->filteringMethod = GL_NEAREST;
     positionBuffer->wrapMode = GL_CLAMP_TO_EDGE;
 
-    transientInfo->mainFramebuffer = CreateFramebuffer("Main G-buffer", width, height, myArraySize(gBufferOptions), gBufferOptions);
+    transientInfo->mainFramebuffer =
+        CreateFramebuffer("Main G-buffer", width, height, myArraySize(gBufferOptions), gBufferOptions);
 
     FramebufferOptions ssaoFramebufferOptions = {};
     ssaoFramebufferOptions.internalFormat = GL_R8;
@@ -1152,8 +1155,8 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     // 0 = HDR colour buffer, 1 = bloom threshold buffer.
     FramebufferOptions lightingFramebufferOptions[2] = {hdrBuffer, hdrBuffer};
 
-    transientInfo->lightingFramebuffer =
-        CreateFramebuffer("Main lighting pass", width, height, myArraySize(lightingFramebufferOptions), lightingFramebufferOptions);
+    transientInfo->lightingFramebuffer = CreateFramebuffer(
+        "Main lighting pass", width, height, myArraySize(lightingFramebufferOptions), lightingFramebufferOptions);
 
     transientInfo->postProcessingFramebuffer = CreateFramebuffer("Post-processing", width, height, 1, &hdrBuffer);
 
@@ -1266,6 +1269,8 @@ internal u32 AddObject(TransientDrawingInfo *transientInfo, u32 vao, u32 numIndi
     return objectIndex;
 }
 
+// NOTE + TODO: see note in Model struct. There needs to be a clear separation of model geometry data and
+// data used to render specific instances of that model with given materials and transforms.
 internal void AddModelToShaderPass(ShaderProgram *shader, u32 modelIndex)
 {
     shader->modelIndices[shader->numModels] = modelIndex;
@@ -1365,8 +1370,9 @@ internal void LoadModels(TransientDrawingInfo *transientInfo, Arena *texturesAre
     u32 sphereIndex = AddModel("sphere.fbx", transientInfo, gBitangentElemCounts, myArraySize(gBitangentElemCounts),
                                texturesArena, meshDataArena);
     transientInfo->sphereModel = &transientInfo->models[sphereIndex];
+    // TODO: remove this once per-mesh relative transform is once again accounted for.
+    transientInfo->sphereModel->scale = glm::vec3(50.f);
 
-    // NOTE: for now we just load models without renderin any.
     return;
 
     /*
@@ -2283,6 +2289,27 @@ void DrawEditorMenu(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
     u32 id = 0;
     ImGui::Begin("Editor Menu");
 
+    if (ImGui::Button("Toggle playing"))
+    {
+        gPlaying = !gPlaying;
+        if (gPlaying)
+        {
+            // TODO: fix this disgusting hard-coding. Model-related functions should really be
+            // operating with Model pointers, not indices. See also:
+            // - note in Model struct;
+            // - note + todo above AddModelToShaderPass().
+            transientInfo->ball.model = transientInfo->sphereModel;
+            transientInfo->models[4].position = transientInfo->ball.position;
+            AddModelToShaderPass(&transientInfo->dirDepthMapShader, 4);
+            AddModelToShaderPass(&transientInfo->spotDepthMapShader, 4);
+            AddModelToShaderPass(&transientInfo->pointDepthMapShader, 4);
+            AddModelToShaderPass(&transientInfo->gBufferShader, 4);
+            AddModelToShaderPass(&transientInfo->geometryShader, 4);
+            AddModelToShaderPass(&transientInfo->ssaoShader, 4);
+            AddModelToShaderPass(&transientInfo->ssaoBlurShader, 4);
+        }
+    }
+
     ImGui::SliderFloat3("Camera position", glm::value_ptr(cameraInfo->pos), -150.f, 150.f);
     ImGui::SliderFloat2("Camera rotation", &cameraInfo->yaw, -PI, PI);
     if (ImGui::Button("Reset camera"))
@@ -2528,7 +2555,7 @@ internal void ExecuteSSAOPass(TransientDrawingInfo *transientInfo, PersistentDra
 
 extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *running,
                                                  TransientDrawingInfo *transientInfo,
-                                                 PersistentDrawingInfo *persistentInfo, CameraInfo *cameraInfo,
+                                                 PersistentDrawingInfo *persistentInfo, CameraInfo *inCameraInfo,
                                                  Arena *listArena, Arena *tempArena)
 {
     ImGui_ImplOpenGL3_NewFrame();
@@ -2546,6 +2573,16 @@ extern "C" __declspec(dllexport) void DrawWindow(HWND window, HDC hdc, bool *run
     GetClientRect(window, &clientRect);
     s32 width = clientRect.right;
     s32 height = clientRect.bottom;
+
+    CameraInfo playingCameraInfo = *inCameraInfo;
+    glm::ivec3 ballRotation = transientInfo->ball.rotation;
+    playingCameraInfo.pos = transientInfo->ball.position - ballRotation * 3;
+    playingCameraInfo.yaw = 0;
+    playingCameraInfo.pitch = 0;
+    playingCameraInfo.forwardVector = GetCameraForwardVector(&playingCameraInfo);
+    playingCameraInfo.rightVector = GetCameraRightVector(&playingCameraInfo);
+
+    CameraInfo *cameraInfo = gPlaying ? &playingCameraInfo : inCameraInfo;
 
     // Directional shadow map pass.
     // NOTE: front-face culling is a sledgehammer solution to Peter-Panning and may break down with

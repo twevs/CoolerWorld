@@ -174,10 +174,15 @@ struct TextureHandleBuffer
 
 struct Model
 {
-    u32 id;
     u32 vao;
     u32 commandBuffer;
     u32 meshCount;
+    // NOTE: the elements below don't seem like they belong here and reflects a conflation
+    // of information about a generic model and information about specific instances of the
+    // model that need to be rendered. Once we have the model geometry, we'll probably want
+    // to render that same model with different textures, positions and scales.
+    // TODO: organize this separation.
+    u32 id;
     TextureHandleBuffer textureHandleBuffer;
     glm::vec3 position;
     glm::vec3 scale;
@@ -240,6 +245,13 @@ struct Framebuffer
     u32 rbo;
 };
 
+struct Ball
+{
+    Model *model;
+    glm::ivec3 position = glm::ivec3(0, 1, 0);
+    glm::ivec3 rotation = glm::ivec3(0, 0, -1);
+};
+
 struct TransientDrawingInfo
 {
     Object objects[MAX_OBJECTS];
@@ -266,6 +278,7 @@ struct TransientDrawingInfo
     ShaderProgram gaussianShader;
     
     Cubes cubes;
+    Ball ball;
     
     u32 matricesUBO;
     u32 textureHandlesUBO;
