@@ -174,6 +174,7 @@ struct TextureHandleBuffer
 
 struct Model
 {
+    u32 id;
     u32 vao;
     u32 commandBuffer;
     u32 meshCount;
@@ -203,6 +204,7 @@ struct VaoInformation
 
 struct Object
 {
+    u32 id;
     u32 vao;
     // u32 commandBuffer;
     u32 numIndices;

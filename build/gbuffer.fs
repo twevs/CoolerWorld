@@ -12,6 +12,7 @@ uniform float shininess;
 layout (location = 0) out vec4 positionBuffer; // Alpha = specular.
 layout (location = 1) out vec4 normalBuffer;   // Alpha reserved for handedness.
 layout (location = 2) out vec4 albedoBuffer;   // Alpha = shininess.
+layout (location = 3) out uvec2 pickingBuffer;
 
 #define NUM_POINTLIGHTS 4
 
@@ -24,6 +25,8 @@ in flat uvec2 diffuseHandle;
 in flat uvec2 specularHandle;
 in flat uvec2 normalsHandle;
 in flat uvec2 displacementHandle;
+in flat uint objectId;
+in flat uint faceInfo;
 
 // Displacement mapping.
 uniform float heightScale;
@@ -81,4 +84,6 @@ void main()
     normalBuffer.rgb = tbn * norm;
     albedoBuffer.rgb = texture(diffuse, displacedTexCoords).rgb;
     albedoBuffer.a = shininess;
+    pickingBuffer.r = objectId;
+    pickingBuffer.g = faceInfo;
 }

@@ -33,7 +33,8 @@ DrawWindow_t DrawWindow;
 typedef void (*PrintDepthTestFunc_t)(u32 val, char *outputBuffer, u32 bufSize);
 PrintDepthTestFunc_t PrintDepthTestFunc;
 
-typedef void (*GameHandleClick_t)(CWInput button, CWPoint coordinates);
+typedef void (*GameHandleClick_t)(TransientDrawingInfo *transientInfo, CWInput button, CWPoint coordinates,
+                                  CWPoint screenSize);
 GameHandleClick_t GameHandleClick;
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
@@ -102,8 +103,8 @@ internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
 }
 
-internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawingInfo *drawingInfo, glm::vec3 *movement,
-                                   CameraInfo *cameraInfo)
+internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawingInfo *persistentInfo,
+                                   TransientDrawingInfo *transientInfo, glm::vec3 *movement, CameraInfo *cameraInfo)
 {
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
@@ -129,22 +130,24 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
 
         RECT clientRect;
         GetClientRect(window, &clientRect);
-        s16 centreX = originX + (s16)clientRect.right / 2;
-        s16 centreY = originY + (s16)clientRect.bottom / 2;
+        s32 width = clientRect.right;
+        s32 height = clientRect.bottom;
+        s16 centreX = originX + (s16)width / 2;
+        s16 centreY = originY + (s16)height / 2;
 
         switch (message.message)
         {
         case WM_QUIT:
             *running = false;
             break;
-        case WM_LBUTTONDOWN:
-            {
-                // NOTE: received coordinates will be relative to the top left of the client area,
-                // so we convert them into OpenGL's lower-left-origin coordinate system.
-                CWPoint coordinates = {GET_X_LPARAM(message.lParam), clientRect.bottom - GET_Y_LPARAM(message.lParam)};
-                GameHandleClick(CWInput::LeftButton, coordinates);
-            }
-            break;
+        case WM_LBUTTONDOWN: {
+            // NOTE: received coordinates will be relative to the top left of the client area,
+            // so we convert them into OpenGL's lower-left-origin coordinate system.
+            CWPoint coordinates = {GET_X_LPARAM(message.lParam), height - GET_Y_LPARAM(message.lParam)};
+            CWPoint screenSize = {width, height};
+            GameHandleClick(transientInfo, CWInput::LeftButton, coordinates, screenSize);
+        }
+        break;
         case WM_RBUTTONDOWN:
             SetCapture(window);
             capturing = true;
@@ -217,8 +220,8 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
                 }
                 else
                 {
-                    drawingInfo->spotLight.innerCutoff += .05f;
-                    DebugPrintA("innerCutoff: %f\n", drawingInfo->spotLight.innerCutoff);
+                    persistentInfo->spotLight.innerCutoff += .05f;
+                    DebugPrintA("innerCutoff: %f\n", persistentInfo->spotLight.innerCutoff);
                 }
                 break;
             case VK_DOWN:
@@ -227,17 +230,17 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
                 }
                 else
                 {
-                    drawingInfo->spotLight.innerCutoff -= .05f;
-                    DebugPrintA("innerCutoff: %f\n", drawingInfo->spotLight.innerCutoff);
+                    persistentInfo->spotLight.innerCutoff -= .05f;
+                    DebugPrintA("innerCutoff: %f\n", persistentInfo->spotLight.innerCutoff);
                 }
                 break;
             case VK_LEFT:
-                drawingInfo->spotLight.outerCutoff -= .05f;
-                DebugPrintA("outerCutoff: %f\n", drawingInfo->spotLight.outerCutoff);
+                persistentInfo->spotLight.outerCutoff -= .05f;
+                DebugPrintA("outerCutoff: %f\n", persistentInfo->spotLight.outerCutoff);
                 break;
             case VK_RIGHT:
-                drawingInfo->spotLight.outerCutoff += .05f;
-                DebugPrintA("outerCutoff: %f\n", drawingInfo->spotLight.outerCutoff);
+                persistentInfo->spotLight.outerCutoff += .05f;
+                DebugPrintA("outerCutoff: %f\n", persistentInfo->spotLight.outerCutoff);
                 break;
             case 'Q':
                 cameraInfo->aspectRatio = fmax(cameraInfo->aspectRatio - .1f, 0.f);
@@ -246,8 +249,8 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
                 cameraInfo->aspectRatio = fmin(cameraInfo->aspectRatio + .1f, 10.f);
                 break;
             case 'X':
-                drawingInfo->wireframeMode = !drawingInfo->wireframeMode;
-                glPolygonMode(GL_FRONT_AND_BACK, drawingInfo->wireframeMode ? GL_LINE : GL_FILL);
+                persistentInfo->wireframeMode = !persistentInfo->wireframeMode;
+                glPolygonMode(GL_FRONT_AND_BACK, persistentInfo->wireframeMode ? GL_LINE : GL_FILL);
                 break;
             case 'U': {
                 s32 depthFunc;
@@ -274,9 +277,9 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
             case 'F': {
                 local_persist bool flashLightOn = true;
                 flashLightOn = !flashLightOn;
-                drawingInfo->spotLight.ambient = flashLightOn ? glm::vec3(.1f) : glm::vec3(0.f);
-                drawingInfo->spotLight.diffuse = flashLightOn ? glm::vec3(.5f) : glm::vec3(0.f);
-                drawingInfo->spotLight.specular = flashLightOn ? glm::vec3(1.f) : glm::vec3(0.f);
+                persistentInfo->spotLight.ambient = flashLightOn ? glm::vec3(.1f) : glm::vec3(0.f);
+                persistentInfo->spotLight.diffuse = flashLightOn ? glm::vec3(.5f) : glm::vec3(0.f);
+                persistentInfo->spotLight.specular = flashLightOn ? glm::vec3(1.f) : glm::vec3(0.f);
                 break;
             }
             case 'G':
@@ -574,14 +577,14 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         InitializeTracyGPUContext();
 
         TransientDrawingInfo *transientInfo = &appState.transientInfo;
-        PersistentDrawingInfo *drawingInfo = &appState.persistentInfo;
+        PersistentDrawingInfo *persistentInfo = &appState.persistentInfo;
         CameraInfo *cameraInfo = &appState.cameraInfo;
         Arena *texturesArena = AllocArena(1024);
         Arena *meshesArena = AllocArena(100 * sizeof(Mesh));
         Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
         Arena *listArena = AllocArena(2048);
         Arena *tempArena = AllocArena(1920 * 1080 * 32);
-        if (!InitializeDrawingInfo(window, transientInfo, drawingInfo, cameraInfo, texturesArena, meshDataArena))
+        if (!InitializeDrawingInfo(window, transientInfo, persistentInfo, cameraInfo, texturesArena, meshDataArena))
         {
             return -1;
         }
@@ -612,7 +615,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
             ProvideCameraVectors(cameraInfo);
 
-            Win32ProcessMessages(window, &appState.running, drawingInfo, &movementPerFrame, cameraInfo);
+            Win32ProcessMessages(window, &appState.running, persistentInfo, transientInfo, &movementPerFrame,
+                                 cameraInfo);
 
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
@@ -638,7 +642,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             // OutputDebugStringW(frameTimeString);
 
             cameraInfo->pos += movementPerFrame * deltaTime;
-            DrawWindow(window, hdc, &appState.running, transientInfo, drawingInfo, cameraInfo, listArena, tempArena);
+            DrawWindow(window, hdc, &appState.running, transientInfo, persistentInfo, cameraInfo, listArena, tempArena);
             movementPerFrame = glm::vec3(0.f);
             // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
             // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);

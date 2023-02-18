@@ -18,6 +18,8 @@ out uvec2 diffuseHandle;
 out uvec2 specularHandle;
 out uvec2 normalsHandle;
 out uvec2 displacementHandle;
+out uint objectId;
+out uint faceInfo;
 
 layout (std140, binding = 0) uniform Matrices
 {
@@ -30,6 +32,7 @@ layout (std140, binding = 0) uniform Matrices
 uniform mat4 modelMatrix;
 uniform mat3 normalMatrix;
 uniform vec3 cameraPos;
+uniform uint u_objectId;
 
 struct TextureHandle
 {
@@ -68,4 +71,10 @@ void main()
 	specularHandle = handles[gl_DrawID].aSpecularHandle;
 	normalsHandle = handles[gl_DrawID].aNormalsHandle;
 	displacementHandle = handles[gl_DrawID].aDisplacementHandle;
+	
+	objectId = u_objectId;
+	uint facingX = uint(dot(norm, vec3(1, 0, 0)) + 1);
+	uint facingY = uint(dot(norm, vec3(0, 1, 0)) + 1);
+	uint facingZ = uint(dot(norm, vec3(0, 0, 1)) + 1);
+	faceInfo = (facingX << 4) | (facingY << 2) | facingZ;
 }

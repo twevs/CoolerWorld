@@ -13,6 +13,10 @@ global_variable ImGuiIO *imGuiIO;
 global_variable s32 gElemCounts[] = {3, 3, 2};                // Position, normal, texcoords.
 global_variable s32 gBitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, normal, texcoords, tangent, bitangent.
 
+// NOTE: for now we put this here as a convenient way to share IDs between models and objects.
+// Will no longer be a global if we get rid of that distinction and only use models.
+global_variable u32 gObjectId = 0;
+
 struct DrawElementsIndirectCommand
 {
     u32 count;
@@ -87,10 +91,36 @@ extern "C" __declspec(dllexport) void PrintDepthTestFunc(u32 val, char *outputBu
     }
 }
 
-extern "C" __declspec(dllexport) void GameHandleClick(CWInput button, CWPoint coordinates)
+internal void AddCube(TransientDrawingInfo *info, glm::ivec3 position);
+
+extern "C" __declspec(dllexport) void GameHandleClick(TransientDrawingInfo *transientInfo, CWInput button,
+                                                      CWPoint coordinates, CWPoint screenSize)
 {
-    // Raycast into world, see if we hit a known cube.
     DebugPrintA("Clicked at (%i, %i)\n", coordinates.x, coordinates.y);
+    u32 bufSize = 1920 * 1080 * 2;
+    Arena *pixelsArena = AllocArena(bufSize);
+    u8 *pixels = (u8 *)ArenaPush(pixelsArena, bufSize);
+    glGetTextureImage(transientInfo->mainFramebuffer.attachments[3], 0, GL_RG_INTEGER, GL_UNSIGNED_BYTE, bufSize,
+                      pixels);
+    u32 stride = screenSize.x;
+    u16 *pixelsAsRG = (u16 *)pixels;
+    u16 pickedPixel = pixelsAsRG[coordinates.x + coordinates.y * stride];
+    u32 id = (pickedPixel & 0xff);
+    u8 faceInfo = ((pickedPixel & 0xff00) >> 8);
+    s8 facingX = ((faceInfo & 0x30) >> 4) - 1;
+    s8 facingY = ((faceInfo & 0xc) >> 2) - 1;
+    s8 facingZ = ((faceInfo & 0x3)) - 1;
+    DebugPrintA("Value: %u, %i, %i, %i\n", id, facingX, facingY, facingZ);
+    FreeArena(pixelsArena);
+    
+    for (u32 i = 0; i < transientInfo->numObjects; i++)
+    {
+        Object *obj = &transientInfo->objects[i];
+        if (obj->id == id)
+        {
+            AddCube(transientInfo, obj->position + glm::vec3(facingX, facingY, facingZ));
+        }
+    }
 }
 
 internal bool CompileShader(u32 *shaderID, GLenum shaderType, const char *shaderFilename)
@@ -192,6 +222,11 @@ internal FILETIME GetFileTime(const char *filename)
 internal void SetShaderUniformInt(u32 shaderProgram, const char *uniformName, s32 value)
 {
     glUniform1i(glGetUniformLocation(shaderProgram, uniformName), value);
+}
+
+internal void SetShaderUniformUint(u32 shaderProgram, const char *uniformName, u32 value)
+{
+    glUniform1ui(glGetUniformLocation(shaderProgram, uniformName), value);
 }
 
 internal void SetShaderUniformFloat(u32 shaderProgram, const char *uniformName, float value)
@@ -543,12 +578,12 @@ internal u64 GetTextureHandle(u32 textureID)
 internal TextureHandles CreateTextureHandlesFromMaterial(Material *material)
 {
     TextureHandles result;
-    
+
     result.diffuseHandle = GetTextureHandle(material->diffuse.id);
     result.specularHandle = GetTextureHandle(material->specular.id);
     result.normalsHandle = GetTextureHandle(material->normals.id);
     result.displacementHandle = GetTextureHandle(material->displacement.id);
-    
+
     return result;
 }
 
@@ -775,6 +810,8 @@ internal Model LoadModel(const char *filename, s32 *elemCounts, u32 elemCountsSi
 
     result.meshCount = meshCount;
     result.scale = glm::vec3(scale);
+
+    result.id = gObjectId++;
 
     return result;
 }
@@ -1090,14 +1127,18 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     hdrBuffer.pixelFormat = GL_RGBA;
     hdrBuffer.type = GL_FLOAT;
 
-    // Main G-buffer, with 3 colour buffers:
-    // 0 = position buffer, 1 = normal buffer, 2 = albedo buffer.
-    FramebufferOptions gBufferOptions[3] = {hdrBuffer, hdrBuffer, hdrBuffer};
+    FramebufferOptions pickingBuffer = {};
+    pickingBuffer.internalFormat = GL_RG8UI;
+    pickingBuffer.pixelFormat = GL_RG_INTEGER;
+
+    // Main G-buffer, with 4 colour buffers:
+    // 0 = position buffer, 1 = normal buffer, 2 = albedo buffer, 3 = picking buffer.
+    FramebufferOptions gBufferOptions[4] = {hdrBuffer, hdrBuffer, hdrBuffer, pickingBuffer};
     auto *positionBuffer = &gBufferOptions[0];
     positionBuffer->filteringMethod = GL_NEAREST;
     positionBuffer->wrapMode = GL_CLAMP_TO_EDGE;
 
-    transientInfo->mainFramebuffer = CreateFramebuffer("Main G-buffer", width, height, 3, gBufferOptions);
+    transientInfo->mainFramebuffer = CreateFramebuffer("Main G-buffer", width, height, myArraySize(gBufferOptions), gBufferOptions);
 
     FramebufferOptions ssaoFramebufferOptions = {};
     ssaoFramebufferOptions.internalFormat = GL_R8;
@@ -1112,7 +1153,7 @@ internal void CreateFramebuffers(HWND window, TransientDrawingInfo *transientInf
     FramebufferOptions lightingFramebufferOptions[2] = {hdrBuffer, hdrBuffer};
 
     transientInfo->lightingFramebuffer =
-        CreateFramebuffer("Main lighting pass", width, height, 2, lightingFramebufferOptions);
+        CreateFramebuffer("Main lighting pass", width, height, myArraySize(lightingFramebufferOptions), lightingFramebufferOptions);
 
     transientInfo->postProcessingFramebuffer = CreateFramebuffer("Post-processing", width, height, 1, &hdrBuffer);
 
@@ -1215,7 +1256,7 @@ internal u32 AddObject(TransientDrawingInfo *transientInfo, u32 vao, u32 numIndi
                        Material *textures = nullptr)
 {
     u32 objectIndex = transientInfo->numObjects;
-    transientInfo->objects[objectIndex] = {vao, numIndices, position};
+    transientInfo->objects[objectIndex] = {gObjectId++, vao, numIndices, position};
     if (textures)
     {
         transientInfo->objects[objectIndex].textures = CreateTextureHandlesFromMaterial(textures);
@@ -1327,7 +1368,7 @@ internal void LoadModels(TransientDrawingInfo *transientInfo, Arena *texturesAre
 
     // NOTE: for now we just load models without renderin any.
     return;
-    
+
     /*
     AddModelToShaderPass(&transientInfo->dirDepthMapShader, backpackIndex);
     AddModelToShaderPass(&transientInfo->spotDepthMapShader, backpackIndex);
@@ -1360,13 +1401,13 @@ internal void AddCube(TransientDrawingInfo *info, glm::ivec3 position)
     Material cubeTextures = {};
     cubeTextures.diffuse = CreateTexture("window.png", TextureType::Diffuse, GL_CLAMP_TO_EDGE);
     cubeTextures.normals = CreateTexture("flat_surface_normals.png", TextureType::Normals);
-    
+
     Cubes *cubes = &info->cubes;
     u32 i = cubes->numCubes;
-    
+
     cubes->positions[i] = position;
     cubes->textures[i] = CreateTextureHandlesFromMaterial(&cubeTextures);
-    
+
     u32 curi = AddObject(info, info->cubeVao, 36, position, &cubeTextures);
     AddObjectToShaderPass(&info->dirDepthMapShader, curi);
     AddObjectToShaderPass(&info->spotDepthMapShader, curi);
@@ -1374,7 +1415,7 @@ internal void AddCube(TransientDrawingInfo *info, glm::ivec3 position)
     AddObjectToShaderPass(&info->gBufferShader, curi);
     AddObjectToShaderPass(&info->ssaoShader, curi);
     AddObjectToShaderPass(&info->ssaoBlurShader, curi);
-    
+
     cubes->numCubes++;
 }
 
@@ -1649,8 +1690,7 @@ internal void RenderObject(Object *object, u32 shaderProgram, u32 textureHandles
 {
     glBindVertexArray(object->vao);
 
-    glNamedBufferSubData(textureHandlesUBO, 0, sizeof(object->textures),
-                         &object->textures);
+    glNamedBufferSubData(textureHandlesUBO, 0, sizeof(object->textures), &object->textures);
     SetShaderUniformInt(shaderProgram, "displace", object->textures.displacementHandle > 0);
 
     // Model matrix: transforms vertices from local to world space.
@@ -1662,6 +1702,7 @@ internal void RenderObject(Object *object, u32 shaderProgram, u32 textureHandles
 
     SetShaderUniformMat4(shaderProgram, "modelMatrix", &modelMatrix);
     SetShaderUniformMat3(shaderProgram, "normalMatrix", &normalMatrix);
+    SetShaderUniformUint(shaderProgram, "u_objectId", object->id);
     glDrawElements(GL_TRIANGLES, object->numIndices, GL_UNSIGNED_INT, 0);
 }
 
@@ -1683,7 +1724,8 @@ internal void RenderWithColorShader(TransientDrawingInfo *transientInfo, Persist
         glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
 
         SetShaderUniformVec3(shaderProgram, "color", curLight->diffuse);
-        Object lightObject = {transientInfo->cubeVao, 36, curLight->position};
+        // NOTE: id = 0 because we don't care about selecting outlines.
+        Object lightObject = {0, transientInfo->cubeVao, 36, curLight->position};
         RenderObject(&lightObject, shaderProgram, transientInfo->textureHandlesUBO, 0.f, .1f);
 
         glStencilMask(0x00);
@@ -2305,7 +2347,7 @@ void DrawEditorMenu(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
     ImGui::Text("Depth-test function (press U/I to change): %s", depthTestFuncStr);
 
     ImGui::Separator();
-    
+
     if (ImGui::CollapsingHeader("Cubes"))
     {
         local_persist glm::ivec3 position;
