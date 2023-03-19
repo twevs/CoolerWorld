@@ -6,5 +6,5 @@ set "linkerflags=/DEBUG:FULL /INCREMENTAL:NO /opt:ref User32.lib Gdi32.lib Openg
 mkdir ..\build
 pushd ..\build
 cl ..\src\main.cpp %compilerflags% /link %linkerflags% ..\build\logl.lib ..\build\all_imgui.obj
-cl /LD ..\src\logl.cpp %compilerflags% /link %linkerflags% ..\build\all_imgui.obj
+cl /LD ..\src\game.cpp %compilerflags% /link %linkerflags% ..\build\all_imgui.obj
 popd
