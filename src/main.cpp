@@ -14,8 +14,7 @@ typedef LRESULT (*ImGui_WndProcHandler_t)(HWND hWnd, UINT msg, WPARAM wParam, LP
 ImGui_WndProcHandler_t ImGui_WndProcHandler;
 
 typedef bool (*InitializeDrawingInfo_t)(HWND window, TransientDrawingInfo *transientInfo,
-                                        PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo,
-                                        Arena *texturesArena, Arena *meshDataArena);
+                                        PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo);
 InitializeDrawingInfo_t InitializeDrawingInfo;
 
 typedef bool (*SaveDrawingInfo_t)(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *drawingInfo,
@@ -559,12 +558,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         TransientDrawingInfo *transientInfo = &appState.transientInfo;
         PersistentDrawingInfo *persistentInfo = &appState.persistentInfo;
         CameraInfo *cameraInfo = &appState.cameraInfo;
-        Arena *texturesArena = AllocArena(1024);
-        Arena *meshesArena = AllocArena(100 * sizeof(Mesh));
-        Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
-        Arena *listArena = AllocArena(2048);
-        Arena *tempArena = AllocArena(1920 * 1080 * 32);
-        if (!InitializeDrawingInfo(window, transientInfo, persistentInfo, cameraInfo, texturesArena, meshDataArena))
+        if (!InitializeDrawingInfo(window, transientInfo, persistentInfo, cameraInfo))
         {
             return -1;
         }
@@ -582,6 +576,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         CloseHandle(renderingDLL);
 
         f32 dllAccumulator = 0.f;
+
+        // Per-frame.
+        Arena *listArena = AllocArena(2048);
+        Arena *tempArena = AllocArena(1920 * 1080 * 32);
 
         appState.running = true;
         while (appState.running)

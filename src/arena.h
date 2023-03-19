@@ -2,23 +2,6 @@
 
 #include "common.h"
 
-u64 fnv1a(u8 *data, size_t len)
-{
-    u64 hash = 14695981039346656037;
-    u64 fnvPrime = 1099511628211;
-
-    BYTE *currentByte = data;
-    BYTE *end = data + len;
-    while (currentByte < end)
-    {
-        hash ^= *currentByte;
-        hash *= fnvPrime;
-        ++currentByte;
-    }
-
-    return hash;
-}
-
 struct Arena
 {
     void *memory;
@@ -28,6 +11,7 @@ struct Arena
 
 internal Arena *AllocArena(u64 size)
 {
+    myAssert(size % sizeof(void *) == 0);
     size_t allocated = sizeof(Arena) + size;
     void *mem = VirtualAlloc(NULL, allocated, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     DebugPrintA("AllocArena(), %zu allocated\n", allocated);

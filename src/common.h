@@ -152,7 +152,7 @@ struct Mesh
     u32 indicesSize;
     Material material;
     u32 numTextures;
-    
+
     glm::mat4 relativeTransform;
 };
 
@@ -229,7 +229,7 @@ struct ShaderProgram
     FILETIME geometryShaderTime;
     char fragmentShaderFilename[64];
     FILETIME fragmentShaderTime;
-    
+
     u32 objectIndices[MAX_OBJECTS];
     u32 numObjects;
     u32 modelIndices[MAX_MODELS];
@@ -258,7 +258,7 @@ struct TransientDrawingInfo
     u32 numObjects;
     Model models[MAX_MODELS];
     u32 numModels;
-    
+
     ShaderProgram gBufferShader;
     ShaderProgram ssaoShader;
     ShaderProgram ssaoBlurShader;
@@ -276,10 +276,10 @@ struct TransientDrawingInfo
     ShaderProgram skyboxShader;
     ShaderProgram geometryShader;
     ShaderProgram gaussianShader;
-    
+
     Cubes cubes;
     Ball ball;
-    
+
     u32 matricesUBO;
     u32 textureHandlesUBO;
 
@@ -294,12 +294,12 @@ struct TransientDrawingInfo
     Framebuffer postProcessingFramebuffer;
     Framebuffer dirShadowMapFramebuffer;
     Framebuffer spotShadowMapFramebuffer;
-    
+
     u32 pointShadowMapQuad[NUM_POINTLIGHTS];
     u32 pointShadowMapFBO[NUM_POINTLIGHTS];
-    
+
     Framebuffer gaussianFramebuffers[2];
-    
+
     u32 ssaoNoiseTexture;
     Framebuffer ssaoFramebuffer;
     Framebuffer ssaoBlurFramebuffer;
@@ -309,7 +309,7 @@ struct PersistentDrawingInfo
 {
     bool initialized;
     bool wireframeMode = false;
-    
+
     u32 numObjects;
     glm::vec3 objectPositions[MAX_OBJECTS];
     u32 numModels;
@@ -318,10 +318,10 @@ struct PersistentDrawingInfo
     DirLight dirLight;
     PointLight pointLights[NUM_POINTLIGHTS];
     SpotLight spotLight;
-    
+
     f32 materialShininess = 32.f;
     bool blinn = true;
-    
+
     f32 gamma = 2.2f;
     f32 exposure = 1.f;
     f32 ssaoSamplingRadius = .5f;
@@ -406,3 +406,45 @@ struct CWPoint
     s32 y;
 };
 
+internal f32 lerp(f32 a, f32 b, f32 alpha)
+{
+    return a + alpha * (b - a);
+}
+
+internal u64 fnv1a(u8 *data, size_t len)
+{
+    u64 hash = 14695981039346656037;
+    u64 fnvPrime = 1099511628211;
+
+    BYTE *currentByte = data;
+    BYTE *end = data + len;
+    while (currentByte < end)
+    {
+        hash ^= *currentByte;
+        hash *= fnvPrime;
+        ++currentByte;
+    }
+
+    return hash;
+}
+
+internal f32 CreateRandomNumber(f32 min, f32 max)
+{
+    f32 midpoint = (max + min) / 2.f;
+    f32 delta = midpoint - min;
+    f32 x = (f32)(rand() % 10);
+    x = (rand() > RAND_MAX / 2) ? x : -x;
+    return midpoint + delta * (x / 10.f);
+}
+
+internal glm::vec3 CreateRandomVec3()
+{
+    f32 x = (f32)(rand() % 10);
+    x = (rand() > RAND_MAX / 2) ? x : -x;
+    f32 y = (f32)(rand() % 10);
+    y = (rand() > RAND_MAX / 2) ? y : -y;
+    f32 z = (f32)(rand() % 10);
+    z = (rand() > RAND_MAX / 2) ? z : -z;
+
+    return {x, y, z};
+}
