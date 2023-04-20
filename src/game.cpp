@@ -4,6 +4,7 @@
 #include "asteroids.cpp"
 #include "framebuffer.cpp"
 #include "gl.cpp"
+#include "math.cpp"
 #include "mesh.cpp"
 #include "save_load.cpp"
 #include "shader.cpp"
@@ -24,12 +25,26 @@ global_variable s32 gBitangentElemCounts[] = {3, 3, 2, 3, 3}; // Position, norma
 // Will no longer be a global if we get rid of that distinction and only use models.
 global_variable u32 gObjectId = 0;
 
+/***********************************************************************************************************************
+ *
+ * Functions exported from game DLL to main process to allow hot reloading.
+ *
+ **********************************************************************************************************************/
+
+//
+// Tracy.
+//
+
 // NOTE: current Tracy setup is incompatible with hot reloading.
 // See Tracy manual, section "Setup for multi-DLL projects" to fix this.
 extern "C" __declspec(dllexport) void InitializeTracyGPUContext()
 {
     TracyGpuContext;
 }
+
+//
+// Dear ImGui.
+//
 
 extern "C" __declspec(dllexport) void InitializeImGuiInModule(HWND window)
 {
@@ -55,21 +70,36 @@ extern "C" __declspec(dllexport) LRESULT ImGui_WndProcHandler(HWND hWnd, UINT uM
     return ImGui_ImplWin32_WndProcHandler(hWnd, uMsg, wParam, lParam);
 }
 
+//
+// Viewport interaction.
+//
+
 internal void AddCube(TransientDrawingInfo *info, glm::ivec3 position);
 
+// The G-buffer pass writes into an offscreen "picking buffer" attachment, created in
+// CreateFramebuffers() with an RG8 format (see: framebuffer.cpp).
+// The red channel contains an object ID and the green channel some information about the face
+// orientation (see: gbuffer.vs and gbuffer.fs).
 extern "C" __declspec(dllexport) void GameHandleClick(TransientDrawingInfo *transientInfo, CWInput button,
                                                       CWPoint coordinates, CWPoint screenSize)
 {
     DebugPrintA("Clicked at (%i, %i)\n", coordinates.x, coordinates.y);
+    // TODO: remove hard coding.
     u32 bufSize = 1920 * 1080 * 2;
     Arena *pixelsArena = AllocArena(bufSize);
     u8 *pixels = (u8 *)ArenaPush(pixelsArena, bufSize);
+
+    // Retrieve picking buffer.
     glGetTextureImage(transientInfo->mainFramebuffer.attachments[3], 0, GL_RG_INTEGER, GL_UNSIGNED_BYTE, bufSize,
                       pixels);
     u32 stride = screenSize.x;
     u16 *pixelsAsRG = (u16 *)pixels;
     u16 pickedPixel = pixelsAsRG[coordinates.x + coordinates.y * stride];
+
+    // Retrieve object ID.
     u32 id = (pickedPixel & 0xff);
+
+    // Retrieve face orientation.
     u8 faceInfo = ((pickedPixel & 0xff00) >> 8);
     s8 facingX = ((faceInfo & 0x30) >> 4) - 1;
     s8 facingY = ((faceInfo & 0xc) >> 2) - 1;
@@ -77,6 +107,7 @@ extern "C" __declspec(dllexport) void GameHandleClick(TransientDrawingInfo *tran
     DebugPrintA("Value: %u, %i, %i, %i\n", id, facingX, facingY, facingZ);
     FreeArena(pixelsArena);
 
+    // Find the object with the given ID and add the cube alongside the picked face.
     for (u32 i = 0; i < transientInfo->numObjects; i++)
     {
         Object *obj = &transientInfo->objects[i];
@@ -87,19 +118,11 @@ extern "C" __declspec(dllexport) void GameHandleClick(TransientDrawingInfo *tran
     }
 }
 
-internal u32 AddObject(TransientDrawingInfo *transientInfo, u32 vao, u32 numIndices, glm::vec3 position,
-                       Material *textures = nullptr)
-{
-    u32 objectIndex = transientInfo->numObjects;
-    transientInfo->objects[objectIndex] = {gObjectId++, vao, numIndices, position};
-    if (textures)
-    {
-        transientInfo->objects[objectIndex].textures = CreateTextureHandlesFromMaterial(textures);
-    }
-    transientInfo->numObjects++;
-    myAssert(transientInfo->numObjects <= MAX_OBJECTS);
-    return objectIndex;
-}
+/***********************************************************************************************************************
+ *
+ * Mesh handling.
+ *
+ **********************************************************************************************************************/
 
 // NOTE + TODO: see note in Model struct. There needs to be a clear separation of model geometry data and
 // data used to render specific instances of that model with given materials and transforms.
@@ -115,78 +138,6 @@ internal void AddObjectToShaderPass(ShaderProgram *shader, u32 objectIndex)
     shader->objectIndices[shader->numObjects] = objectIndex;
     shader->numObjects++;
     myAssert(shader->numObjects <= MAX_OBJECTS);
-}
-
-// Following Lengyel's "Foundations of Game Engine Development", vol. 1 (2016), p. 35.
-internal glm::vec3 Reject(glm::vec3 a, glm::vec3 b)
-{
-    return (a - b * dot(a, b) / dot(b, b));
-}
-
-// Following Lengyel's "Foundations of Game Engine Development", vol. 2 (2019), pp. 114-5.
-internal void CalculateTangents(Vertex *vertices, u32 numVertices, u32 *indices, u32 numIndices, Arena *arena)
-{
-    u64 allocatedSize = sizeof(glm::vec3) * numVertices * 2;
-    glm::vec3 *tangents = (glm::vec3 *)ArenaPush(arena, allocatedSize);
-    glm::vec3 *bitangents = tangents + numVertices;
-
-    for (u32 i = 0; i < numIndices; i += 3)
-    {
-        u32 i0 = indices[i];
-        u32 i1 = indices[i + 1];
-        u32 i2 = indices[i + 2];
-
-        glm::vec3 p0 = vertices[i0].position;
-        glm::vec3 p1 = vertices[i1].position;
-        glm::vec3 p2 = vertices[i2].position;
-
-        glm::vec2 w0 = vertices[i0].texCoords;
-        glm::vec2 w1 = vertices[i1].texCoords;
-        glm::vec2 w2 = vertices[i2].texCoords;
-
-        glm::vec3 e1 = p1 - p0;
-        glm::vec3 e2 = p2 - p0;
-        f32 x1 = w1.x - w0.x;
-        f32 x2 = w2.x - w0.x;
-        f32 y1 = w1.y - w0.y;
-        f32 y2 = w2.y - w0.y;
-
-        f32 r = 1.f / (x1 * y2 - x2 * y1);
-        glm::vec3 tangent = (e1 * y2 - e2 * y1) * r;
-        glm::vec3 bitangent = (e2 * x1 - e1 * x2) * r;
-
-        tangents[i0] += tangent;
-        tangents[i1] += tangent;
-        tangents[i2] += tangent;
-
-        bitangents[i0] += bitangent;
-        bitangents[i1] += bitangent;
-        bitangents[i2] += bitangent;
-    }
-
-    // Orthogonalize each normal and calculate its handedness.
-    for (u32 i = 0; i < numVertices; i++)
-    {
-        glm::vec4 result;
-
-        glm::vec3 tangent = tangents[i];
-        glm::vec3 bitangent = bitangents[i];
-        glm::vec3 normal = vertices[i].normal;
-
-        // Gram-Schmidt orthogonalization.
-        glm::vec3 tan = normalize(Reject(tangent, normal));
-        result.x = tan.x;
-        result.y = tan.y;
-        result.z = tan.z;
-        result.w = (dot(cross(tangent, bitangent), normal) > 0.f) ? 1.f : -1.f;
-
-        // TODO: use a vec4 type for the tangent so we can forego storing the bitangent and can access
-        // the handedness in the shader?
-        vertices[i].tangent = tan;
-        vertices[i].bitangent = normalize(bitangent);
-    }
-
-    ArenaPop(arena, allocatedSize);
 }
 
 internal void LoadModels(TransientDrawingInfo *transientInfo, Arena *texturesArena, Arena *meshDataArena)
@@ -246,7 +197,7 @@ internal void AddCube(TransientDrawingInfo *info, glm::ivec3 position)
     cubes->positions[i] = position;
     cubes->textures[i] = CreateTextureHandlesFromMaterial(&cubeTextures);
 
-    u32 curi = AddObject(info, info->cubeVao, 36, position, &cubeTextures);
+    u32 curi = AddObject(info, info->cubeVao, 36, position, &gObjectId, &cubeTextures);
     AddObjectToShaderPass(&info->dirDepthMapShader, curi);
     AddObjectToShaderPass(&info->spotDepthMapShader, curi);
     AddObjectToShaderPass(&info->pointDepthMapShader, curi);
@@ -298,198 +249,90 @@ internal void CreateQuad(TransientDrawingInfo *transientInfo, Arena *texturesAre
     transientInfo->quadVao = mainQuadVao;
 }
 
+/***********************************************************************************************************************
+ *
+ * More functions exported from the game DLL to the main process to allow hot reloading.
+ *
+ **********************************************************************************************************************/
+
+// Initializes the transient and persistent drawing info structs received from the main process.
 extern "C" __declspec(dllexport) bool InitializeDrawingInfo(HWND window, TransientDrawingInfo *transientInfo,
                                                             PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo)
 {
     u64 arenaSize = 100 * 1024 * 1024;
 
+    // Create shaders.
     if (!CreateShaderPrograms(transientInfo))
     {
         return false;
     }
 
-    // TODO: sort out arena usage; don't use texturesArena for anything other than texture, or if you do
-    // then rename it.
-    Arena *texturesArena = AllocArena(1024);
-    Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
-    LoadModels(transientInfo, texturesArena, meshDataArena);
-    LoadCube(transientInfo, texturesArena);
-    CreateQuad(transientInfo, texturesArena);
-    FreeArena(meshDataArena);
-    FreeArena(texturesArena);
+    // Load meshes.
+    {
+        // TODO: sort out arena usage; don't use texturesArena for anything other than texture, or if you do
+        // then rename it.
+        Arena *texturesArena = AllocArena(1024);
+        Arena *meshDataArena = AllocArena(100 * 1024 * 1024);
+        LoadModels(transientInfo, texturesArena, meshDataArena);
+        LoadCube(transientInfo, texturesArena);
+        CreateQuad(transientInfo, texturesArena);
+        FreeArena(meshDataArena);
+        FreeArena(texturesArena);
+    }
 
     srand((u32)Win32GetWallClock());
 
-    // SetUpAsteroids(&transientInfo->models[2]);
-
-    // First we create the objects.
-    PointLight *pointLights = drawingInfo->pointLights;
-
-    // TODO: account for in refactor.
-    for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+    // Initialize lighting.
     {
-        pointLights[lightIndex].position = CreateRandomVec3();
+        // Initialize point lights.
+        PointLight *pointLights = drawingInfo->pointLights;
 
-        u32 attIndex = rand() % myArraySize(globalAttenuationTable);
-        // NOTE: constant-range point lights makes for easier visualization of light effects.
-        pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
+        // TODO: account for in refactor.
+        for (u32 lightIndex = 0; lightIndex < NUM_POINTLIGHTS; lightIndex++)
+        {
+            pointLights[lightIndex].position = CreateRandomVec3();
+
+            u32 attIndex = rand() % myArraySize(globalAttenuationTable);
+            // NOTE: constant-range point lights makes for easier visualization of light effects.
+            pointLights[lightIndex].attIndex = 4; // clamp(attIndex, 2, 6)
+        }
+
+        // Initialize directional lighting.
+        drawingInfo->dirLight.direction =
+            glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
     }
 
-    drawingInfo->dirLight.direction =
-        glm::normalize(pointLights[NUM_POINTLIGHTS - 1].position - pointLights[0].position);
-
+    // Load persistent drawing info if any was saved from a prior session.
     LoadDrawingInfo(transientInfo, drawingInfo, cameraInfo);
 
-    CreateFramebuffers(window, transientInfo);
+    // Initialize buffers.
+    {
+        CreateFramebuffers(window, transientInfo);
 
-    CreateSkybox(transientInfo);
-    glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
+        CreateSkybox(transientInfo);
+        glDepthFunc(GL_LEQUAL); // All skybox points are given a depth of 1.f.
 
-    u32 *matricesUBO = &transientInfo->matricesUBO;
-    glCreateBuffers(1, matricesUBO);
-    char label[] = "UBO: matrices";
-    glObjectLabel(GL_BUFFER, *matricesUBO, -1, label);
-    glNamedBufferData(*matricesUBO, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 0, *matricesUBO);
+        u32 *matricesUBO = &transientInfo->matricesUBO;
+        glCreateBuffers(1, matricesUBO);
+        char label[] = "UBO: matrices";
+        glObjectLabel(GL_BUFFER, *matricesUBO, -1, label);
+        glNamedBufferData(*matricesUBO, 10 * sizeof(glm::mat4), NULL, GL_STATIC_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 0, *matricesUBO);
 
-    u32 *textureHandlesUBO = &transientInfo->textureHandlesUBO;
-    glCreateBuffers(1, textureHandlesUBO);
-    glNamedBufferData(*textureHandlesUBO, sizeof(TextureHandles) * MAX_MESHES_PER_MODEL, NULL, GL_STATIC_DRAW);
-    glBindBufferBase(GL_UNIFORM_BUFFER, 1, *textureHandlesUBO);
+        u32 *textureHandlesUBO = &transientInfo->textureHandlesUBO;
+        glCreateBuffers(1, textureHandlesUBO);
+        glNamedBufferData(*textureHandlesUBO, sizeof(TextureHandles) * MAX_MESHES_PER_MODEL, NULL, GL_STATIC_DRAW);
+        glBindBufferBase(GL_UNIFORM_BUFFER, 1, *textureHandlesUBO);
 
-    GenerateSSAOSamplesAndNoise(transientInfo);
+        GenerateSSAOSamplesAndNoise(transientInfo);
+    }
 
     drawingInfo->initialized = true;
 
     return true;
 }
 
-internal glm::mat4 LookAt(CameraInfo *cameraInfo, glm::vec3 cameraTarget, glm::vec3 cameraUpVector,
-                          float farPlaneDistance)
-{
-    glm::mat4 inverseTranslation = glm::mat4(1.f);
-    inverseTranslation[3][0] = -cameraInfo->pos.x;
-    inverseTranslation[3][1] = -cameraInfo->pos.y;
-    inverseTranslation[3][2] = -cameraInfo->pos.z;
-
-    glm::vec3 direction = glm::normalize(cameraInfo->pos - cameraTarget);
-    glm::vec3 rightVector = glm::normalize(glm::cross(cameraUpVector, direction));
-    glm::vec3 upVector = (glm::cross(direction, rightVector));
-
-    // TODO: investigate why filling the last column with the negative of cameraPosition does not
-    // produce the same effect as the multiplication by the inverse translation.
-    glm::mat4 inverseRotation = glm::mat4(1.f);
-    inverseRotation[0][0] = rightVector.x;
-    inverseRotation[1][0] = rightVector.y;
-    inverseRotation[2][0] = rightVector.z;
-    inverseRotation[0][1] = upVector.x;
-    inverseRotation[1][1] = upVector.y;
-    inverseRotation[2][1] = upVector.z;
-    inverseRotation[0][2] = direction.x;
-    inverseRotation[1][2] = direction.y;
-    inverseRotation[2][2] = direction.z;
-
-    // TODO: figure out what the deal is with the inverse scaling matrix in "Computer graphics:
-    // Principles and practice", p. 306. I'm leaving this unused for now as it breaks rendering.
-    glm::mat4 inverseScale = {
-        1.f / (farPlaneDistance * (tanf(cameraInfo->fov / cameraInfo->aspectRatio * PI / 180.f) / 2.f)),
-        0.f,
-        0.f,
-        0.f,
-        0.f,
-        1.f / (farPlaneDistance * (tanf(cameraInfo->fov * PI / 180.f) / 2.f)),
-        0.f,
-        0.f,
-        0.f,
-        0.f,
-        1.f / farPlaneDistance,
-        0.f,
-        0.f,
-        0.f,
-        0.f,
-        1.f};
-
-    return inverseRotation * inverseTranslation;
-}
-
-internal void SaveShaderPass(FILE *file, ShaderProgram *shader)
-{
-    fwrite(&shader->numObjects, sizeof(u32), 1, file);
-    fwrite(shader->objectIndices, sizeof(u32), shader->numObjects, file);
-    fwrite(&shader->numModels, sizeof(u32), 1, file);
-    fwrite(shader->modelIndices, sizeof(u32), shader->numModels, file);
-}
-
-extern "C" __declspec(dllexport) void SaveDrawingInfo(TransientDrawingInfo *transientInfo, PersistentDrawingInfo *info,
-                                                      CameraInfo *cameraInfo)
-{
-    FILE *file;
-    fopen_s(&file, "save.bin", "wb");
-
-    info->numObjects = transientInfo->numObjects;
-    for (u32 i = 0; i < transientInfo->numObjects; i++)
-    {
-        info->objectPositions[i] = transientInfo->objects[i].position;
-    }
-    info->numModels = transientInfo->numModels;
-    for (u32 i = 0; i < transientInfo->numModels; i++)
-    {
-        info->modelPositions[i] = transientInfo->models[i].position;
-    }
-    fwrite(info, sizeof(PersistentDrawingInfo), 1, file);
-    SaveShaderPass(file, &transientInfo->gBufferShader);
-    SaveShaderPass(file, &transientInfo->ssaoShader);
-    SaveShaderPass(file, &transientInfo->ssaoBlurShader);
-    SaveShaderPass(file, &transientInfo->dirDepthMapShader);
-    SaveShaderPass(file, &transientInfo->spotDepthMapShader);
-    SaveShaderPass(file, &transientInfo->pointDepthMapShader);
-    SaveShaderPass(file, &transientInfo->instancedObjectShader);
-    SaveShaderPass(file, &transientInfo->colorShader);
-    SaveShaderPass(file, &transientInfo->outlineShader);
-    SaveShaderPass(file, &transientInfo->glassShader);
-    SaveShaderPass(file, &transientInfo->textureShader);
-    SaveShaderPass(file, &transientInfo->postProcessShader);
-    SaveShaderPass(file, &transientInfo->skyboxShader);
-    SaveShaderPass(file, &transientInfo->geometryShader);
-    fwrite(cameraInfo, sizeof(CameraInfo), 1, file);
-
-    fclose(file);
-}
-
-internal glm::mat4 GetCameraWorldRotation(CameraInfo *cameraInfo)
-{
-    // We are rotating in world space so this returns a world-space rotation.
-    glm::vec3 cameraYawAxis = glm::vec3(0.f, 1.f, 0.f);
-    glm::vec3 cameraPitchAxis = glm::vec3(1.f, 0.f, 0.f);
-
-    glm::mat4 cameraYaw = glm::rotate(glm::mat4(1.f), cameraInfo->yaw, cameraYawAxis);
-    glm::mat4 cameraPitch = glm::rotate(glm::mat4(1.f), cameraInfo->pitch, cameraPitchAxis);
-    glm::mat4 cameraRotation = cameraYaw * cameraPitch;
-
-    return cameraRotation;
-}
-
-internal glm::vec3 GetCameraRightVector(CameraInfo *cameraInfo)
-{
-    // World-space rotation * world-space axis -> world-space value.
-    glm::vec4 cameraRightVec = GetCameraWorldRotation(cameraInfo) * glm::vec4(1.f, 0.f, 0.f, 0.f);
-
-    return glm::vec3(cameraRightVec);
-}
-
-internal glm::vec3 GetCameraForwardVector(CameraInfo *cameraInfo)
-{
-    glm::vec4 cameraForwardVec = GetCameraWorldRotation(cameraInfo) * glm::vec4(0.f, 0.f, -1.f, 0.f);
-
-    return glm::normalize(glm::vec3(cameraForwardVec));
-}
-
-extern "C" __declspec(dllexport) void ProvideCameraVectors(CameraInfo *cameraInfo)
-{
-    cameraInfo->forwardVector = GetCameraForwardVector(cameraInfo);
-    cameraInfo->rightVector = GetCameraRightVector(cameraInfo);
-};
-
+// Returns true iff the given file has been modified since the given time.
 internal bool HasNewVersion(const char *filename, FILETIME *lastFileTime)
 {
     HANDLE file = CreateFileA(filename, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
@@ -502,6 +345,7 @@ internal bool HasNewVersion(const char *filename, FILETIME *lastFileTime)
     return returnVal;
 }
 
+// Returns true iff a new version of the given shader program is available.
 internal bool HasNewVersion(ShaderProgram *program)
 {
     bool hasGeometryShader = (strlen(program->geometryShaderFilename) > 0);
@@ -510,6 +354,7 @@ internal bool HasNewVersion(ShaderProgram *program)
            HasNewVersion(program->fragmentShaderFilename, &program->fragmentShaderTime);
 }
 
+// Handles hot reloading of modified shaders.
 internal void CheckForNewShaders(TransientDrawingInfo *info)
 {
     if (HasNewVersion(&info->gBufferShader) || HasNewVersion(&info->ssaoShader) ||
@@ -526,6 +371,12 @@ internal void CheckForNewShaders(TransientDrawingInfo *info)
         myAssert(reloadedShaders);
     }
 }
+
+/***********************************************************************************************************************
+ *
+ * Rendering.
+ *
+ **********************************************************************************************************************/
 
 internal void RenderObject(Object *object, u32 shaderProgram, u32 textureHandlesUBO, f32 yRot = 0.f, float scale = 1.f)
 {
@@ -682,30 +533,6 @@ internal void FillGBuffer(CameraInfo *cameraInfo, TransientDrawingInfo *transien
     SetGBufferUniforms(shaderProgram, persistentInfo, cameraInfo);
 
     RenderShaderPass(&transientInfo->gBufferShader, transientInfo);
-}
-
-internal glm::vec3 GetCameraUpVector(CameraInfo *cameraInfo)
-{
-    glm::vec3 cameraForwardVec = GetCameraForwardVector(cameraInfo);
-    glm::vec3 cameraTarget = cameraInfo->pos + cameraForwardVec;
-
-    glm::vec3 cameraDirection = glm::normalize(cameraInfo->pos - cameraTarget);
-
-    glm::vec3 upVector = glm::vec3(0.f, 1.f, 0.f);
-    glm::vec3 cameraRightVec = glm::normalize(glm::cross(upVector, cameraDirection));
-    return glm::normalize(glm::cross(cameraDirection, cameraRightVec));
-}
-
-internal void GetPerspectiveRenderingMatrices(CameraInfo *cameraInfo, glm::mat4 *outViewMatrix,
-                                              glm::mat4 *outProjectionMatrix)
-{
-    glm::vec3 cameraTarget = cameraInfo->pos + GetCameraForwardVector(cameraInfo);
-    glm::vec3 cameraUpVec = GetCameraUpVector(cameraInfo);
-    f32 nearPlaneDistance = .1f;
-    f32 farPlaneDistance = 150.f;
-    *outProjectionMatrix =
-        glm::perspective(glm::radians(cameraInfo->fov), cameraInfo->aspectRatio, nearPlaneDistance, farPlaneDistance);
-    *outViewMatrix = LookAt(cameraInfo, cameraTarget, cameraUpVec, farPlaneDistance);
 }
 
 internal void SetLightingShaderUniforms(CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,

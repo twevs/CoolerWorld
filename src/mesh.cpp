@@ -199,3 +199,17 @@ internal u32 AddModel(const char *filename, TransientDrawingInfo *transientInfo,
     myAssert(transientInfo->numModels <= MAX_MODELS);
     return modelIndex;
 }
+
+internal u32 AddObject(TransientDrawingInfo *transientInfo, u32 vao, u32 numIndices, glm::vec3 position,
+                       u32 *objectId, Material *textures = nullptr)
+{
+    u32 objectIndex = transientInfo->numObjects;
+    transientInfo->objects[objectIndex] = {*objectId++, vao, numIndices, position};
+    if (textures)
+    {
+        transientInfo->objects[objectIndex].textures = CreateTextureHandlesFromMaterial(textures);
+    }
+    transientInfo->numObjects++;
+    myAssert(transientInfo->numObjects <= MAX_OBJECTS);
+    return objectIndex;
+}

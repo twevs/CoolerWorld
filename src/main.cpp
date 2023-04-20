@@ -1,8 +1,22 @@
 #include "arena.h"
 #include "common.h"
 
+/***********************************************************************************************************************
+ *
+ * Function pointers assigned from game DLL at load/reload time.
+ *
+ **********************************************************************************************************************/
+
+//
+// Tracy.
+//
+
 typedef void (*InitializeTracyGPUContext_t)();
 InitializeTracyGPUContext_t InitializeTracyGPUContext;
+
+//
+// Dear ImGui.
+//
 
 typedef bool (*InitializeImGuiInModule_t)(HWND window);
 InitializeImGuiInModule_t InitializeImGuiInModule;
@@ -13,6 +27,10 @@ GetImGuiIO_t GetImGuiIO;
 typedef LRESULT (*ImGui_WndProcHandler_t)(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 ImGui_WndProcHandler_t ImGui_WndProcHandler;
 
+//
+// Rendering.
+//
+
 typedef bool (*InitializeDrawingInfo_t)(HWND window, TransientDrawingInfo *transientInfo,
                                         PersistentDrawingInfo *drawingInfo, CameraInfo *cameraInfo);
 InitializeDrawingInfo_t InitializeDrawingInfo;
@@ -21,26 +39,42 @@ typedef bool (*SaveDrawingInfo_t)(TransientDrawingInfo *transientInfo, Persisten
                                   CameraInfo *cameraInfo);
 SaveDrawingInfo_t SaveDrawingInfo;
 
-typedef void (*ProvideCameraVectors_t)(CameraInfo *cameraInfo);
-ProvideCameraVectors_t ProvideCameraVectors;
-
+// Main rendering function.
 typedef void (*DrawWindow_t)(HWND window, HDC hdc, ApplicationState *appState, Arena *listArena, Arena *tempArena);
 DrawWindow_t DrawWindow;
 
+//
+// Functions for viewport navigation and interaction.
+//
+
+// ProvideCameraVectors() fills cameraInfo with the camera's forward and right unit vectors.
+typedef void (*ProvideCameraVectors_t)(CameraInfo *cameraInfo);
+ProvideCameraVectors_t ProvideCameraVectors;
+
+// GameHandleClick() handles screen picking, to add a cube to the clicked-on face of a cube already in the scene.
 typedef void (*GameHandleClick_t)(TransientDrawingInfo *transientInfo, CWInput button, CWPoint coordinates,
                                   CWPoint screenSize);
 GameHandleClick_t GameHandleClick;
+
+//
+// OpenGL.
+//
 
 PFNWGLSWAPINTERVALEXTPROC wglSwapIntervalEXT;
 
 PFNWGLCHOOSEPIXELFORMATARBPROC wglChoosePixelFormatARB;
 PFNWGLCREATECONTEXTATTRIBSARBPROC wglCreateContextAttribsARB;
 
-LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+/***********************************************************************************************************************
+ *
+ * Handle OpenGL viewport resizing, called upon initialization as well as from WndProc's WM_SIZE case.
+ *
+ **********************************************************************************************************************/
 
 internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDrawingInfo *transientInfo,
                                PersistentDrawingInfo *persistentInfo)
 {
+    // Get new client area size.
     RECT clientRect;
     GetClientRect(window, &clientRect);
     s32 width = clientRect.right;
@@ -49,9 +83,13 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
     {
         return;
     }
+
+
+    // Resize GL viewport to match client area and update aspect ratio.
     glViewport(0, 0, width, height);
     cameraInfo->aspectRatio = (f32)width / (f32)height;
 
+    // Resize our framebuffers.
     if (persistentInfo->initialized)
     {
         // TODO: fix this code and move it into the DLL.
@@ -92,6 +130,12 @@ internal void ResizeGLViewport(HWND window, CameraInfo *cameraInfo, TransientDra
     }
 }
 
+/***********************************************************************************************************************
+ *
+ * Windows message loop processing, done from within the game loop.
+ *
+ **********************************************************************************************************************/
+
 internal f32 clampf(f32 x, f32 min, f32 max, f32 safety = 0.f)
 {
     return (x < min + safety) ? (min + safety) : (x > max - safety) ? (max - safety) : x;
@@ -103,6 +147,7 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
     MSG message;
     while (PeekMessageW(&message, NULL, 0, 0, PM_REMOVE))
     {
+        // Give Dear ImGui first dibs to ensure input processing is correctly handled.
         if (ImGui_WndProcHandler(window, message.message, message.wParam, message.lParam))
         {
             break;
@@ -114,9 +159,12 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
             DispatchMessage(&message);
             break;
         }
+        
+        // Mouse parameters.
         local_persist bool capturing = false;
         local_persist f32 speed = .1f;
 
+        // Retrieve window information.
         POINT windowOrigin = {};
         ClientToScreen(window, &windowOrigin);
         s16 originX = (s16)windowOrigin.x;
@@ -143,6 +191,8 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
         }
         break;
         case WM_RBUTTONDOWN:
+            // Implement Unreal-style navigation, ie holding down the right mouse button causes the cursor to disappear
+            // and enables rotation via mouse movement and viewport movement via WASD.
             SetCapture(window);
             capturing = true;
             ShowCursor(FALSE);
@@ -170,6 +220,8 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
             break;
         }
         case WM_MOUSEWHEEL: {
+            // Implement Unreal-style modification of viewport movement speed via mouse wheel (scroll up to increase
+            // speed, scroll down to decrease it).
             s16 wheelRotation = HIWORD(message.wParam);
             bool shiftPressed = (GetKeyState(VK_SHIFT) < 0);
             if (shiftPressed)
@@ -188,13 +240,14 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
             break;
         case WM_KEYDOWN:
         case WM_SYSKEYDOWN: {
-            // Treat WASD specially.
+            // Treat WASD specially, for the purposes of viewport movement when the right mouse button is held down (see
+            // WM_RBUTTONDOWN case above).
             float deltaZ = (GetKeyState('W') < 0) ? .1f : (GetKeyState('S') < 0) ? -.1f : 0.f;
             float deltaX = (GetKeyState('D') < 0) ? .1f : (GetKeyState('A') < 0) ? -.1f : 0.f;
             *movement += cameraInfo->forwardVector * deltaZ * speed;
             *movement += cameraInfo->rightVector * deltaX * speed;
 
-            // Other keys.
+            // Handle other keys.
             bool altPressed = (message.lParam >> 29) & 1;
             u32 vkCode = (u32)message.wParam;
             switch (vkCode)
@@ -275,6 +328,12 @@ internal void Win32ProcessMessages(HWND window, bool *running, PersistentDrawing
         }
     }
 }
+
+/***********************************************************************************************************************
+ *
+ * Initialize modern OpenGL context.
+ *
+ **********************************************************************************************************************/
 
 internal int InitializeOpenGLExtensions(HINSTANCE hInstance)
 {
@@ -372,6 +431,12 @@ internal int InitializeOpenGLExtensions(HINSTANCE hInstance)
     return 0;
 }
 
+/***********************************************************************************************************************
+ *
+ * Hot reloading.
+ *
+ **********************************************************************************************************************/
+
 void LoadRenderingCode(HWND window)
 {
     HMODULE loglLib = GetModuleHandleW(L"logl_runtime.dll");
@@ -379,21 +444,25 @@ void LoadRenderingCode(HWND window)
     {
         FreeLibrary(loglLib);
     }
+
     CopyFileW(L"logl.dll", L"logl_runtime.dll", FALSE);
     loglLib = LoadLibraryW(L"logl_runtime.dll");
     myAssert(loglLib != NULL);
 
+    // Assign function pointers from game DLL.
     InitializeTracyGPUContext = (InitializeTracyGPUContext_t)GetProcAddress(loglLib, "InitializeTracyGPUContext");
+    
     InitializeImGuiInModule = (InitializeImGuiInModule_t)GetProcAddress(loglLib, "InitializeImGuiInModule");
     InitializeImGuiInModule(window);
     GetImGuiIO = (GetImGuiIO_t)GetProcAddress(loglLib, "GetImGuiIO");
     ImGui_WndProcHandler = (ImGui_WndProcHandler_t)GetProcAddress(loglLib, "ImGui_WndProcHandler");
-    DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
+    
     InitializeDrawingInfo = (InitializeDrawingInfo_t)GetProcAddress(loglLib, "InitializeDrawingInfo");
     SaveDrawingInfo = (SaveDrawingInfo_t)GetProcAddress(loglLib, "SaveDrawingInfo");
-    GameHandleClick = (GameHandleClick_t)GetProcAddress(loglLib, "GameHandleClick");
-
+    DrawWindow = (DrawWindow_t)GetProcAddress(loglLib, "DrawWindow");
+    
     ProvideCameraVectors = (ProvideCameraVectors_t)GetProcAddress(loglLib, "ProvideCameraVectors");
+    GameHandleClick = (GameHandleClick_t)GetProcAddress(loglLib, "GameHandleClick");
 }
 
 void CheckForNewDLL(HWND window, FILETIME *lastFileTime)
@@ -409,6 +478,12 @@ void CheckForNewDLL(HWND window, FILETIME *lastFileTime)
     *lastFileTime = fileTime;
 }
 
+/***********************************************************************************************************************
+ *
+ * OpenGL debug callback.
+ *
+ **********************************************************************************************************************/
+
 void GLAPIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum severity, GLsizei length,
                               const GLchar *message, const void *userParam)
 {
@@ -419,6 +494,14 @@ void GLAPIENTRY DebugCallback(GLenum source, GLenum type, GLuint id, GLenum seve
     DebugPrintA(message);
     myAssert(false);
 }
+
+/***********************************************************************************************************************
+ *
+ * Entry point.
+ *
+ **********************************************************************************************************************/
+
+LRESULT WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
 {
@@ -548,13 +631,11 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
         ResizeGLViewport(window, &appState.cameraInfo, &appState.transientInfo, &appState.persistentInfo);
 
-        // MessageBoxA(NULL, (char *)glGetString(GL_VERSION), "OpenGL version", MB_OK);
-
-        // Shader initialization.
-
+        // Load rendering code and initialize Tracy context.
         LoadRenderingCode(window);
         InitializeTracyGPUContext();
 
+        // Initialize drawing info.
         TransientDrawingInfo *transientInfo = &appState.transientInfo;
         PersistentDrawingInfo *persistentInfo = &appState.persistentInfo;
         CameraInfo *cameraInfo = &appState.cameraInfo;
@@ -563,27 +644,33 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
             return -1;
         }
 
-        glm::vec3 movementPerFrame = {};
-
-        f32 targetFrameTime = 1000.f / 60;
-        f32 deltaTime = targetFrameTime;
-
-        u64 lastFrameCount = Win32GetWallClock();
-
+        // Initialize our game DLL timestamp for hot reloading purposes.
         HANDLE renderingDLL = CreateFileW(L"logl.dll", GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0);
         FILETIME lastFileTime = {};
         GetFileTime(renderingDLL, 0, 0, &lastFileTime);
         CloseHandle(renderingDLL);
 
+        // Accumulates delta time every frame to allow setting a minimum interval on DLL timestamp checking.
         f32 dllAccumulator = 0.f;
 
-        // Per-frame.
+        // Allocate memory arenas used on a per-frame basis.
         Arena *listArena = AllocArena(2048);
         Arena *tempArena = AllocArena(1920 * 1080 * 32);
 
+        // Set up variables needed for tracking changes frame by frame.
+        glm::vec3 movementPerFrame = {};
+        f32 targetFrameTime = 1000.f / 60;
+        f32 deltaTime = targetFrameTime;
+        u64 lastFrameCount = Win32GetWallClock();
+
+        // Main game loop.
         appState.running = true;
         while (appState.running)
         {
+            // Periodically check for a new game DLL; if it has been rebuilt, CheckForNewDLL() will call
+            // LoadRenderingCode() to perform hot reload.
+            // TODO: not a huge fan of this side effect, a function called CheckForNewDLL() shouldn't also perform a
+            // *load*. Make it return a bool that you act upon instead.
             dllAccumulator += deltaTime;
             if (dllAccumulator >= 50.f)
             {
@@ -591,17 +678,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 dllAccumulator = 0.f;
             }
 
+            // Retrieve the camera's front and right unit vectors so we can pass them to our Windows message processor
+            // for the purposes of viewport movement.
             ProvideCameraVectors(cameraInfo);
 
+            // Process Windows messages.
+            // movementPerFrame gets written to based on input received from Windows.
             Win32ProcessMessages(window, &appState.running, persistentInfo, transientInfo, &movementPerFrame,
                                  cameraInfo);
 
+            // Calculate delta time.
             u64 currentFrameCount = Win32GetWallClock();
             u64 diff = currentFrameCount - lastFrameCount;
             lastFrameCount = currentFrameCount;
-
             deltaTime = (f32)diff * Win32GetWallClockPeriod();
-            // DebugPrintA("deltaTime: %f\n", deltaTime);
 
             // Handle resuming from a breakpoint.
             if (deltaTime >= 1000.f)
@@ -609,22 +699,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 deltaTime = targetFrameTime;
             }
 
-            // Game loop uses deltaTime value here ...
-
-            // TODO: investigate whether it's worth keeping this around as a framerate cap
-            // mechanism. Won't it produce screen-tearing since it won't necessarily be synchronized
-            // with the v-blank? How many users actually disable v-sync anyway?
-
-            // WCHAR frameTimeString[32];
-            // swprintf_s(frameTimeString, L"Frame time: %f ms\n", frameTimeAccumulator);
-            // OutputDebugStringW(frameTimeString);
-
+            // Handle viewport movement and actually draw the scene at the new viewport position.
             cameraInfo->pos += movementPerFrame * deltaTime;
             DrawWindow(window, hdc, &appState, listArena, tempArena);
             movementPerFrame = glm::vec3(0.f);
-            // DebugPrintA("Camera pitch: %f\n", cameraInfo->pitch);
-            // DebugPrintA("Camera yaw: %f\n", cameraInfo->yaw);
 
+            // Code to allow viewing the average framerate over the last 60 frames.
             struct RingBuffer
             {
                 f32 deltaTimes[60];
@@ -639,10 +719,10 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
                 totalDeltaTime += deltaTimeBuffer.deltaTimes[i];
             }
             f32 averageDeltaTime = totalDeltaTime / 60;
-            // DebugPrintA("averageDeltaTime: %f\n", averageDeltaTime);
         }
     }
 
+    // Save the programme's info when exiting.
     SaveDrawingInfo(&appState.transientInfo, &appState.persistentInfo, &appState.cameraInfo);
 
     return 0;
